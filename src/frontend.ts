@@ -15,6 +15,12 @@ import { WEATHER_HUD_CSS } from "./ui/styles";
 const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 12.98a7.79 7.79 0 000-1.96l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.88 7.88 0 00-1.69-.98l-.36-2.54a.5.5 0 00-.49-.42h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.6.24-1.16.56-1.69.98l-2.39-.96a.5.5 0 00-.6.22L2.43 8.8a.5.5 0 00.12.64l2.03 1.58a7.79 7.79 0 000 1.96L2.55 14.56a.5.5 0 00-.12.64l1.92 3.32a.5.5 0 00.6.22l2.39-.96c.53.42 1.09.74 1.69.98l.36 2.54a.5.5 0 00.49.42h3.84a.5.5 0 00.49-.42l.36-2.54c.6-.24 1.16-.56 1.69-.98l2.39.96a.5.5 0 00.6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8a3.5 3.5 0 010 7.5z"/></svg>`;
 const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
+const LIGHTNING_BOLT_SVGS = [
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M55 0 L35 55 L52 55 L25 145 L48 100 L30 100 L52 230 L35 185 L58 300"/><path d="M52 55 L72 82 L62 88" stroke-width="1.8"/><path d="M48 100 L22 125 L32 130" stroke-width="1.8"/><path d="M52 230 L72 248 L62 253" stroke-width="1.5"/></g></svg>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M45 0 L68 48 L45 48 L72 135 L50 88 L66 88 L42 215 L62 168 L38 300"/><path d="M45 48 L22 72 L32 77" stroke-width="1.8"/><path d="M50 88 L75 110 L65 115" stroke-width="1.8"/></g></svg>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M50 0 L38 52 L55 52 L30 120 L50 80 L32 80 L55 200 L38 158 L55 300"/><path d="M55 52 L75 75 L65 80" stroke-width="1.8"/><path d="M50 80 L25 100 L35 105" stroke-width="1.8"/><path d="M55 200 L75 220 L65 225" stroke-width="1.5"/></g></svg>`,
+] as const;
+const LIGHTNING_BOLT_POSITIONS = [23, 51, 75] as const;
 
 const HUD_COLLAPSED_SIZE = { width: 272, height: 148 };
 const HUD_EXPANDED_SIZE = { width: 312, height: 360 };
@@ -260,6 +266,10 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     motes.className = "weather-fx-motes";
     root.appendChild(motes);
 
+    const windStreaks = document.createElement("div");
+    windStreaks.className = "weather-fx-wind-streaks";
+    root.appendChild(windStreaks);
+
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain";
     root.appendChild(rain);
@@ -316,6 +326,18 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
+    for (let index = 0; index < 16; index += 1) {
+      windStreaks.appendChild(
+        createSpan("weather-fx-wind-streak", {
+          "--streak-top": `${Math.round(Math.random() * 82)}%`,
+          "--streak-width": `${60 + Math.round(Math.random() * 220)}px`,
+          "--streak-duration": `${cssNumber(1 + Math.random() * 2.4)}s`,
+          "--streak-delay": `${cssNumber(Math.random() * -3.5)}s`,
+          "--streak-opacity": `${cssNumber(0.06 + Math.random() * 0.16)}`,
+        }),
+      );
+    }
+
     for (let index = 0; index < 64; index += 1) {
       rain.appendChild(
         createSpan("weather-fx-rain-drop", {
@@ -331,22 +353,73 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 42; index += 1) {
-      snow.appendChild(
-        createSpan("weather-fx-snow-flake", {
-          "--flake-left": `${Math.round(Math.random() * 102)}%`,
-          "--flake-top": `${(-18 - Math.random() * 18).toFixed(2)}%`,
-          "--flake-size": `${2 + Math.random() * 4}px`,
-          "--flake-duration": `${6.4 + Math.random() * 4.6}s`,
-          "--flake-delay": `${Math.random() * -6}s`,
-          "--flake-drift-mid": `${(-1.8 + Math.random() * 3.6).toFixed(2)}vw`,
-          "--flake-drift-end": `${(-4 + Math.random() * 8).toFixed(2)}vw`,
-          "--flake-spin-mid": `${Math.round(-18 + Math.random() * 36)}deg`,
-          "--flake-spin-end": `${Math.round(-32 + Math.random() * 64)}deg`,
-          "--flake-opacity-scale": `${(0.48 + Math.random() * 0.62).toFixed(2)}`,
+    const splashes = document.createElement("div");
+    splashes.className = "weather-fx-rain-splashes";
+    root.appendChild(splashes);
+
+    for (let index = 0; index < 28; index += 1) {
+      splashes.appendChild(
+        createSpan("weather-fx-rain-splash", {
+          "--splash-left": `${Math.round(Math.random() * 100)}%`,
+          "--splash-bottom": `${Math.round(Math.random() * 8)}%`,
+          "--splash-duration": `${cssNumber(0.35 + Math.random() * 0.5)}s`,
+          "--splash-delay": `${cssNumber(Math.random() * -1.8)}s`,
+          "--splash-size": `${4 + Math.round(Math.random() * 7)}px`,
         }),
       );
     }
+
+    const ripples = document.createElement("div");
+    ripples.className = "weather-fx-rain-ripples";
+    root.appendChild(ripples);
+
+    for (let index = 0; index < 18; index += 1) {
+      ripples.appendChild(
+        createSpan("weather-fx-rain-ripple", {
+          "--ripple-left": `${Math.round(Math.random() * 100)}%`,
+          "--ripple-bottom": `${Math.round(Math.random() * 6)}%`,
+          "--ripple-duration": `${cssNumber(0.7 + Math.random() * 0.9)}s`,
+          "--ripple-delay": `${cssNumber(Math.random() * -2.2)}s`,
+          "--ripple-size": `${10 + Math.round(Math.random() * 18)}px`,
+        }),
+      );
+    }
+
+    for (let index = 0; index < 42; index += 1) {
+      const flake = createSpan("weather-fx-snow-flake", {
+        "--flake-left": `${Math.round(Math.random() * 102)}%`,
+        "--flake-top": `${(-18 - Math.random() * 18).toFixed(2)}%`,
+        "--flake-size": `${2 + Math.random() * 4}px`,
+        "--flake-duration": `${6.4 + Math.random() * 4.6}s`,
+        "--flake-delay": `${Math.random() * -6}s`,
+        "--flake-drift-mid": `${(-1.8 + Math.random() * 3.6).toFixed(2)}vw`,
+        "--flake-drift-end": `${(-4 + Math.random() * 8).toFixed(2)}vw`,
+        "--flake-spin-mid": `${Math.round(-18 + Math.random() * 36)}deg`,
+        "--flake-spin-end": `${Math.round(-32 + Math.random() * 64)}deg`,
+        "--flake-opacity-scale": `${(0.48 + Math.random() * 0.62).toFixed(2)}`,
+      });
+      flake.dataset.shape = String(Math.floor(Math.random() * 4));
+      snow.appendChild(flake);
+    }
+
+    const snowBank = document.createElement("div");
+    snowBank.className = "weather-fx-snow-bank";
+    root.appendChild(snowBank);
+
+    const frost = document.createElement("div");
+    frost.className = "weather-fx-frost";
+    root.appendChild(frost);
+
+    const lightning = document.createElement("div");
+    lightning.className = "weather-fx-lightning";
+    for (let index = 0; index < LIGHTNING_BOLT_SVGS.length; index += 1) {
+      const bolt = document.createElement("div");
+      bolt.className = "weather-fx-lightning-bolt";
+      bolt.dataset.boltIndex = String(index);
+      bolt.innerHTML = LIGHTNING_BOLT_SVGS[index];
+      lightning.appendChild(bolt);
+    }
+    root.appendChild(lightning);
   } else {
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain weather-fx-rain-front";
@@ -371,22 +444,42 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 58; index += 1) {
-      snow.appendChild(
-        createSpan("weather-fx-snow-flake weather-fx-snow-flake-front", {
-          "--flake-left": `${Math.round(Math.random() * 102)}%`,
-          "--flake-top": `${(-18 - Math.random() * 20).toFixed(2)}%`,
-          "--flake-size": `${4 + Math.random() * 6}px`,
-          "--flake-duration": `${5.2 + Math.random() * 3.8}s`,
-          "--flake-delay": `${Math.random() * -5.4}s`,
-          "--flake-drift-mid": `${(-2.6 + Math.random() * 5.2).toFixed(2)}vw`,
-          "--flake-drift-end": `${(-6 + Math.random() * 12).toFixed(2)}vw`,
-          "--flake-spin-mid": `${Math.round(-28 + Math.random() * 56)}deg`,
-          "--flake-spin-end": `${Math.round(-60 + Math.random() * 120)}deg`,
-          "--flake-opacity-scale": `${(0.56 + Math.random() * 0.72).toFixed(2)}`,
+    const splashes = document.createElement("div");
+    splashes.className = "weather-fx-rain-splashes weather-fx-rain-splashes-front";
+    root.appendChild(splashes);
+
+    for (let index = 0; index < 36; index += 1) {
+      splashes.appendChild(
+        createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
+          "--splash-left": `${Math.round(Math.random() * 100)}%`,
+          "--splash-bottom": `${Math.round(Math.random() * 14)}%`,
+          "--splash-duration": `${cssNumber(0.25 + Math.random() * 0.4)}s`,
+          "--splash-delay": `${cssNumber(Math.random() * -1.2)}s`,
+          "--splash-size": `${6 + Math.round(Math.random() * 10)}px`,
         }),
       );
     }
+
+    for (let index = 0; index < 58; index += 1) {
+      const flake = createSpan("weather-fx-snow-flake weather-fx-snow-flake-front", {
+        "--flake-left": `${Math.round(Math.random() * 102)}%`,
+        "--flake-top": `${(-18 - Math.random() * 20).toFixed(2)}%`,
+        "--flake-size": `${4 + Math.random() * 6}px`,
+        "--flake-duration": `${5.2 + Math.random() * 3.8}s`,
+        "--flake-delay": `${Math.random() * -5.4}s`,
+        "--flake-drift-mid": `${(-2.6 + Math.random() * 5.2).toFixed(2)}vw`,
+        "--flake-drift-end": `${(-6 + Math.random() * 12).toFixed(2)}vw`,
+        "--flake-spin-mid": `${Math.round(-28 + Math.random() * 56)}deg`,
+        "--flake-spin-end": `${Math.round(-60 + Math.random() * 120)}deg`,
+        "--flake-opacity-scale": `${(0.56 + Math.random() * 0.72).toFixed(2)}`,
+      });
+      flake.dataset.shape = String(Math.floor(Math.random() * 4));
+      snow.appendChild(flake);
+    }
+
+    const lightningGlow = document.createElement("div");
+    lightningGlow.className = "weather-fx-lightning-glow";
+    root.appendChild(lightningGlow);
   }
 
   root.appendChild(flash);
@@ -1518,20 +1611,46 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
     ) {
       backFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-storm-flash");
+      frontFx.root.classList.remove("weather-lightning-glow-flash");
+      backFx.root.querySelectorAll(".weather-fx-lightning-bolt").forEach((bolt) => {
+        bolt.classList.remove("weather-lightning-strike");
+      });
       return;
     }
 
     const trigger = () => {
       backFx.root.classList.add("weather-storm-flash");
       frontFx.root.classList.add("weather-storm-flash");
+
+      const bolts = backFx.root.querySelectorAll<HTMLElement>(".weather-fx-lightning-bolt");
+      if (bolts.length > 0) {
+        const boltIndex = Math.floor(Math.random() * bolts.length);
+        const bolt = bolts[boltIndex];
+        const boltX = LIGHTNING_BOLT_POSITIONS[boltIndex] ?? 50;
+
+        bolt.classList.remove("weather-lightning-strike");
+        void bolt.offsetWidth;
+        bolt.classList.add("weather-lightning-strike");
+
+        frontFx.root.style.setProperty("--weather-lightning-x", `${boltX}%`);
+        frontFx.root.classList.remove("weather-lightning-glow-flash");
+        void frontFx.root.offsetWidth;
+        frontFx.root.classList.add("weather-lightning-glow-flash");
+
+        window.setTimeout(() => {
+          bolt.classList.remove("weather-lightning-strike");
+        }, 700);
+      }
+
       window.setTimeout(() => {
         backFx.root.classList.remove("weather-storm-flash");
         frontFx.root.classList.remove("weather-storm-flash");
-      }, 220);
-      flashTimer = window.setTimeout(trigger, 3600 + Math.random() * 4600);
+        frontFx.root.classList.remove("weather-lightning-glow-flash");
+      }, 650);
+      flashTimer = window.setTimeout(trigger, 3200 + Math.random() * 5200);
     };
 
-    flashTimer = window.setTimeout(trigger, 1800 + Math.random() * 2400);
+    flashTimer = window.setTimeout(trigger, 1400 + Math.random() * 2800);
   };
 
   const updateScene = () => {
