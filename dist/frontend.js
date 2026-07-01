@@ -1729,6 +1729,13 @@ var WEATHER_HUD_CSS = `
 .weather-fx-rain-ripples {
   overflow: hidden;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.weather-fx-root.weather-rain-active .weather-fx-rain-splashes,
+.weather-fx-root.weather-rain-active .weather-fx-rain-ripples {
+  opacity: 1;
 }
 
 .weather-fx-rain-splash {
