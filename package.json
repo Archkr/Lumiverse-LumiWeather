@@ -1,6 +1,6 @@
 {
-  "name": "lumiverse-story-weather",
-  "version": "1.1.0",
+  "name": "lumiverse-lumiweather",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "scripts": {

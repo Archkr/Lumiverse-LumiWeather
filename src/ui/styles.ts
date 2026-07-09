@@ -408,6 +408,375 @@ export const WEATHER_HUD_CSS = `
   flex: 1 1 0;
 }
 
+/* LumiWeather Studio: layered glass control surface. */
+.weather-settings-card {
+  --lumi-glass-fill: color-mix(in srgb, var(--lumiverse-fill, #101827) 72%, rgba(25, 50, 87, 0.64));
+  --lumi-glass-soft: color-mix(in srgb, var(--lumiverse-fill-subtle, #172338) 68%, rgba(116, 168, 255, 0.1));
+  --lumi-glass-line: color-mix(in srgb, var(--lumiverse-border, #33425a) 68%, rgba(183, 220, 255, 0.32));
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--lumi-glass-line);
+  border-radius: 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 88% -12%, color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 35%, transparent), transparent 46%),
+    radial-gradient(ellipse at 6% 102%, rgba(99, 213, 255, 0.15), transparent 44%),
+    linear-gradient(150deg, color-mix(in srgb, var(--lumi-glass-fill) 94%, #162842) 0%, var(--lumi-glass-fill) 52%, color-mix(in srgb, var(--lumi-glass-fill) 88%, #0c1422) 100%);
+  box-shadow:
+    0 28px 72px rgba(4, 12, 28, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    inset 0 -1px 0 rgba(4, 10, 22, 0.18);
+  backdrop-filter: blur(24px) saturate(145%);
+}
+
+.weather-settings-card::before,
+.weather-settings-card::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.weather-settings-card::before {
+  inset: 0;
+  opacity: 0.72;
+  background:
+    linear-gradient(112deg, rgba(255, 255, 255, 0.09), transparent 28%, transparent 72%, rgba(177, 214, 255, 0.08)),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 4px);
+  mix-blend-mode: screen;
+}
+
+.weather-settings-card::after {
+  width: 260px;
+  height: 260px;
+  right: -130px;
+  top: 88px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 30%, transparent), transparent 68%);
+  filter: blur(10px);
+}
+
+.weather-settings-card-header {
+  position: relative;
+  z-index: 1;
+  min-height: 60px;
+  padding: 17px 18px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--lumi-glass-line) 80%, transparent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.018));
+}
+
+.weather-settings-header-glow {
+  position: absolute;
+  inset: -32px auto auto -26px;
+  width: 176px;
+  height: 100px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(132, 191, 255, 0.24), transparent 70%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.weather-settings-titlewrap,
+.weather-settings-status {
+  position: relative;
+  z-index: 1;
+}
+
+.weather-settings-titlewrap {
+  display: grid;
+  gap: 5px;
+}
+
+.weather-settings-eyebrow {
+  color: color-mix(in srgb, var(--lumiverse-primary, #9dc0ff) 78%, var(--lumiverse-text-muted));
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.weather-settings-card-header h3 {
+  font-size: 18px;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  color: color-mix(in srgb, var(--lumiverse-text) 96%, white 4%);
+}
+
+.weather-settings-status {
+  max-width: min(48%, 228px);
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--lumi-glass-line) 88%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--lumiverse-fill, #111c2c) 52%, rgba(255, 255, 255, 0.11));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: right;
+  text-transform: none;
+}
+
+.weather-settings-status::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: #86d7ff;
+  box-shadow: 0 0 12px rgba(134, 215, 255, 0.82);
+}
+
+.weather-settings-status[data-mode="manual"]::before {
+  background: #f3c989;
+  box-shadow: 0 0 12px rgba(243, 201, 137, 0.8);
+}
+
+.weather-settings-status[data-mode="notice"]::before,
+.weather-settings-status[data-mode="waiting"]::before {
+  background: #aab7c9;
+  box-shadow: none;
+}
+
+.weather-settings-card-body {
+  position: relative;
+  z-index: 1;
+  gap: 14px;
+  padding: 15px;
+}
+
+.weather-settings-scene-hero {
+  position: relative;
+  display: grid;
+  align-content: start;
+  min-height: 102px;
+  gap: 7px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--lumi-glass-line) 84%, transparent);
+  border-radius: 19px;
+  background:
+    radial-gradient(circle at 86% 18%, var(--lumi-scene-glow, rgba(139, 200, 255, 0.32)), transparent 26%),
+    linear-gradient(128deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.025) 48%, rgba(5, 16, 33, 0.16));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 14px 34px rgba(5, 14, 28, 0.12);
+}
+
+.weather-settings-preview-glow {
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  right: -44px;
+  bottom: -90px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--lumi-scene-glow, rgba(121, 185, 255, 0.38)), transparent 70%);
+  filter: blur(4px);
+}
+
+.weather-settings-preview-label,
+.weather-settings-preview-value,
+.weather-settings-preview-hint {
+  position: relative;
+  z-index: 1;
+}
+
+.weather-settings-preview-label {
+  color: var(--lumiverse-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.weather-settings-preview-value {
+  max-width: 76ch;
+  color: color-mix(in srgb, var(--lumiverse-text) 96%, white 4%);
+  font-size: 12px;
+  font-weight: 590;
+  line-height: 1.48;
+}
+
+.weather-settings-preview-hint {
+  color: color-mix(in srgb, var(--lumiverse-text-muted) 94%, white 6%);
+  font-size: 10px;
+}
+
+.weather-settings-scene-hero[data-condition="rain"],
+.weather-settings-scene-hero[data-condition="storm"] {
+  --lumi-scene-glow: rgba(127, 167, 255, 0.34);
+}
+
+.weather-settings-scene-hero[data-condition="snow"] {
+  --lumi-scene-glow: rgba(222, 240, 255, 0.4);
+}
+
+.weather-settings-scene-hero[data-condition="fog"] {
+  --lumi-scene-glow: rgba(208, 225, 233, 0.3);
+}
+
+.weather-settings-glass-panel {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--lumi-glass-line) 82%, transparent);
+  border-radius: 18px;
+  background:
+    linear-gradient(144deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 44%, rgba(0, 0, 0, 0.04)),
+    var(--lumi-glass-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11), 0 12px 26px rgba(4, 13, 27, 0.1);
+  backdrop-filter: blur(16px) saturate(135%);
+}
+
+.weather-settings-section,
+.weather-settings-manual-card {
+  gap: 12px;
+  padding: 14px;
+}
+
+.weather-settings-section-header {
+  gap: 7px;
+}
+
+.weather-settings-section-title {
+  color: color-mix(in srgb, var(--lumiverse-primary, #9dc0ff) 68%, var(--lumiverse-text-muted));
+  font-weight: 720;
+  letter-spacing: 0.15em;
+}
+
+.weather-settings-section-copy,
+.weather-settings-manual-hint {
+  color: color-mix(in srgb, var(--lumiverse-text-muted) 92%, white 8%);
+}
+
+.weather-settings-control-deck {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.weather-settings-control-deck .weather-settings-section {
+  min-width: 0;
+}
+
+.weather-settings-control-deck .weather-settings-section:nth-child(3) {
+  grid-column: span 2;
+}
+
+.weather-settings-section-body,
+.weather-settings-copy-group {
+  gap: 9px;
+}
+
+.weather-settings-copy-group {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--lumi-glass-line) 62%, transparent);
+  border-radius: 13px;
+  background: rgba(4, 14, 29, 0.1);
+}
+
+.weather-settings-copy-title {
+  color: color-mix(in srgb, var(--lumiverse-text) 95%, white 5%);
+}
+
+.weather-settings-code {
+  border-color: color-mix(in srgb, var(--lumi-glass-line) 78%, transparent);
+  border-radius: 12px;
+  background: rgba(3, 12, 27, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.weather-settings-label {
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--lumi-glass-line) 58%, transparent);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.035);
+  color: color-mix(in srgb, var(--lumiverse-text-muted) 90%, white 10%);
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.weather-settings-label:focus-within {
+  border-color: color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 52%, var(--lumi-glass-line));
+  background: rgba(117, 170, 255, 0.08);
+  transform: translateY(-1px);
+}
+
+.weather-settings-select,
+.weather-settings-input,
+.weather-settings-button {
+  border-color: color-mix(in srgb, var(--lumi-glass-line) 72%, transparent);
+  background: color-mix(in srgb, var(--lumiverse-fill, #101827) 58%, rgba(255, 255, 255, 0.12));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+.weather-settings-select,
+.weather-settings-input {
+  min-height: 35px;
+}
+
+.weather-settings-button {
+  min-height: 37px;
+  border-radius: 12px;
+  font-weight: 620;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 8px 18px rgba(4, 13, 28, 0.09);
+}
+
+.weather-settings-button-primary {
+  border-color: color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 56%, var(--lumi-glass-line));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 42%, rgba(255, 255, 255, 0.12)), color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 20%, rgba(9, 23, 46, 0.5)));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.19), 0 10px 20px color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 17%, transparent);
+}
+
+.weather-settings-checkbox {
+  width: 19px;
+  height: 19px;
+  accent-color: var(--lumiverse-primary, #82a8ff);
+  filter: drop-shadow(0 2px 5px rgba(2, 12, 26, 0.28));
+}
+
+.weather-settings-range {
+  accent-color: var(--lumiverse-primary, #82a8ff);
+}
+
+.weather-settings-row {
+  gap: 8px;
+}
+
+.weather-settings-value {
+  min-width: 42px;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--lumi-glass-line) 66%, transparent);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: color-mix(in srgb, var(--lumiverse-text) 92%, white 8%);
+}
+
+.weather-settings-status-pill {
+  border-color: color-mix(in srgb, var(--lumi-glass-line) 80%, transparent);
+  background: rgba(255, 255, 255, 0.075);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.weather-settings-preset-grid {
+  gap: 9px;
+}
+
+.weather-settings-preset {
+  min-height: 72px;
+  border-color: color-mix(in srgb, var(--lumi-glass-line) 72%, transparent);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.025));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.weather-settings-preset:hover,
+.weather-settings-preset-active {
+  border-color: color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 58%, var(--lumi-glass-line));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 21%, rgba(255, 255, 255, 0.08)), rgba(255, 255, 255, 0.045));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 8px 20px color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 13%, transparent);
+}
+
+.weather-settings-manual-card {
+  border-color: color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 25%, var(--lumi-glass-line));
+}
+
 .weather-hud-widget {
   --weather-hud-shell-top: #16273d;
   --weather-hud-shell-mid: #17314f;
@@ -725,13 +1094,14 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
+  grid-template-columns: minmax(132px, 1fr) minmax(78px, 96px);
+  gap: 10px;
   align-items: end;
 }
 
 .weather-hud-primary {
   display: grid;
+  min-width: 0;
   gap: 4px;
 }
 
@@ -753,10 +1123,12 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-hud-time {
-  font-size: 35px;
+  font-size: 32px;
   font-weight: 700;
   letter-spacing: -0.05em;
   line-height: 0.94;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   text-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
 }
 
@@ -795,7 +1167,7 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-hud-summary {
-  max-width: 132px;
+  max-width: 96px;
   font-size: 11px;
   line-height: 1.35;
   color: var(--weather-hud-text-soft);
@@ -1580,6 +1952,22 @@ export const WEATHER_HUD_CSS = `
 }
 
 @media (max-width: 768px) {
+  .weather-settings-card-header {
+    align-items: start;
+  }
+
+  .weather-settings-status {
+    max-width: 52%;
+  }
+
+  .weather-settings-control-deck {
+    grid-template-columns: 1fr;
+  }
+
+  .weather-settings-control-deck .weather-settings-section:nth-child(3) {
+    grid-column: auto;
+  }
+
   .weather-settings-manual-grid,
   .weather-settings-preset-grid {
     grid-template-columns: 1fr;

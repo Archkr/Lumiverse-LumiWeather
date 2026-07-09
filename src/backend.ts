@@ -93,7 +93,7 @@ function buildTrackerMacro(): string {
 }
 
 function buildStaticStateMacro(): string {
-  return "The current story weather state is injected by Story Weather for the active chat during generation.";
+  return "The current LumiWeather scene state is injected for the active chat during generation.";
 }
 
 function pushMacroValues(): void {
@@ -108,7 +108,7 @@ function pushMacroValues(): void {
 
 function buildPromptInstruction(state: WeatherState | null): string {
   return [
-    "[Story Weather HUD]",
+    "[LumiWeather HUD]",
     "Keep the visible reply natural and in-character.",
     buildTrackerMacro(),
     `Current scene: ${summarizeWeatherState(state)}`,
@@ -236,7 +236,7 @@ async function pushActiveChatState(userId: string, explicitChatId?: string | nul
 for (const name of WEATHER_FORMAT_MACROS) {
   spindle.registerMacro({
     name,
-    category: "extension:story_weather",
+    category: "extension:lumiweather",
     description: "Example weather-state tag format",
     returnType: "string",
     handler: "",
@@ -246,7 +246,7 @@ for (const name of WEATHER_FORMAT_MACROS) {
 for (const name of WEATHER_TRACKER_MACROS) {
   spindle.registerMacro({
     name,
-    category: "extension:story_weather",
+    category: "extension:lumiweather",
     description: "Weather HUD scene tracking instructions",
     returnType: "string",
     handler: "",
@@ -256,8 +256,8 @@ for (const name of WEATHER_TRACKER_MACROS) {
 for (const name of WEATHER_STATE_MACROS) {
   spindle.registerMacro({
     name,
-    category: "extension:story_weather",
-    description: "Current story weather state summary",
+    category: "extension:lumiweather",
+    description: "Current LumiWeather scene state summary",
     returnType: "string",
     handler: "",
   });

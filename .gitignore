@@ -1,0 +1,10 @@
+node_modules/
+.bun/
+coverage/
+.cache/
+*.log
+*.tmp
+*.temp
+.DS_Store
+
+# Build output is intentionally tracked because spindle.json loads dist/*.js.

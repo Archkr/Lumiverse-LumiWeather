@@ -1,6 +1,6 @@
-# Story Weather
+# LumiWeather
 
-Story Weather is a Lumiverse extension that adds a draggable weather HUD and animated scene ambience to chat.
+LumiWeather is a Lumiverse extension that adds a draggable weather HUD and animated scene ambience to chat.
 
 It is built for story-driven use, not live forecast data. The model controls the scene by emitting a hidden `<weather-state>` tag, and the extension turns that into HUD updates, layered effects, and per-chat weather state.
 
@@ -33,7 +33,7 @@ Optional reference macros:
 {{weather_format}}
 ```
 
-`{{weather_tracker}}` is the canonical integration macro. The older aliases remain available for existing prompts; the current state is injected directly into generation, so `{{weather_state}}` is retained only as a compatibility marker. Story Weather no longer makes extra generation calls when a tag is missing.
+`{{weather_tracker}}` is the canonical integration macro. The older aliases remain available for existing prompts; the current state is injected directly into generation, so `{{weather_state}}` is retained only as a compatibility marker. LumiWeather no longer makes extra generation calls when a tag is missing.
 
 Supported aliases:
 
@@ -44,6 +44,8 @@ Supported aliases:
 - `{{story_weather_state}}`
 - `{{weather_format}}`
 - `{{story_weather_format}}`
+
+The legacy `story_weather_*` aliases and technical extension ID remain in place so existing installs and prompts update cleanly under the LumiWeather name.
 
 ## Hidden Tag Contract
 
@@ -87,7 +89,7 @@ Supported palettes:
 3. The frontend hides the tag from visible chat.
 4. The HUD updates only after the assistant message is complete, so streaming does not mutate the scene mid-reply.
 5. The backend stores the normalized weather state per chat.
-6. If the model does not emit a weather tag, the current scene remains unchanged and the HUD reports that it is waiting for story weather.
+6. If the model does not emit a weather tag, the current scene remains unchanged and the HUD reports that it is waiting for LumiWeather.
 
 Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice.
 
@@ -120,7 +122,7 @@ https://github.com/Archkr/Lumiverse-StoryWeather
 - Paste the repo URL into the repo URL field
 - Click `Install`
 
-3. Enable the extension and grant `interceptor`, `chats`, and `ui_panels` permissions. Story Weather does not request generation, message mutation, or app-manipulation permissions.
+3. Enable the extension and grant `interceptor`, `chats`, and `ui_panels` permissions. LumiWeather does not request generation, message mutation, or app-manipulation permissions.
 
 4. Open the extension settings panel and confirm the HUD/settings panel loaded correctly.
 

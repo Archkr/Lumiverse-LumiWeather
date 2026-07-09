@@ -28,7 +28,7 @@ function createLabeledInput(labelText: string, input: HTMLElement): HTMLLabelEle
 
 function createSection(titleText: string, copyText?: string) {
   const section = document.createElement("section");
-  section.className = "weather-settings-section";
+  section.className = "weather-settings-section weather-settings-glass-panel";
 
   const header = document.createElement("div");
   header.className = "weather-settings-section-header";
@@ -99,20 +99,49 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const header = document.createElement("header");
   header.className = "weather-settings-card-header";
 
+  const headerGlow = document.createElement("span");
+  headerGlow.className = "weather-settings-header-glow";
+
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "weather-settings-titlewrap";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "weather-settings-eyebrow";
+  eyebrow.textContent = "Ambient scene studio";
+
   const title = document.createElement("h3");
-  title.textContent = "Story Weather HUD";
+  title.textContent = "LumiWeather Studio";
+
+  titleWrap.appendChild(eyebrow);
+  titleWrap.appendChild(title);
 
   const status = document.createElement("span");
   status.className = "weather-settings-status";
 
-  header.appendChild(title);
+  header.appendChild(headerGlow);
+  header.appendChild(titleWrap);
   header.appendChild(status);
 
   const body = document.createElement("div");
   body.className = "weather-settings-card-body";
 
   const preview = document.createElement("div");
-  preview.className = "weather-settings-preview";
+  preview.className = "weather-settings-preview weather-settings-scene-hero";
+
+  const previewGlow = document.createElement("span");
+  previewGlow.className = "weather-settings-preview-glow";
+  const previewLabel = document.createElement("span");
+  previewLabel.className = "weather-settings-preview-label";
+  previewLabel.textContent = "Live chat scene";
+  const previewValue = document.createElement("strong");
+  previewValue.className = "weather-settings-preview-value";
+  const previewHint = document.createElement("span");
+  previewHint.className = "weather-settings-preview-hint";
+  previewHint.textContent = "Updates only from this chat's weather tag.";
+  preview.appendChild(previewGlow);
+  preview.appendChild(previewLabel);
+  preview.appendChild(previewValue);
+  preview.appendChild(previewHint);
 
   const promptSection = createSection(
     "Prompt integration",
@@ -264,7 +293,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   motionSection.body.appendChild(pauseLabel);
 
   const manualCard = document.createElement("section");
-  manualCard.className = "weather-settings-manual-card";
+  manualCard.className = "weather-settings-manual-card weather-settings-glass-panel";
 
   const manualHeader = document.createElement("div");
   manualHeader.className = "weather-settings-manual-header";
@@ -511,11 +540,15 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     sendToBackend({ type: "reset_widget_position" });
   });
 
+  const controlDeck = document.createElement("div");
+  controlDeck.className = "weather-settings-control-deck";
+  controlDeck.appendChild(effectsSection.section);
+  controlDeck.appendChild(placementSection.section);
+  controlDeck.appendChild(motionSection.section);
+
   body.appendChild(preview);
   body.appendChild(promptSection.section);
-  body.appendChild(effectsSection.section);
-  body.appendChild(placementSection.section);
-  body.appendChild(motionSection.section);
+  body.appendChild(controlDeck);
   body.appendChild(manualCard);
   body.appendChild(resetButton);
 
@@ -542,11 +575,16 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
       const displayTemperature = state ? formatTemperatureForUnit(state.temperature, prefs.temperatureUnit) : "";
 
+      const stateMode = statusOverride ? "notice" : state?.source ?? "waiting";
+      status.dataset.mode = stateMode;
+      preview.dataset.mode = stateMode;
+      preview.dataset.condition = state?.condition ?? "waiting";
+
       status.textContent = statusOverride ?? (state
         ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}`
-        : "Waiting for story weather");
+        : "Waiting for LumiWeather");
 
-      preview.textContent = state
+      previewValue.textContent = state
         ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind} | placement ${prefs.layerMode}`
         : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
 

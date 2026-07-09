@@ -514,12 +514,6 @@ function closestByClassFragment(start: Element | null, fragment: string): HTMLEl
   return asHTMLElement(start.closest(`[class*="${fragment}"]`));
 }
 
-function resolveInitialChatId(): string | null {
-  const source = [window.location.pathname, window.location.search, window.location.hash].join(" ");
-  const match = source.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
-  return match?.[0] ?? null;
-}
-
 function resolveSceneHosts(): SceneHostResolution {
   const backgroundLayer = asHTMLElement(document.querySelector('[class*="sceneBackgroundLayer"]'));
   const scrollRegion = asHTMLElement(document.querySelector('[data-chat-scroll="true"]'));
@@ -547,6 +541,13 @@ function readChatIdFromSettingsUpdate(payload: unknown): string | null | undefin
   const value = "value" in payload ? (payload as { value?: unknown }).value : undefined;
   if (typeof value !== "string" || !value.trim()) return null;
   return value;
+}
+
+function readChatIdFromChatSwitch(payload: unknown): string | null | undefined {
+  if (!payload || typeof payload !== "object" || !("chatId" in payload)) return undefined;
+  const value = (payload as { chatId?: unknown }).chatId;
+  if (typeof value === "string" && value.trim()) return value;
+  return value === null ? null : undefined;
 }
 
 function resolveSceneTokens(state: WeatherState, intensity: number): SceneTokens {
@@ -787,7 +788,7 @@ function createHudWidget(
     height: size.height,
     initialPosition,
     snapToEdge: true,
-    tooltip: "Story Weather HUD",
+    tooltip: "LumiWeather HUD",
     chromeless: true,
   });
 
@@ -802,7 +803,7 @@ function createHudWidget(
   titleWrap.className = "weather-hud-titlewrap";
   const eyebrow = document.createElement("div");
   eyebrow.className = "weather-hud-eyebrow";
-  eyebrow.textContent = "Story Weather";
+  eyebrow.textContent = "LumiWeather";
   const source = document.createElement("span");
   source.className = "weather-hud-source";
   titleWrap.appendChild(eyebrow);
@@ -1097,7 +1098,7 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   hud.summary.textContent = state ? displayState.summary : "Waiting for the first weather tag";
   hud.wind.textContent = state ? `Wind ${displayState.wind}` : "Add {{weather_tracker}} to the prompt";
-  hud.location.textContent = state ? displayState.location : "Waiting for story weather";
+  hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.source.textContent = state ? (displayState.source === "manual" ? "Scene lock" : "Story sync") : "Waiting";
   hud.drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
   hud.drawerToggleIcon.innerHTML = expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
@@ -1220,7 +1221,9 @@ export function setup(ctx: SpindleFrontendContext) {
 
   let currentPrefs: WeatherPrefs = DEFAULT_PREFS;
   let currentState: WeatherState | null = null;
-  let activeChatId: string | null = resolveInitialChatId();
+  // The route can contain a character UUID, so only Lumiverse's active-chat state
+  // and CHAT_SWITCHED events are authoritative for chat-scoped weather storage.
+  let activeChatId: string | null = null;
   let activeChatRequestId = 0;
   let hudExpanded = false;
   let permissionWarning: string | null = null;
@@ -1561,35 +1564,30 @@ export function setup(ctx: SpindleFrontendContext) {
   });
   cleanups.push(msgUnsub);
 
-  const chatChangedUnsub = ctx.events.on("CHAT_CHANGED", (payload: unknown) => {
-    const chatId =
-      payload && typeof payload === "object" && "chatId" in payload
-        ? (payload as { chatId?: string }).chatId ?? null
-        : null;
+  const requestActiveChatState = (chatId: string | null) => {
+    if (chatId === activeChatId && activeChatRequestId > 0) return;
     activeChatId = chatId;
     currentState = null;
     processedWeatherTags.clear();
     queueFxRootAttach();
     activeChatRequestId += 1;
     sendToBackend(ctx, { type: "chat_changed", chatId, requestId: activeChatRequestId });
+    updateScene();
+  };
+
+  const chatSwitchedUnsub = ctx.events.on("CHAT_SWITCHED", (payload: unknown) => {
+    const chatId = readChatIdFromChatSwitch(payload);
+    if (typeof chatId !== "undefined") requestActiveChatState(chatId);
   });
-  cleanups.push(chatChangedUnsub);
+  cleanups.push(chatSwitchedUnsub);
 
   const settingsChangedUnsub = ctx.events.on("SETTINGS_UPDATED", (payload: unknown) => {
     const nextChatId = readChatIdFromSettingsUpdate(payload);
-    if (typeof nextChatId === "undefined") return;
-    activeChatId = nextChatId;
-    currentState = null;
-    processedWeatherTags.clear();
-    queueFxRootAttach();
-    activeChatRequestId += 1;
-    sendToBackend(ctx, { type: "chat_changed", chatId: nextChatId, requestId: activeChatRequestId });
+    if (typeof nextChatId !== "undefined") requestActiveChatState(nextChatId);
   });
   cleanups.push(settingsChangedUnsub);
 
   sendToBackend(ctx, { type: "frontend_ready" });
-  activeChatRequestId += 1;
-  sendToBackend(ctx, { type: "chat_changed", chatId: activeChatId, requestId: activeChatRequestId });
   queueFxRootAttach();
   updateScene();
   void ctx.permissions.getGranted().then((granted) => {
