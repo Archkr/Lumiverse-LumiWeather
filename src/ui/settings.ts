@@ -1,5 +1,5 @@
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "../presets";
-import { formatTemperatureForUnit } from "../shared";
+import { formatTemperatureForUnit, parseStoryDateTime } from "../shared";
 import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherState } from "../types";
 
 const CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
@@ -7,7 +7,7 @@ const PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mi
 
 export interface SettingsUI {
   root: HTMLElement;
-  sync(prefs: WeatherPrefs, state: WeatherState | null): void;
+  sync(prefs: WeatherPrefs, state: WeatherState | null, statusOverride?: string): void;
   destroy(): void;
 }
 
@@ -52,6 +52,15 @@ function createSection(titleText: string, copyText?: string) {
   section.appendChild(body);
 
   return { section, body };
+}
+
+function formatRelativeTime(timestampMs: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - timestampMs) / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.round(minutes / 60)}h ago`;
 }
 
 function applyStateToInputs(
@@ -137,7 +146,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const promptOptionalCopy = document.createElement("p");
   promptOptionalCopy.className = "weather-settings-section-copy";
-  promptOptionalCopy.textContent = "Use these only if you want to expose the current scene summary or the raw tag example elsewhere in the prompt.";
+  promptOptionalCopy.textContent = "These legacy aliases remain available for existing prompts. Current scene state is injected automatically; the format alias is useful only when you want to show the tag contract explicitly.";
 
   promptOptional.appendChild(promptOptionalLabel);
   promptOptional.appendChild(promptOptionalCopy);
@@ -208,7 +217,11 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   intensitySlider.addEventListener("input", () => {
     intensityValue.textContent = `${Math.round(Number.parseFloat(intensitySlider.value) * 100)}%`;
-    sendToBackend({ type: "save_prefs", prefs: { intensity: Number.parseFloat(intensitySlider.value) } });
+    if (intensitySaveTimer !== null) window.clearTimeout(intensitySaveTimer);
+    intensitySaveTimer = window.setTimeout(() => {
+      sendToBackend({ type: "save_prefs", prefs: { intensity: Number.parseFloat(intensitySlider.value) } });
+      intensitySaveTimer = null;
+    }, 120);
   });
 
   intensityRow.appendChild(intensitySlider);
@@ -279,6 +292,11 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualHint.className = "weather-settings-manual-hint";
   manualHint.textContent = "Quick presets apply immediately. The full editor below lets you refine the current scene and keep it locked until you resume story sync.";
 
+  const manualError = document.createElement("p");
+  manualError.className = "weather-settings-error";
+  manualError.setAttribute("role", "alert");
+  manualError.hidden = true;
+
   const manualToggle = document.createElement("input");
   manualToggle.type = "checkbox";
   manualToggle.className = "weather-settings-checkbox";
@@ -336,6 +354,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const sceneIntensityValue = document.createElement("span");
   sceneIntensityValue.className = "weather-settings-value";
   sceneIntensity.addEventListener("input", () => {
+    manualDraftDirty = true;
+    manualError.hidden = true;
     sceneIntensityValue.textContent = `${Math.round(Number.parseFloat(sceneIntensity.value) * 100)}%`;
   });
   sceneIntensityRow.appendChild(sceneIntensity);
@@ -355,6 +375,18 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   };
 
   let currentState: WeatherState | null = null;
+  let manualDraftDirty = false;
+  let intensitySaveTimer: number | null = null;
+
+  const markManualDraftDirty = () => {
+    manualDraftDirty = true;
+    manualError.hidden = true;
+  };
+
+  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, summaryInput]) {
+    field.addEventListener("input", markManualDraftDirty);
+    field.addEventListener("change", markManualDraftDirty);
+  }
 
   const buildManualState = (): Partial<WeatherState> => ({
     location: locationInput.value.trim() || currentState?.location,
@@ -377,7 +409,22 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   };
 
   const applyManualState = (state?: Partial<WeatherState>) => {
-    sendToBackend({ type: "set_manual_state", state: state ?? buildManualState() });
+    const nextState = state ?? buildManualState();
+    const hasDate = typeof nextState.date === "string" && nextState.date.trim();
+    const hasTime = typeof nextState.time === "string" && nextState.time.trim();
+    if ((hasDate && !hasTime) || (!hasDate && hasTime) || (hasDate && hasTime && parseStoryDateTime(nextState.date!, nextState.time!) === null)) {
+      manualError.textContent = "Use a valid story date and time, such as 2026-03-24 and 9:42 PM.";
+      manualError.hidden = false;
+      return;
+    }
+    if (typeof nextState.temperature === "string" && nextState.temperature.trim() && !/^-?\d+(?:\.\d+)?\s*°?\s*(?:F|C|fahrenheit|celsius)$/i.test(nextState.temperature.trim())) {
+      manualError.textContent = "Temperature must include a numeric value and F or C, such as 61F or 16C.";
+      manualError.hidden = false;
+      return;
+    }
+    manualDraftDirty = false;
+    manualError.hidden = true;
+    sendToBackend({ type: "set_manual_state", state: nextState });
   };
 
   for (const preset of WEATHER_SCENE_PRESETS) {
@@ -393,6 +440,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       if (!nextState) return;
       manualToggle.checked = true;
       applyStateToInputs(nextState, fields);
+      manualDraftDirty = false;
       applyManualState(nextState);
     });
     presetButtons.set(preset.id, button);
@@ -403,6 +451,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     if (manualToggle.checked) {
       applyManualState();
     } else {
+      manualDraftDirty = false;
       sendToBackend({ type: "clear_manual_override" });
     }
   });
@@ -424,6 +473,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualActions.className = "weather-settings-actions";
 
   const applyButton = document.createElement("button");
+  applyButton.type = "button";
   applyButton.className = "weather-settings-button weather-settings-button-primary";
   applyButton.textContent = "Apply manual weather";
   applyButton.addEventListener("click", () => {
@@ -432,10 +482,12 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   });
 
   const resumeButton = document.createElement("button");
+  resumeButton.type = "button";
   resumeButton.className = "weather-settings-button";
   resumeButton.textContent = "Resume story sync";
   resumeButton.addEventListener("click", () => {
     manualToggle.checked = false;
+    manualDraftDirty = false;
     sendToBackend({ type: "clear_manual_override" });
   });
 
@@ -444,6 +496,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   manualCard.appendChild(manualHeader);
   manualCard.appendChild(manualHint);
+  manualCard.appendChild(manualError);
   manualCard.appendChild(manualToggleLabel);
   manualCard.appendChild(presetGrid);
   manualCard.appendChild(manualGrid);
@@ -451,6 +504,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualCard.appendChild(manualActions);
 
   const resetButton = document.createElement("button");
+  resetButton.type = "button";
   resetButton.className = "weather-settings-button";
   resetButton.textContent = "Reset HUD position";
   resetButton.addEventListener("click", () => {
@@ -470,7 +524,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   return {
     root,
-    sync(prefs, state) {
+    sync(prefs, state, statusOverride) {
       currentState = state;
       effectsToggle.checked = prefs.effectsEnabled;
       layerSelect.value = prefs.layerMode;
@@ -480,11 +534,17 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       motionSelect.value = prefs.reducedMotion;
       pauseToggle.checked = prefs.pauseEffects;
 
+      const chatAvailable = statusOverride !== "No active chat";
+      manualToggle.disabled = !chatAvailable;
+      applyButton.disabled = !chatAvailable;
+      resumeButton.disabled = !chatAvailable || !state || state.source === "story";
+      for (const button of presetButtons.values()) button.disabled = !chatAvailable;
+
       const displayTemperature = state ? formatTemperatureForUnit(state.temperature, prefs.temperatureUnit) : "";
 
-      status.textContent = state
-        ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature}`
-        : "Waiting for story weather";
+      status.textContent = statusOverride ?? (state
+        ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}`
+        : "Waiting for story weather");
 
       preview.textContent = state
         ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind} | placement ${prefs.layerMode}`
@@ -494,9 +554,9 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       manualModePill.dataset.mode = state?.source === "manual" ? "manual" : "story";
       manualToggle.checked = state?.source === "manual";
 
-      if (state) {
+      if (state && !manualDraftDirty) {
         applyStateToInputs(state, fields);
-      } else {
+      } else if (!state && !manualDraftDirty) {
         conditionSelect.value = "clear";
         paletteSelect.value = "day";
         locationInput.value = "";
@@ -512,6 +572,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       updatePresetSelection(state);
     },
     destroy() {
+      if (intensitySaveTimer !== null) window.clearTimeout(intensitySaveTimer);
       root.remove();
     },
   };

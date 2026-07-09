@@ -23,7 +23,7 @@ export const DEFAULT_PREFS: WeatherPrefs = {
   effectsEnabled: true,
   layerMode: "both",
   intensity: 1,
-  reducedMotion: "never",
+  reducedMotion: "system",
   temperatureUnit: "fahrenheit",
   pauseEffects: false,
   widgetPosition: null,
@@ -43,21 +43,36 @@ function normalizeText(value: unknown, fallback: string, maxLength: number): str
   return trimmed ? trimmed.slice(0, maxLength) : fallback;
 }
 
-function normalizeCondition(value: unknown, fallback: WeatherCondition): WeatherCondition {
-  return typeof value === "string" && WEATHER_CONDITIONS.includes(value as WeatherCondition)
-    ? (value as WeatherCondition)
-    : fallback;
-}
+const CONDITION_ALIASES: Record<string, WeatherCondition> = {
+  clear: "clear",
+  sunny: "clear",
+  bright: "clear",
+  cloudy: "cloudy",
+  overcast: "cloudy",
+  "partly cloudy": "cloudy",
+  rain: "rain",
+  rainy: "rain",
+  drizzle: "rain",
+  storm: "storm",
+  stormy: "storm",
+  thunderstorm: "storm",
+  snow: "snow",
+  snowy: "snow",
+  flurries: "snow",
+  fog: "fog",
+  mist: "fog",
+  hazy: "fog",
+};
 
-function normalizeLayer(value: unknown, fallback: WeatherLayerMode): WeatherLayerMode {
-  return typeof value === "string" && WEATHER_LAYERS.includes(value as WeatherLayerMode)
-    ? (value as WeatherLayerMode)
-    : fallback;
+function normalizeCondition(value: unknown, fallback: WeatherCondition): WeatherCondition {
+  if (typeof value !== "string") return fallback;
+  return CONDITION_ALIASES[value.trim().toLowerCase()] ?? fallback;
 }
 
 function normalizePalette(value: unknown, fallback: WeatherPalette): WeatherPalette {
-  return typeof value === "string" && WEATHER_PALETTES.includes(value as WeatherPalette)
-    ? (value as WeatherPalette)
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return WEATHER_PALETTES.includes(normalized as WeatherPalette)
+    ? (normalized as WeatherPalette)
     : fallback;
 }
 
@@ -80,7 +95,7 @@ function normalizeSource(value: unknown, fallback: WeatherSourceMode): WeatherSo
 function parseNumeric(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseFloat(value);
+    const parsed = Number(value.trim());
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
@@ -101,33 +116,37 @@ export function formatTime(date: Date): string {
   return `${hours12}:${pad2(date.getMinutes())} ${suffix}`;
 }
 
-function parseHourFromTimeString(timeValue: string): number | null {
-  const time12 = timeValue.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
+export function parseHourFromTimeString(timeValue: string): number | null {
+  const normalizedTime = timeValue.trim();
+  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
   if (time12) {
     let hours = Number.parseInt(time12[1], 10);
     if (hours < 1 || hours > 12) return null;
     const minutes = Number.parseInt(time12[2], 10);
-    if (minutes > 59) return null;
+    const seconds = time12[3] ? Number.parseInt(time12[3], 10) : 0;
+    if (minutes > 59 || seconds > 59) return null;
     const meridiem = time12[4].toUpperCase();
     if (meridiem === "PM" && hours < 12) hours += 12;
     if (meridiem === "AM" && hours === 12) hours = 0;
     return hours;
   }
 
-  const time24 = timeValue.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!time24) return null;
   const hours = Number.parseInt(time24[1], 10);
   const minutes = Number.parseInt(time24[2], 10);
-  if (hours > 23 || minutes > 59) return null;
+  const seconds = time24[3] ? Number.parseInt(time24[3], 10) : 0;
+  if (hours > 23 || minutes > 59 || seconds > 59) return null;
   return hours;
 }
 
 export function parseStoryDateTime(dateValue: string, timeValue: string): number | null {
-  const dateMatch = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const dateMatch = dateValue.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!dateMatch) return null;
 
-  const time12 = timeValue.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/i);
-  const time24 = timeValue.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const normalizedTime = timeValue.trim();
+  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/i);
+  const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
 
   let hours = 0;
   let minutes = 0;
@@ -153,8 +172,20 @@ export function parseStoryDateTime(dateValue: string, timeValue: string): number
   const year = Number.parseInt(dateMatch[1], 10);
   const month = Number.parseInt(dateMatch[2], 10);
   const day = Number.parseInt(dateMatch[3], 10);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
   const parsed = new Date(year, month - 1, day, hours, minutes, seconds, 0);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day ||
+    parsed.getHours() !== hours ||
+    parsed.getMinutes() !== minutes ||
+    parsed.getSeconds() !== seconds
+  ) {
+    return null;
+  }
+  return parsed.getTime();
 }
 
 function derivePalette(condition: WeatherCondition, dateValue: string, timeValue: string): WeatherPalette {
@@ -183,18 +214,18 @@ function derivePalette(condition: WeatherCondition, dateValue: string, timeValue
 
 export function makeDefaultWeatherState(now = Date.now()): WeatherState {
   const date = new Date(now);
+  const dateValue = formatDate(date);
+  const timeValue = formatTime(date);
   return {
     location: "Story setting",
-    date: formatDate(date),
-    time: formatTime(date),
+    date: dateValue,
+    time: timeValue,
     condition: "clear",
     summary: "Calm skies",
     temperature: "68F",
     intensity: 0.3,
     wind: "still",
-    layer: "both",
-    palette: "day",
-    timestampMs: date.getTime(),
+    palette: derivePalette("clear", dateValue, timeValue),
     updatedAt: now,
     source: "story",
   };
@@ -203,9 +234,11 @@ export function makeDefaultWeatherState(now = Date.now()): WeatherState {
 export function normalizeWeatherState(input: unknown, previous?: WeatherState | null): WeatherState {
   const fallback = previous ?? makeDefaultWeatherState();
   const source = isRecord(input) ? input : {};
-  const date = normalizeText(source.date, fallback.date, 24);
-  const time = normalizeText(source.time, fallback.time, 16);
-  const timestampMs = parseStoryDateTime(date, time);
+  const candidateDate = normalizeText(source.date, fallback.date, 24);
+  const candidateTime = normalizeText(source.time, fallback.time, 16);
+  const hasValidDateTime = parseStoryDateTime(candidateDate, candidateTime) !== null;
+  const date = hasValidDateTime ? candidateDate : fallback.date;
+  const time = hasValidDateTime ? candidateTime : fallback.time;
   const condition = normalizeCondition(source.condition, fallback.condition);
   const palette = normalizePalette(source.palette, derivePalette(condition, date, time));
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
@@ -220,9 +253,7 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
     temperature: normalizeText(source.temperature, fallback.temperature, 16),
     intensity,
     wind: normalizeText(source.wind, fallback.wind, 32),
-    layer: normalizeLayer(source.layer, fallback.layer),
     palette,
-    timestampMs: timestampMs ?? fallback.timestampMs,
     updatedAt,
     source: normalizeSource(source.source, fallback.source),
   };
@@ -234,7 +265,7 @@ export function normalizeWeatherTag(attrs: Record<string, string>, previous?: We
 
 export function formatTemperatureForUnit(value: string, unit: TemperatureUnit): string {
   const trimmed = value.trim();
-  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*([FC])\b/i);
+  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*([FC])(?:ahrenheit|elsius)?\b/i);
   if (!match) return trimmed;
 
   const amount = Number.parseFloat(match[1]);

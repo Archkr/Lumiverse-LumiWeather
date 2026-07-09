@@ -1,13 +1,13 @@
 {
   "identifier": "story_weather",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "name": "Story Weather",
   "author": "Archkr",
   "github": "https://github.com/Archkr/Lumiverse-StoryWeather",
   "homepage": "https://lumiverse.chat",
   "description": "Story-driven weather, date, and time HUD with layered ambient effects for chat scenes.",
-  "permissions": ["interceptor", "ui_panels", "app_manipulation", "chats", "generation", "chat_mutation"],
+  "permissions": ["interceptor", "ui_panels", "chats"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
-  "minimum_lumiverse_version": "0.1.0"
+  "minimum_lumiverse_version": "1.0.6"
 }

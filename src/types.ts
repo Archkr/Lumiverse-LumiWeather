@@ -19,9 +19,7 @@ export interface WeatherState {
   temperature: string;
   intensity: number;
   wind: string;
-  layer: WeatherLayerMode;
   palette: WeatherPalette;
-  timestampMs: number | null;
   updatedAt: number;
   source: WeatherSourceMode;
 }
@@ -38,7 +36,7 @@ export interface WeatherPrefs {
 
 export type FrontendToBackend =
   | { type: "frontend_ready" }
-  | { type: "chat_changed"; chatId: string | null }
+  | { type: "chat_changed"; chatId: string | null; requestId?: number }
   | {
       type: "weather_tag_intercepted";
       chatId: string | null;
@@ -53,6 +51,6 @@ export type FrontendToBackend =
 
 export type BackendToFrontend =
   | { type: "prefs"; prefs: WeatherPrefs }
-  | { type: "active_chat_state"; chatId: string | null; state: WeatherState | null }
+  | { type: "active_chat_state"; chatId: string | null; state: WeatherState | null; requestId?: number }
   | { type: "weather_state"; chatId: string | null; state: WeatherState }
   | { type: "error"; message: string };

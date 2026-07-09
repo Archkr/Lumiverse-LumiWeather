@@ -1,16 +1,24 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "./presets";
-import { DEFAULT_PREFS, WEATHER_TAG_NAME, clamp, formatTemperatureForUnit, makeDefaultWeatherState } from "./shared";
+import {
+  DEFAULT_PREFS,
+  WEATHER_TAG_NAME,
+  clamp,
+  formatTemperatureForUnit,
+  makeDefaultWeatherState,
+  parseHourFromTimeString,
+} from "./shared";
 import type {
   BackendToFrontend,
   FrontendToBackend,
   WeatherCondition,
-  WeatherLayerMode,
   WeatherPrefs,
   WeatherState,
 } from "./types";
+import { shouldApplyChatState } from "./state-utils";
 import { createSettingsUI } from "./ui/settings";
 import { WEATHER_HUD_CSS } from "./ui/styles";
+import { shouldProcessWeatherTag } from "./tag-utils";
 
 const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 12.98a7.79 7.79 0 000-1.96l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.88 7.88 0 00-1.69-.98l-.36-2.54a.5.5 0 00-.49-.42h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.6.24-1.16.56-1.69.98l-2.39-.96a.5.5 0 00-.6.22L2.43 8.8a.5.5 0 00.12.64l2.03 1.58a7.79 7.79 0 000 1.96L2.55 14.56a.5.5 0 00-.12.64l1.92 3.32a.5.5 0 00.6.22l2.39-.96c.53.42 1.09.74 1.69.98l.36 2.54a.5.5 0 00.49.42h3.84a.5.5 0 00.49-.42l.36-2.54c.6-.24 1.16-.56 1.69-.98l2.39.96a.5.5 0 00.6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8a3.5 3.5 0 010 7.5z"/></svg>`;
 const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
@@ -31,8 +39,8 @@ type FloatWidgetHandle = ReturnType<SpindleFrontendContext["ui"]["createFloatWid
 type FxRoot = {
   root: HTMLDivElement;
   host: HTMLElement | null;
-  releaseHost: (() => void) | null;
   kind: "back" | "front";
+  poolCondition: WeatherCondition | null;
 };
 
 type SceneHostResolution = {
@@ -120,47 +128,17 @@ function conditionIcon(condition: WeatherCondition): string {
   }
 }
 
-function titleCase(value: string): string {
-  return value
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function parseHourFromTimeLabel(value: string): number | null {
-  const match = value.trim().match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i);
-  if (!match) return null;
-
-  let hour = Number.parseInt(match[1], 10);
-  if (!Number.isFinite(hour)) return null;
-
-  const meridiem = (match[3] || "").toUpperCase();
-  if (meridiem === "AM") {
-    if (hour === 12) hour = 0;
-  } else if (meridiem === "PM") {
-    if (hour < 12) hour += 12;
-  }
-
-  return clamp(hour, 0, 23);
-}
-
 function resolveHudTimePhase(state: WeatherState, liveDate: Date | null): HudTimePhase {
   if (state.palette === "dawn" || state.palette === "day" || state.palette === "dusk" || state.palette === "night") {
     return state.palette;
   }
 
-  const hour = liveDate?.getHours() ?? parseHourFromTimeLabel(state.time);
+  const hour = liveDate?.getHours() ?? parseHourFromTimeString(state.time);
   if (hour === null) return "day";
   if (hour >= 5 && hour < 8) return "dawn";
   if (hour >= 8 && hour < 18) return "day";
   if (hour >= 18 && hour < 21) return "dusk";
   return "night";
-}
-
-function formatHudPaletteLabel(state: WeatherState, phase: HudTimePhase): string {
-  if (state.palette === "storm" || state.palette === "mist" || state.palette === "snow") {
-    return titleCase(state.palette);
-  }
-  return titleCase(phase);
 }
 
 function sendToBackend(ctx: SpindleFrontendContext, payload: FrontendToBackend): void {
@@ -278,12 +256,13 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     snow.className = "weather-fx-snow";
     root.appendChild(snow);
 
-    const cloudCount = 12;
+    const compact = window.matchMedia("(max-width: 768px)").matches;
+    const cloudCount = compact ? 6 : 8;
     for (let index = 0; index < cloudCount; index += 1) {
       clouds.appendChild(createCloudElement(index, cloudCount));
     }
 
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < (compact ? 3 : 4); index += 1) {
       fog.appendChild(
         createSpan("weather-fx-fog-band", {
           "--fog-width": `${240 + Math.round(Math.random() * 320)}px`,
@@ -297,7 +276,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < (compact ? 2 : 3); index += 1) {
       mist.appendChild(
         createSpan("weather-fx-mist-plume", {
           "--mist-width": `${260 + Math.round(Math.random() * 280)}px`,
@@ -311,7 +290,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 18; index += 1) {
+    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
       motes.appendChild(
         createSpan("weather-fx-mote", {
           "--mote-left": `${Math.round(Math.random() * 100)}%`,
@@ -326,7 +305,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 16; index += 1) {
+    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
       windStreaks.appendChild(
         createSpan("weather-fx-wind-streak", {
           "--streak-top": `${Math.round(Math.random() * 82)}%`,
@@ -338,7 +317,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 64; index += 1) {
+    for (let index = 0; index < (compact ? 14 : 24); index += 1) {
       rain.appendChild(
         createSpan("weather-fx-rain-drop", {
           "--drop-left": `${Math.round(Math.random() * 104)}%`,
@@ -357,7 +336,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     splashes.className = "weather-fx-rain-splashes";
     root.appendChild(splashes);
 
-    for (let index = 0; index < 28; index += 1) {
+    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
       splashes.appendChild(
         createSpan("weather-fx-rain-splash", {
           "--splash-left": `${Math.round(Math.random() * 100)}%`,
@@ -373,7 +352,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     ripples.className = "weather-fx-rain-ripples";
     root.appendChild(ripples);
 
-    for (let index = 0; index < 18; index += 1) {
+    for (let index = 0; index < (compact ? 3 : 5); index += 1) {
       ripples.appendChild(
         createSpan("weather-fx-rain-ripple", {
           "--ripple-left": `${Math.round(Math.random() * 100)}%`,
@@ -385,7 +364,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 42; index += 1) {
+    for (let index = 0; index < (compact ? 10 : 18); index += 1) {
       const flake = createSpan("weather-fx-snow-flake", {
         "--flake-left": `${Math.round(Math.random() * 102)}%`,
         "--flake-top": `${(-18 - Math.random() * 18).toFixed(2)}%`,
@@ -429,7 +408,8 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     snow.className = "weather-fx-snow weather-fx-snow-front";
     root.appendChild(snow);
 
-    for (let index = 0; index < 92; index += 1) {
+    const compact = window.matchMedia("(max-width: 768px)").matches;
+    for (let index = 0; index < (compact ? 24 : 40); index += 1) {
       rain.appendChild(
         createSpan("weather-fx-rain-drop weather-fx-rain-drop-front", {
           "--drop-left": `${Math.round(Math.random() * 104)}%`,
@@ -448,7 +428,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     splashes.className = "weather-fx-rain-splashes weather-fx-rain-splashes-front";
     root.appendChild(splashes);
 
-    for (let index = 0; index < 36; index += 1) {
+    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
       splashes.appendChild(
         createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
           "--splash-left": `${Math.round(Math.random() * 100)}%`,
@@ -460,7 +440,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < 58; index += 1) {
+    for (let index = 0; index < (compact ? 12 : 20); index += 1) {
       const flake = createSpan("weather-fx-snow-flake weather-fx-snow-flake-front", {
         "--flake-left": `${Math.round(Math.random() * 102)}%`,
         "--flake-top": `${(-18 - Math.random() * 20).toFixed(2)}%`,
@@ -484,102 +464,54 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
 
   root.appendChild(flash);
 
-  return { root, host: null, releaseHost: null, kind };
+  return { root, host: null, kind, poolCondition: null };
+}
+
+function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): void {
+  const rainLike = condition === "rain" || condition === "storm";
+  const cloudLike = condition === "cloudy" || rainLike || condition === "snow";
+  const fogLike = condition === "fog" || condition === "snow" || rainLike;
+
+  if (!cloudLike) root.querySelector(".weather-fx-clouds")?.remove();
+  if (!fogLike) {
+    root.querySelector(".weather-fx-fog")?.remove();
+    root.querySelector(".weather-fx-mist")?.remove();
+  }
+  if (condition !== "clear") root.querySelector(".weather-fx-motes")?.remove();
+  if (!rainLike) {
+    root.querySelector(".weather-fx-wind-streaks")?.remove();
+    root.querySelector(".weather-fx-rain")?.remove();
+    root.querySelector(".weather-fx-rain-splashes")?.remove();
+    root.querySelector(".weather-fx-rain-ripples")?.remove();
+  }
+  if (condition !== "snow") {
+    root.querySelector(".weather-fx-snow")?.remove();
+    root.querySelector(".weather-fx-snow-bank")?.remove();
+    root.querySelector(".weather-fx-frost")?.remove();
+  }
+  if (condition !== "storm") {
+    root.querySelector(".weather-fx-lightning")?.remove();
+    root.querySelector(".weather-fx-lightning-glow")?.remove();
+  }
+  if (root.dataset.kind === "front" && !rainLike) root.querySelector(".weather-fx-rain-splashes")?.remove();
+}
+
+function syncFxCondition(fxRoot: FxRoot, condition: WeatherCondition | null): void {
+  if (fxRoot.poolCondition === condition) return;
+
+  const next = createFxMarkup(fxRoot.kind);
+  pruneFxMarkup(next.root, condition);
+  fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
+  fxRoot.poolCondition = condition;
 }
 
 function asHTMLElement(element: Element | null): HTMLElement | null {
   return element instanceof HTMLElement ? element : null;
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function parseTagAttributes(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const attrRe = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRe.exec(raw)) !== null) {
-    const key = match[1] || "";
-    if (!key) continue;
-    out[key] = match[2] ?? match[3] ?? match[4] ?? "";
-  }
-  return out;
-}
-
-function extractWeatherTagFromContent(content: string): { attrs: Record<string, string>; fullMatch: string } | null {
-  const tagName = escapeRegex(WEATHER_TAG_NAME);
-  const tagRe = new RegExp(String.raw`<${tagName}\b([^>]*?)(?:\/>|>[\s\S]*?<\/${tagName}>)`, "ig");
-  let match: RegExpExecArray | null;
-  let lastMatch: { attrs: Record<string, string>; fullMatch: string } | null = null;
-  while ((match = tagRe.exec(content)) !== null) {
-    lastMatch = {
-      attrs: parseTagAttributes(match[1] || ""),
-      fullMatch: match[0] || "",
-    };
-  }
-  return lastMatch;
-}
-
 function closestByClassFragment(start: Element | null, fragment: string): HTMLElement | null {
   if (!(start instanceof Element)) return null;
   return asHTMLElement(start.closest(`[class*="${fragment}"]`));
-}
-
-function listUsableAncestors(start: HTMLElement | null): HTMLElement[] {
-  const nodes: HTMLElement[] = [];
-  let current = start;
-  while (current && current !== document.body && current !== document.documentElement) {
-    nodes.push(current);
-    current = current.parentElement instanceof HTMLElement ? current.parentElement : null;
-  }
-  return nodes;
-}
-
-function lowestCommonAncestor(...nodes: Array<HTMLElement | null>): HTMLElement | null {
-  const filtered = nodes.filter((node): node is HTMLElement => node instanceof HTMLElement);
-  if (filtered.length === 0) return null;
-  if (filtered.length === 1) return filtered[0];
-
-  const chains = filtered.map((node) => listUsableAncestors(node));
-  for (const candidate of chains[0]) {
-    if (chains.every((chain) => chain.includes(candidate))) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function scoreSceneHost(host: HTMLElement | null): number {
-  if (!(host instanceof HTMLElement)) return -1;
-  const rect = host.getBoundingClientRect();
-  const width = Math.max(0, rect.width || host.clientWidth);
-  const height = Math.max(0, rect.height || host.clientHeight);
-  if (width < 120 || height < 120) return -1;
-  const viewportWidth = Math.max(window.innerWidth, 1);
-  const viewportHeight = Math.max(window.innerHeight, 1);
-  const widthRatio = Math.min(1.25, width / viewportWidth);
-  const heightRatio = Math.min(1.25, height / viewportHeight);
-  const centeredness = 1 - Math.min(1, Math.abs((rect.left + rect.width / 2) - viewportWidth / 2) / viewportWidth);
-  return widthRatio * 4 + heightRatio * 2 + centeredness;
-}
-
-function pickBestSceneHost(candidates: Array<HTMLElement | null>): HTMLElement | null {
-  let best: HTMLElement | null = null;
-  let bestScore = -1;
-  const seen = new Set<HTMLElement>();
-
-  for (const candidate of candidates) {
-    if (!(candidate instanceof HTMLElement) || seen.has(candidate)) continue;
-    seen.add(candidate);
-    const score = scoreSceneHost(candidate);
-    if (score > bestScore) {
-      best = candidate;
-      bestScore = score;
-    }
-  }
-
-  return best;
 }
 
 function resolveInitialChatId(): string | null {
@@ -590,7 +522,6 @@ function resolveInitialChatId(): string | null {
 
 function resolveSceneHosts(): SceneHostResolution {
   const backgroundLayer = asHTMLElement(document.querySelector('[class*="sceneBackgroundLayer"]'));
-  const textContextLayer = asHTMLElement(document.querySelector('[class*="sceneTextContextLayer"]'));
   const scrollRegion = asHTMLElement(document.querySelector('[data-chat-scroll="true"]'));
   const chatColumnInner =
     closestByClassFragment(scrollRegion, "chatColumnInner") ??
@@ -598,34 +529,11 @@ function resolveSceneHosts(): SceneHostResolution {
   const chatColumn =
     closestByClassFragment(scrollRegion, "chatColumn") ??
     (chatColumnInner?.parentElement instanceof HTMLElement ? chatColumnInner.parentElement : chatColumnInner);
-  const sceneBody =
-    closestByClassFragment(scrollRegion, "body") ??
-    (chatColumn?.parentElement instanceof HTMLElement ? chatColumn.parentElement : null);
-  const sceneContainer =
-    closestByClassFragment(backgroundLayer, "container") ??
-    closestByClassFragment(sceneBody, "container") ??
-    (sceneBody?.parentElement instanceof HTMLElement
-      ? sceneBody.parentElement
-      : backgroundLayer?.parentElement instanceof HTMLElement
-        ? backgroundLayer.parentElement
-        : null);
-  const sceneCommonAncestor = lowestCommonAncestor(backgroundLayer, sceneBody, chatColumn, chatColumnInner, scrollRegion);
-  const backHost = pickBestSceneHost([
-    sceneCommonAncestor,
-    sceneContainer,
-    backgroundLayer?.parentElement instanceof HTMLElement ? backgroundLayer.parentElement : null,
-    textContextLayer?.parentElement instanceof HTMLElement ? textContextLayer.parentElement : null,
-    sceneBody,
-    ...listUsableAncestors(sceneCommonAncestor).slice(0, 4),
-  ]) ?? sceneContainer ?? sceneBody ?? backgroundLayer?.parentElement ?? chatColumn ?? chatColumnInner ?? scrollRegion;
-  const preferredBackBefore = textContextLayer ?? sceneBody;
-  const backBefore = preferredBackBefore?.parentElement === backHost ? preferredBackBefore : null;
-  const frontHost = chatColumn ?? chatColumnInner ?? scrollRegion ?? textContextLayer ?? sceneBody ?? backgroundLayer;
 
   return {
-    backHost,
-    backBefore,
-    frontHost,
+    backHost: backgroundLayer,
+    backBefore: null,
+    frontHost: chatColumn ?? chatColumnInner ?? scrollRegion,
     frontBefore: null,
   };
 }
@@ -639,43 +547,6 @@ function readChatIdFromSettingsUpdate(payload: unknown): string | null | undefin
   const value = "value" in payload ? (payload as { value?: unknown }).value : undefined;
   if (typeof value !== "string" || !value.trim()) return null;
   return value;
-}
-
-function readMessageContext(payload: unknown): {
-  chatId: string | null;
-  content: string | null;
-  messageId: string | null;
-  isUser: boolean | null;
-} | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  const nestedMessage = (value.message && typeof value.message === "object" ? value.message : {}) as Record<string, unknown>;
-  const nestedChat = (value.chat && typeof value.chat === "object" ? value.chat : {}) as Record<string, unknown>;
-
-  const chatIdCandidates = [value.chatId, value.chat_id, nestedMessage.chatId, nestedMessage.chat_id, nestedChat.id, value.id];
-  const messageIdCandidates = [value.messageId, value.message_id, nestedMessage.id, nestedMessage.messageId, value.id];
-
-  const content =
-    (typeof nestedMessage.content === "string" ? nestedMessage.content : null) ||
-    (typeof value.content === "string" ? value.content : null);
-
-  const chatId = chatIdCandidates.find((candidate) => typeof candidate === "string" && candidate.trim()) as string | undefined;
-  const messageId = messageIdCandidates.find((candidate) => typeof candidate === "string" && candidate.trim()) as
-    | string
-    | undefined;
-  const isUser =
-    typeof nestedMessage.is_user === "boolean"
-      ? nestedMessage.is_user
-      : typeof value.is_user === "boolean"
-        ? value.is_user
-        : null;
-
-  return {
-    chatId: chatId ?? null,
-    content,
-    messageId: messageId ?? null,
-    isUser,
-  };
 }
 
 function resolveSceneTokens(state: WeatherState, intensity: number): SceneTokens {
@@ -904,10 +775,6 @@ function resolveSceneTokens(state: WeatherState, intensity: number): SceneTokens
   };
 }
 
-function getEffectiveLayerMode(prefs: WeatherPrefs): WeatherLayerMode {
-  return prefs.layerMode;
-}
-
 function createHudWidget(
   ctx: SpindleFrontendContext,
   initialPosition: { x: number; y: number },
@@ -965,6 +832,7 @@ function createHudWidget(
   settingsButton.type = "button";
   settingsButton.innerHTML = GEAR_SVG;
   settingsButton.title = "Open extension settings";
+  settingsButton.setAttribute("aria-label", "Open extension settings");
   protectInteractive(settingsButton);
   settingsButton.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -990,6 +858,7 @@ function createHudWidget(
   const wind = document.createElement("div");
   wind.className = "weather-hud-wind";
   left.appendChild(location);
+  left.appendChild(date);
   left.appendChild(time);
   left.appendChild(wind);
 
@@ -1209,27 +1078,27 @@ function getLiveDate(state: WeatherState): Date | null {
   return new Date();
 }
 
-function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState, expanded: boolean): void {
-  const liveDate = getLiveDate(state);
-  const phase = resolveHudTimePhase(state, liveDate);
-  const effectiveLayer = getEffectiveLayerMode(prefs);
-  const sceneIntensity = clamp(state.intensity * prefs.intensity, 0.25, 1.5);
+function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState | null, expanded: boolean): void {
+  const displayState = state ?? makeDefaultWeatherState();
+  const liveDate = getLiveDate(displayState);
+  const phase = resolveHudTimePhase(displayState, liveDate);
+  const sceneIntensity = clamp(displayState.intensity * prefs.intensity, 0.25, 1.5);
   hud.root.dataset.expanded = expanded ? "true" : "false";
-  hud.root.dataset.source = state.source;
-  hud.root.dataset.condition = state.condition;
-  hud.root.dataset.palette = state.palette;
+  hud.root.dataset.empty = state ? "false" : "true";
+  hud.root.dataset.source = state?.source ?? "empty";
+  hud.root.dataset.condition = displayState.condition;
+  hud.root.dataset.palette = displayState.palette;
   hud.root.dataset.timePhase = phase;
-  hud.root.dataset.layer = effectiveLayer;
+  hud.root.dataset.layer = prefs.layerMode;
   hud.root.dataset.paused = prefs.pauseEffects ? "true" : "false";
   hud.root.style.setProperty("--weather-hud-scene-intensity", sceneIntensity.toFixed(2));
 
-  hud.icon.innerHTML = conditionIcon(state.condition);
-  hud.temp.textContent = formatTemperatureForUnit(state.temperature, prefs.temperatureUnit);
-  hud.summary.textContent = state.summary;
-  hud.wind.textContent = `Wind • ${state.wind}`;
-  hud.location.textContent = state.location;
-  hud.wind.textContent = `Wind ${state.wind}`;
-  hud.source.textContent = state.source === "manual" ? "Scene lock" : "Story sync";
+  hud.icon.innerHTML = conditionIcon(displayState.condition);
+  hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
+  hud.summary.textContent = state ? displayState.summary : "Waiting for the first weather tag";
+  hud.wind.textContent = state ? `Wind ${displayState.wind}` : "Add {{weather_tracker}} to the prompt";
+  hud.location.textContent = state ? displayState.location : "Waiting for story weather";
+  hud.source.textContent = state ? (displayState.source === "manual" ? "Scene lock" : "Story sync") : "Waiting";
   hud.drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
   hud.drawerToggleIcon.innerHTML = expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
 
@@ -1245,13 +1114,15 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
       minute: "2-digit",
     }).format(liveDate);
   } else {
-    hud.date.textContent = state.date;
-    hud.time.textContent = state.time;
+    hud.date.textContent = state ? displayState.date : "No tag yet";
+    hud.time.textContent = state ? displayState.time : "—";
   }
 
   if (hud.storyButton && hud.manualButton) {
-    hud.storyButton.classList.toggle("weather-hud-chip-active", state.source === "story");
-    hud.manualButton.classList.toggle("weather-hud-chip-active", state.source === "manual");
+    hud.storyButton.classList.toggle("weather-hud-chip-active", state?.source === "story");
+    hud.manualButton.classList.toggle("weather-hud-chip-active", state?.source === "manual");
+    hud.storyButton.disabled = !state || state.source === "story";
+    hud.manualButton.disabled = !state;
   }
 
   const activePresetId = matchWeatherScenePreset(state);
@@ -1274,13 +1145,22 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   }
 
   if (hud.resumeButton) {
-    hud.resumeButton.disabled = state.source === "story";
+    hud.resumeButton.disabled = !state || state.source === "story";
   }
 }
 
 function setFxVisibility(root: FxRoot, visible: boolean): void {
   root.root.classList.toggle("weather-hidden", !visible);
   root.root.classList.toggle("weather-visible", visible);
+}
+
+function resolveRainAngle(wind: string): number {
+  const normalized = wind.toLowerCase();
+  if (/hurricane|violent|gale|hard|strong|gust/.test(normalized)) return 20;
+  if (/steady|breezy|windy|crosswind/.test(normalized)) return 14;
+  if (/light|soft|cool drift/.test(normalized)) return 9;
+  if (/still|calm|hushed/.test(normalized)) return 4;
+  return 11;
 }
 
 function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs, reducedMotion: boolean): void {
@@ -1291,7 +1171,7 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.dataset.condition = state.condition;
   root.root.dataset.palette = state.palette;
   root.root.classList.toggle("weather-reduced-motion", reducedMotion);
-  root.root.classList.toggle("weather-paused", prefs.pauseEffects);
+  root.root.classList.toggle("weather-paused", prefs.pauseEffects || document.visibilityState === "hidden");
   root.root.classList.toggle("weather-rain-active", state.condition === "rain" || state.condition === "storm");
   root.root.classList.toggle("weather-snow-active", state.condition === "snow");
 
@@ -1316,6 +1196,7 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.style.setProperty("--weather-snow-opacity", String(tokens.snowOpacity * (isFront ? 0.98 : 0.54)));
   root.root.style.setProperty("--weather-mote-opacity", String(isFront ? 0 : tokens.moteOpacity));
   root.root.style.setProperty("--weather-flash-opacity", String(tokens.flashOpacity));
+  root.root.style.setProperty("--weather-rain-angle", `${resolveRainAngle(state.wind)}deg`);
   root.root.style.setProperty(
     "--weather-rain-color",
     state.condition === "storm" ? "rgba(212, 231, 255, 0.96)" : "rgba(190, 220, 255, 0.84)",
@@ -1333,16 +1214,16 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
 }
 
 export function setup(ctx: SpindleFrontendContext) {
-console.info("[weather_hud] frontend build 2026-03-25.5");
-
   const cleanups: Array<() => void> = [];
   const removeStyle = ctx.dom.addStyle(WEATHER_HUD_CSS);
   cleanups.push(removeStyle);
 
   let currentPrefs: WeatherPrefs = DEFAULT_PREFS;
-  let currentState: WeatherState = makeDefaultWeatherState();
+  let currentState: WeatherState | null = null;
   let activeChatId: string | null = resolveInitialChatId();
+  let activeChatRequestId = 0;
   let hudExpanded = false;
+  let permissionWarning: string | null = null;
   const processedWeatherTags = new Map<string, string>();
 
   const motionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -1358,26 +1239,6 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
     sendToBackend(ctx, { type: "clear_manual_override", chatId: activeChatId });
   };
 
-  const handleCompletedAssistantContent = (payload: unknown) => {
-    const context = readMessageContext(payload);
-    if (!context || context.isUser === true || typeof context.content !== "string" || !context.content.trim()) return;
-
-    const extracted = extractWeatherTagFromContent(context.content);
-    if (!extracted) return;
-
-    const dedupeKey = context.messageId ?? `${context.chatId ?? "no-chat"}:${extracted.fullMatch}`;
-    if (processedWeatherTags.get(dedupeKey) === extracted.fullMatch) return;
-    processedWeatherTags.set(dedupeKey, extracted.fullMatch);
-
-    sendToBackend(ctx, {
-      type: "weather_tag_intercepted",
-      chatId: context.chatId ?? activeChatId,
-      messageId: context.messageId,
-      attrs: extracted.attrs,
-      isStreaming: false,
-    });
-  };
-
   const applyPreset = (presetId: string) => {
     const nextState = buildPresetWeatherState(presetId, currentState);
     if (!nextState) return;
@@ -1385,8 +1246,9 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
   };
 
   const lockCurrentScene = () => {
+    const state = currentState ?? makeDefaultWeatherState();
     sendManualState({
-      ...currentState,
+      ...state,
       source: "manual",
     });
   };
@@ -1406,65 +1268,10 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
   const backFx = createFxMarkup("back");
   const frontFx = createFxMarkup("front");
   let hostSyncFrame: number | null = null;
-  const managedHosts = new Map<HTMLElement, { count: number; restore: () => void }>();
-
-  const prepareHostStyles = (host: HTMLElement): (() => void) => {
-    const previousPosition = host.style.position;
-    const previousOverflow = host.style.overflow;
-    const previousIsolation = host.style.isolation;
-
-    if (window.getComputedStyle(host).position === "static") {
-      host.style.position = "relative";
-    }
-    if (window.getComputedStyle(host).overflow === "visible") {
-      host.style.overflow = "hidden";
-    }
-    if (!host.style.isolation) {
-      host.style.isolation = "isolate";
-    }
-
-    return () => {
-      host.style.position = previousPosition;
-      host.style.overflow = previousOverflow;
-      host.style.isolation = previousIsolation;
-    };
-  };
-
-  const retainHost = (host: HTMLElement): (() => void) => {
-    const existing = managedHosts.get(host);
-    if (existing) {
-      existing.count += 1;
-      return () => {
-        const current = managedHosts.get(host);
-        if (!current) return;
-        current.count -= 1;
-        if (current.count <= 0) {
-          current.restore();
-          managedHosts.delete(host);
-        }
-      };
-    }
-
-    const restore = prepareHostStyles(host);
-    managedHosts.set(host, { count: 1, restore });
-    return () => {
-      const current = managedHosts.get(host);
-      if (!current) return;
-      current.count -= 1;
-      if (current.count <= 0) {
-        current.restore();
-        managedHosts.delete(host);
-      }
-    };
-  };
 
   const detachFxRoot = (fxRoot: FxRoot) => {
     fxRoot.root.remove();
     fxRoot.host = null;
-    if (fxRoot.releaseHost) {
-      fxRoot.releaseHost();
-      fxRoot.releaseHost = null;
-    }
   };
 
   const attachFxRoot = (fxRoot: FxRoot, nextHost: HTMLElement | null, before: HTMLElement | null): boolean => {
@@ -1484,7 +1291,6 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
 
     detachFxRoot(fxRoot);
     fxRoot.host = nextHost;
-    fxRoot.releaseHost = retainHost(nextHost);
     if (before && before.parentElement === nextHost) {
       nextHost.insertBefore(fxRoot.root, before);
     } else {
@@ -1501,33 +1307,38 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
     return backChanged || frontChanged;
   };
 
-  const queueFxRootAttach = () => {
-    if (hostSyncFrame !== null) return;
-    hostSyncFrame = window.requestAnimationFrame(() => {
+  let hostObserver: MutationObserver | null = null;
+  const stopHostObserver = () => {
+    hostObserver?.disconnect();
+    hostObserver = null;
+  };
+
+  const ensureHostObserver = () => {
+    if (hostObserver || !document.body) return;
+    hostObserver = new MutationObserver(() => {
       if (attachFxRoots()) {
         updateScene();
       }
+      if (backFx.host?.isConnected && frontFx.host?.isConnected) stopHostObserver();
     });
+    hostObserver.observe(document.body, { childList: true, subtree: true });
   };
 
-  const hostObserver = new MutationObserver(() => {
-    if (
-      backFx.host?.isConnected &&
-      frontFx.host?.isConnected &&
-      backFx.root.parentElement === backFx.host &&
-      frontFx.root.parentElement === frontFx.host
-    ) {
-      return;
-    }
-    queueFxRootAttach();
-  });
-  hostObserver.observe(document.body, { childList: true, subtree: true });
+  const queueFxRootAttach = () => {
+    if (hostSyncFrame !== null) return;
+    hostSyncFrame = window.requestAnimationFrame(() => {
+      const changed = attachFxRoots();
+      if (changed) updateScene();
+      if (backFx.host?.isConnected && frontFx.host?.isConnected) stopHostObserver();
+      else ensureHostObserver();
+    });
+  };
   cleanups.push(() => {
     if (hostSyncFrame !== null) {
       window.cancelAnimationFrame(hostSyncFrame);
       hostSyncFrame = null;
     }
-    hostObserver.disconnect();
+    stopHostObserver();
     detachFxRoot(backFx);
     detachFxRoot(frontFx);
   });
@@ -1604,10 +1415,12 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
   const scheduleStormFlash = () => {
     resetFlashTimer();
     if (
-      currentState.condition !== "storm" ||
+      currentState?.condition !== "storm" ||
       getReducedMotion() ||
       currentPrefs.pauseEffects ||
-      !currentPrefs.effectsEnabled
+      !currentPrefs.effectsEnabled ||
+      document.visibilityState === "hidden" ||
+      !activeChatId
     ) {
       backFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-storm-flash");
@@ -1655,15 +1468,19 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
 
   const updateScene = () => {
     const reducedMotion = getReducedMotion();
-    const layerMode = getEffectiveLayerMode(currentPrefs);
-    const showEffects = currentPrefs.effectsEnabled;
+    const layerMode = currentPrefs.layerMode;
+    const showEffects = currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId && !!currentState;
+    const sceneState = currentState ?? makeDefaultWeatherState();
+
+    syncFxCondition(backFx, currentState?.condition ?? null);
+    syncFxCondition(frontFx, currentState?.condition ?? null);
 
     if (hud) {
       syncHudState(hud, currentPrefs, currentState, hudExpanded);
     }
-    settingsUI.sync(currentPrefs, currentState);
-    applySceneState(backFx, currentState, currentPrefs, reducedMotion);
-    applySceneState(frontFx, currentState, currentPrefs, reducedMotion);
+    settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : permissionWarning ?? undefined);
+    applySceneState(backFx, sceneState, currentPrefs, reducedMotion);
+    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion);
     setFxVisibility(backFx, showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both"));
     setFxVisibility(frontFx, showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both"));
     scheduleStormFlash();
@@ -1682,11 +1499,30 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
   const onResize = () => queueFxRootAttach();
   window.addEventListener("resize", onResize);
   cleanups.push(() => window.removeEventListener("resize", onResize));
+  const onVisibilityChange = () => updateScene();
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  cleanups.push(() => document.removeEventListener("visibilitychange", onVisibilityChange));
 
   const tagUnsub = ctx.messages.registerTagInterceptor(
     { tagName: WEATHER_TAG_NAME, removeFromMessage: true },
-    () => {
-      // The HUD updates from completed message events so streaming never mutates state mid-reply.
+    (payload) => {
+      if (!shouldProcessWeatherTag(payload)) return;
+      const chatId = payload.chatId ?? activeChatId;
+      if (!chatId) return;
+      const dedupeKey = `${chatId}:${payload.messageId ?? ""}:${payload.fullMatch}`;
+      if (processedWeatherTags.has(dedupeKey)) return;
+      processedWeatherTags.set(dedupeKey, payload.fullMatch);
+      if (processedWeatherTags.size > 200) {
+        const oldest = processedWeatherTags.keys().next().value;
+        if (oldest) processedWeatherTags.delete(oldest);
+      }
+      sendToBackend(ctx, {
+        type: "weather_tag_intercepted",
+        chatId,
+        messageId: payload.messageId ?? null,
+        attrs: payload.attrs,
+        isStreaming: false,
+      });
     },
   );
   cleanups.push(tagUnsub);
@@ -1706,13 +1542,14 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
         break;
 
       case "active_chat_state":
+        if (!shouldApplyChatState(activeChatId, message.chatId, message.requestId, activeChatRequestId)) break;
         activeChatId = message.chatId;
-        currentState = message.state ?? makeDefaultWeatherState();
+        currentState = message.state;
         updateScene();
         break;
 
       case "weather_state":
-        activeChatId = message.chatId ?? activeChatId;
+        if (message.chatId !== activeChatId) break;
         currentState = message.state;
         updateScene();
         break;
@@ -1730,37 +1567,39 @@ console.info("[weather_hud] frontend build 2026-03-25.5");
         ? (payload as { chatId?: string }).chatId ?? null
         : null;
     activeChatId = chatId;
+    currentState = null;
+    processedWeatherTags.clear();
     queueFxRootAttach();
-    sendToBackend(ctx, { type: "chat_changed", chatId });
+    activeChatRequestId += 1;
+    sendToBackend(ctx, { type: "chat_changed", chatId, requestId: activeChatRequestId });
   });
   cleanups.push(chatChangedUnsub);
-
-  const generationEndedUnsub = ctx.events.on("GENERATION_ENDED", handleCompletedAssistantContent);
-  const messageSentUnsub = ctx.events.on("MESSAGE_SENT", handleCompletedAssistantContent);
-  const messageEditedUnsub = ctx.events.on("MESSAGE_EDITED", handleCompletedAssistantContent);
-  const messageSwipedUnsub = ctx.events.on("MESSAGE_SWIPED", handleCompletedAssistantContent);
-  const generationStoppedUnsub = ctx.events.on("GENERATION_STOPPED", handleCompletedAssistantContent);
-  cleanups.push(generationEndedUnsub);
-  cleanups.push(messageSentUnsub);
-  cleanups.push(messageEditedUnsub);
-  cleanups.push(messageSwipedUnsub);
-  cleanups.push(generationStoppedUnsub);
 
   const settingsChangedUnsub = ctx.events.on("SETTINGS_UPDATED", (payload: unknown) => {
     const nextChatId = readChatIdFromSettingsUpdate(payload);
     if (typeof nextChatId === "undefined") return;
     activeChatId = nextChatId;
+    currentState = null;
+    processedWeatherTags.clear();
     queueFxRootAttach();
-    sendToBackend(ctx, { type: "chat_changed", chatId: nextChatId });
+    activeChatRequestId += 1;
+    sendToBackend(ctx, { type: "chat_changed", chatId: nextChatId, requestId: activeChatRequestId });
   });
   cleanups.push(settingsChangedUnsub);
 
   sendToBackend(ctx, { type: "frontend_ready" });
-  if (activeChatId) {
-    sendToBackend(ctx, { type: "chat_changed", chatId: activeChatId });
-  }
+  activeChatRequestId += 1;
+  sendToBackend(ctx, { type: "chat_changed", chatId: activeChatId, requestId: activeChatRequestId });
   queueFxRootAttach();
   updateScene();
+  void ctx.permissions.getGranted().then((granted) => {
+    if (!granted.includes("interceptor")) {
+      permissionWarning = "Enable the Interceptor permission to inject the current weather scene into prompts.";
+      updateScene();
+    }
+  }).catch(() => {
+    // Permission status is informational; the extension remains usable for tag-driven HUD updates.
+  });
 
   return () => {
     resetFlashTimer();

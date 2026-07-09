@@ -15,8 +15,8 @@ It is built for story-driven use, not live forecast data. The model controls the
 - Story sync mode driven by hidden inline weather tags
 - Manual lock mode for overriding the current scene per chat
 - Per-chat persistence for story state and manual overrides
-- Fallback weather-tag generation if the model finishes without emitting one
 - Prompt macros for reliable prompt-side weather tag generation
+- Clear waiting status when a chat has not emitted its first weather tag
 
 ## Prompt Setup
 
@@ -32,6 +32,8 @@ Optional reference macros:
 {{weather_state}}
 {{weather_format}}
 ```
+
+`{{weather_tracker}}` is the canonical integration macro. The older aliases remain available for existing prompts; the current state is injected directly into generation, so `{{weather_state}}` is retained only as a compatibility marker. Story Weather no longer makes extra generation calls when a tag is missing.
 
 Supported aliases:
 
@@ -60,6 +62,8 @@ Supported conditions:
 - `snow`
 - `fog`
 
+Condition names are case-insensitive and common aliases such as `sunny`, `overcast`, `rainy`, `thunderstorm`, `snowy`, and `mist` are normalized to these six values. Dates must be real calendar dates, and times must be valid 12-hour or 24-hour values.
+
 Effect placement is user-controlled in settings:
 
 - Back only
@@ -83,7 +87,9 @@ Supported palettes:
 3. The frontend hides the tag from visible chat.
 4. The HUD updates only after the assistant message is complete, so streaming does not mutate the scene mid-reply.
 5. The backend stores the normalized weather state per chat.
-6. If the model does not emit a weather tag, the backend can generate and append one after generation ends.
+6. If the model does not emit a weather tag, the current scene remains unchanged and the HUD reports that it is waiting for story weather.
+
+Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice.
 
 ## Story Sync vs Manual Lock
 
@@ -114,7 +120,7 @@ https://github.com/Archkr/Lumiverse-StoryWeather
 - Paste the repo URL into the repo URL field
 - Click `Install`
 
-3. Enable the extension and grant its requested permissions.
+3. Enable the extension and grant `interceptor`, `chats`, and `ui_panels` permissions. Story Weather does not request generation, message mutation, or app-manipulation permissions.
 
 4. Open the extension settings panel and confirm the HUD/settings panel loaded correctly.
 
@@ -135,11 +141,13 @@ To use story-driven weather generation:
 
 If you do not want the model driving the scene, you can skip prompt setup and use `Manual lock` from the HUD or settings panel instead.
 
+On the home screen, the HUD intentionally shows an empty waiting state and effects remain off until a chat is active and that chat has emitted a weather tag.
+
 ## Project Layout
 
 ```text
 src/
-  backend.ts      Backend state, macros, fallback generation, chat persistence
+  backend.ts      Backend state, macros, prompt interception, chat persistence
   frontend.ts     HUD, message interception, FX mounting, scene updates
   shared.ts       Normalization, defaults, parsing helpers
   presets.ts      Quick scene presets
@@ -155,7 +163,7 @@ dist/
 
 ## Notes
 
-- This extension does not use a live weather API.
+- This extension does not use a live weather API or perform fallback generation.
 - The weather is intentionally narrative/state driven.
 - The HUD is meant to stay fairly small and readable over chat.
 - The settings page exposes both quick prompt guidance and full manual scene controls.
