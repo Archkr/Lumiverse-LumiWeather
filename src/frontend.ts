@@ -516,6 +516,8 @@ function closestByClassFragment(start: Element | null, fragment: string): HTMLEl
 
 function resolveSceneHosts(): SceneHostResolution {
   const backgroundLayer = asHTMLElement(document.querySelector('[class*="sceneBackgroundLayer"]'));
+  const sceneTextLayer = asHTMLElement(document.querySelector('[class*="sceneTextContextLayer"]'));
+  const sceneHost = backgroundLayer?.parentElement instanceof HTMLElement ? backgroundLayer.parentElement : null;
   const scrollRegion = asHTMLElement(document.querySelector('[data-chat-scroll="true"]'));
   const chatColumnInner =
     closestByClassFragment(scrollRegion, "chatColumnInner") ??
@@ -525,8 +527,11 @@ function resolveSceneHosts(): SceneHostResolution {
     (chatColumnInner?.parentElement instanceof HTMLElement ? chatColumnInner.parentElement : chatColumnInner);
 
   return {
-    backHost: backgroundLayer,
-    backBefore: null,
+    // Lumiverse fades the scene-background element itself to zero opacity when
+    // no generated backdrop is active. Mount beside it inside the scene host,
+    // beneath the text scrim and chat body, so back-only FX remain visible.
+    backHost: sceneHost ?? backgroundLayer,
+    backBefore: sceneTextLayer?.parentElement === sceneHost ? sceneTextLayer : null,
     frontHost: chatColumn ?? chatColumnInner ?? scrollRegion,
     frontBefore: null,
   };

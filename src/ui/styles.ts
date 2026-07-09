@@ -1318,7 +1318,7 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-fx-root[data-kind="back"] {
-  z-index: 0;
+  z-index: 1;
 }
 
 .weather-fx-root[data-kind="front"] {

@@ -2122,7 +2122,7 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-fx-root[data-kind="back"] {
-  z-index: 0;
+  z-index: 1;
 }
 
 .weather-fx-root[data-kind="front"] {
@@ -3157,12 +3157,14 @@ function closestByClassFragment(start, fragment) {
 }
 function resolveSceneHosts() {
   const backgroundLayer = asHTMLElement(document.querySelector('[class*="sceneBackgroundLayer"]'));
+  const sceneTextLayer = asHTMLElement(document.querySelector('[class*="sceneTextContextLayer"]'));
+  const sceneHost = backgroundLayer?.parentElement instanceof HTMLElement ? backgroundLayer.parentElement : null;
   const scrollRegion = asHTMLElement(document.querySelector('[data-chat-scroll="true"]'));
   const chatColumnInner = closestByClassFragment(scrollRegion, "chatColumnInner") ?? (scrollRegion?.parentElement instanceof HTMLElement ? scrollRegion.parentElement : null);
   const chatColumn = closestByClassFragment(scrollRegion, "chatColumn") ?? (chatColumnInner?.parentElement instanceof HTMLElement ? chatColumnInner.parentElement : chatColumnInner);
   return {
-    backHost: backgroundLayer,
-    backBefore: null,
+    backHost: sceneHost ?? backgroundLayer,
+    backBefore: sceneTextLayer?.parentElement === sceneHost ? sceneTextLayer : null,
     frontHost: chatColumn ?? chatColumnInner ?? scrollRegion,
     frontBefore: null
   };
