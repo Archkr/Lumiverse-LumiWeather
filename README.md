@@ -4,8 +4,8 @@ LumiWeather is a Lumiverse extension that adds a draggable weather HUD and anima
 
 It is built for story-driven use, not live forecast data. The model controls the scene by emitting a hidden `<weather-state>` tag, and the extension turns that into HUD updates, layered effects, and per-chat weather state.
 
-<img width="276" height="222" alt="image" src="https://github.com/user-attachments/assets/8bc8c93a-df39-4b86-9d20-596630c92a4a" />
-<img width="280" height="217" alt="image" src="https://github.com/user-attachments/assets/691d98a0-4f1b-4d4c-85ae-9664215d4d65" />
+<img width="308" height="222" alt="Screenshot 2026-07-09 190232" src="https://github.com/user-attachments/assets/8097b4a4-c66e-4b5f-b450-12224de1850b" />
+<img width="305" height="220" alt="image" src="https://github.com/user-attachments/assets/949c2401-265e-4e60-998e-59d13962453e" />
 
 
 ## Features
