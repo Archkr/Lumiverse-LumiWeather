@@ -2173,7 +2173,6 @@ var WEATHER_HUD_CSS = `
 .weather-fx-wind-gusts,
 .weather-fx-rain-splashes,
 .weather-fx-rain-ripples,
-.weather-fx-snow-bank,
 .weather-fx-frost,
 .weather-fx-lightning,
 .weather-fx-lightning-glow,
@@ -2393,15 +2392,16 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-fx-rain-splash {
-  --splash-color: rgba(191, 221, 255, 0.62);
-  --splash-dot-color: rgba(220, 238, 255, 0.82);
-  --splash-opacity-scale: 0.72;
+  --splash-color: rgba(205, 231, 255, 0.9);
+  --splash-dot-color: rgba(236, 247, 255, 0.98);
+  --splash-opacity-scale: 0.94;
   bottom: var(--splash-bottom);
   left: var(--splash-left);
   width: var(--splash-size);
   height: var(--splash-height, var(--splash-size));
   transform-origin: 50% 100%;
   opacity: 0;
+  filter: drop-shadow(0 0 3px rgba(194, 225, 255, 0.58));
   animation: weather-splash var(--splash-duration) ease-out infinite;
   animation-delay: var(--splash-delay);
   animation-play-state: paused;
@@ -2418,33 +2418,34 @@ var WEATHER_HUD_CSS = `
 .weather-fx-rain-splash::before {
   top: auto;
   height: 48%;
-  border: 1.2px solid var(--splash-color);
+  border: 1.8px solid var(--splash-color);
   border-radius: 50%;
   clip-path: inset(0 0 48% 0);
 }
 
 .weather-fx-rain-splash::after {
   background:
-    radial-gradient(circle at 15% 70%, var(--splash-dot-color) 0 0.8px, transparent 1.5px),
-    radial-gradient(circle at 50% 5%, var(--splash-dot-color) 0 1px, transparent 1.8px),
-    radial-gradient(circle at 84% 66%, var(--splash-dot-color) 0 0.8px, transparent 1.5px);
+    radial-gradient(circle at 15% 70%, var(--splash-dot-color) 0 1.1px, transparent 2px),
+    radial-gradient(circle at 50% 5%, var(--splash-dot-color) 0 1.3px, transparent 2.2px),
+    radial-gradient(circle at 84% 66%, var(--splash-dot-color) 0 1.1px, transparent 2px);
 }
 
 .weather-fx-rain-splash-front {
-  --splash-color: rgba(218, 237, 255, 0.76);
-  --splash-dot-color: rgba(238, 247, 255, 0.94);
-  --splash-opacity-scale: 0.86;
+  --splash-color: rgba(226, 242, 255, 0.98);
+  --splash-dot-color: rgba(248, 252, 255, 1);
+  --splash-opacity-scale: 1;
 }
 
 .weather-fx-rain-ripple {
-  --ripple-opacity-scale: 0.46;
+  --ripple-opacity-scale: 0.64;
   bottom: var(--ripple-bottom);
   left: var(--ripple-left);
   width: var(--ripple-size);
   height: calc(var(--ripple-size) * 0.4);
-  border: 1px solid rgba(191, 221, 255, 0.35);
+  border: 1.4px solid rgba(205, 231, 255, 0.62);
   border-radius: 50%;
   opacity: 0;
+  filter: drop-shadow(0 0 2px rgba(191, 221, 255, 0.42));
   animation: weather-ripple var(--ripple-duration) ease-out infinite;
   animation-delay: var(--ripple-delay);
   animation-play-state: paused;
@@ -2518,39 +2519,6 @@ var WEATHER_HUD_CSS = `
 
 .weather-fx-snow-flake-front {
   box-shadow: 0 0 var(--flake-glow) rgba(255, 255, 255, 0.82);
-}
-
-.weather-fx-snow-bank {
-  top: auto;
-  bottom: 0;
-  height: 14%;
-  border-radius: 50% 50% 0 0 / 24% 24% 0 0;
-  background:
-    radial-gradient(ellipse 80% 100% at 30% 100%, rgba(240, 248, 255, 0.45) 0%, transparent 70%),
-    radial-gradient(ellipse 70% 100% at 70% 100%, rgba(235, 245, 255, 0.4) 0%, transparent 70%),
-    linear-gradient(180deg, transparent 0%, rgba(240, 248, 255, 0.1) 20%, rgba(245, 250, 255, 0.55) 100%);
-  opacity: 0;
-  pointer-events: none;
-  filter: blur(2px);
-  transform: translateY(15%);
-  transition: opacity 1000ms ease, transform 1000ms ease;
-}
-
-.weather-fx-snow-bank::before {
-  content: "";
-  position: absolute;
-  top: -8px;
-  left: -5%;
-  right: -5%;
-  height: 16px;
-  border-radius: 50% 50% 0 0;
-  background: rgba(245, 250, 255, 0.35);
-  filter: blur(4px);
-}
-
-.weather-fx-root[data-condition="snow"] .weather-fx-snow-bank {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .weather-fx-frost {
@@ -3178,9 +3146,6 @@ function createFxMarkup(kind) {
     for (let index = 0;index < (compact ? 48 : 72); index += 1) {
       snow.appendChild(createSnowflakeElement(false));
     }
-    const snowBank = document.createElement("div");
-    snowBank.className = "weather-fx-snow-bank";
-    root.appendChild(snowBank);
     const frost = document.createElement("div");
     frost.className = "weather-fx-frost";
     root.appendChild(frost);
@@ -3263,7 +3228,6 @@ function pruneFxMarkup(root, condition) {
   }
   if (condition !== "snow") {
     root.querySelector(".weather-fx-snow")?.remove();
-    root.querySelector(".weather-fx-snow-bank")?.remove();
     root.querySelector(".weather-fx-frost")?.remove();
   }
   if (condition !== "storm") {

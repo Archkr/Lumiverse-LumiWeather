@@ -432,10 +432,6 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       snow.appendChild(createSnowflakeElement(false));
     }
 
-    const snowBank = document.createElement("div");
-    snowBank.className = "weather-fx-snow-bank";
-    root.appendChild(snowBank);
-
     const frost = document.createElement("div");
     frost.className = "weather-fx-frost";
     root.appendChild(frost);
@@ -528,7 +524,6 @@ function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): v
   }
   if (condition !== "snow") {
     root.querySelector(".weather-fx-snow")?.remove();
-    root.querySelector(".weather-fx-snow-bank")?.remove();
     root.querySelector(".weather-fx-frost")?.remove();
   }
   if (condition !== "storm") {
