@@ -3,6 +3,7 @@ import {
   resolveRainDensityThreshold,
   resolveRainParticlePool,
   resolveRainProfile,
+  resolveRainVector,
 } from "./fx-utils";
 
 describe("weather FX profiles", () => {
@@ -45,6 +46,14 @@ describe("weather FX profiles", () => {
     expect(storm.density).toBeGreaterThan(rain.density);
     expect(storm.opacityScale).toBeGreaterThan(rain.opacityScale);
     expect(storm.speedScale).toBeLessThan(rain.speedScale);
+  });
+
+  test("maps tagged wind direction to rain angle and horizontal drift", () => {
+    expect(resolveRainVector("breezy", "west")).toEqual({ angle: -14, driftDirection: 1 });
+    expect(resolveRainVector("strong", "east")).toEqual({ angle: 20, driftDirection: -1 });
+    expect(resolveRainVector("light", "north")).toEqual({ angle: 0, driftDirection: 0 });
+    expect(resolveRainVector("steady", "southwest")).toEqual({ angle: -14, driftDirection: 1 });
+    expect(resolveRainVector("breezy")).toEqual({ angle: 14, driftDirection: -1 });
   });
 
   test("distributes density thresholds evenly and disables dry conditions", () => {

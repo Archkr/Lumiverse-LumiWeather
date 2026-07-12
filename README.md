@@ -52,7 +52,7 @@ The legacy `story_weather_*` aliases and technical extension ID remain in place 
 The assistant should keep all visible prose natural, then end the message with exactly one hidden weather tag:
 
 ```html
-<weather-state location="Tengu City" date="2026-03-24" time="9:42 PM" condition="rain" summary="Cold spring rain" temperature="61F" intensity="0.65" wind="breezy" palette="storm"></weather-state>
+<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>
 ```
 
 Supported conditions:

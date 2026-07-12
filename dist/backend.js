@@ -57,6 +57,32 @@ function normalizePalette(value, fallback) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
   return WEATHER_PALETTES.includes(normalized) ? normalized : fallback;
 }
+function normalizeWindDirection(value, fallback) {
+  if (typeof value !== "string")
+    return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const aliases = {
+    none: "none",
+    calm: "none",
+    n: "north",
+    north: "north",
+    ne: "northeast",
+    northeast: "northeast",
+    e: "east",
+    east: "east",
+    se: "southeast",
+    southeast: "southeast",
+    s: "south",
+    south: "south",
+    sw: "southwest",
+    southwest: "southwest",
+    w: "west",
+    west: "west",
+    nw: "northwest",
+    northwest: "northwest"
+  };
+  return aliases[normalized] ?? fallback;
+}
 function normalizeReducedMotion(value, fallback) {
   return typeof value === "string" && REDUCED_MOTION_VALUES.includes(value) ? value : fallback;
 }
@@ -203,6 +229,7 @@ function makeDefaultWeatherState(now = Date.now()) {
     temperature: "68F",
     intensity: 0.3,
     wind: "still",
+    windDirection: "none",
     palette: derivePalette("clear", dateValue, timeValue),
     updatedAt: now,
     source: "story"
@@ -220,6 +247,7 @@ function normalizeWeatherState(input, previous) {
   const palette = normalizePalette(source.palette, derivePalette(condition, date, time));
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
+  const windDirectionValue = source.windDirection ?? source.wind_direction ?? source["wind-direction"];
   return {
     location: normalizeText(source.location, fallback.location, 72),
     date,
@@ -229,6 +257,7 @@ function normalizeWeatherState(input, previous) {
     temperature: normalizeText(source.temperature, fallback.temperature, 16),
     intensity,
     wind: normalizeText(source.wind, fallback.wind, 32),
+    windDirection: normalizeWindDirection(windDirectionValue, fallback.windDirection),
     palette,
     updatedAt,
     source: normalizeSource(source.source, fallback.source)
@@ -293,7 +322,7 @@ function pruneProcessedTags(now = Date.now()) {
   }
 }
 function buildWeatherTagExample() {
-  return '<weather-state location="Tengu City" date="2026-03-24" time="9:42 PM" condition="rain" summary="Cold spring rain" temperature="61F" intensity="0.65" wind="breezy" palette="storm"></weather-state>';
+  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>';
 }
 function summarizeWeatherState(state) {
   if (!state)
@@ -307,6 +336,7 @@ function summarizeWeatherState(state) {
     `Temperature: ${state.temperature}`,
     `Intensity: ${state.intensity.toFixed(2)}`,
     `Wind: ${state.wind}`,
+    `Wind direction: ${state.windDirection}`,
     `Palette: ${state.palette}`
   ].join(" | ");
 }
@@ -321,7 +351,8 @@ function buildTrackerMacro() {
     "Emit the tag as the very last text in the assistant message.",
     `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
     `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
-    "Use location, date, time, condition, summary, temperature, intensity, wind, and palette.",
+    "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, and palette.",
+    "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
     "Exact wrapper example:",
     buildWeatherTagExample()
   ].join(`

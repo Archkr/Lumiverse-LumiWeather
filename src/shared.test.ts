@@ -5,23 +5,24 @@ import {
   normalizePrefs,
   normalizeWeatherState,
   normalizeWeatherTag,
+  normalizeWindDirection,
   parseHourFromTimeString,
   parseStoryDateTime,
 } from "./shared";
 
 describe("story weather normalization", () => {
   test("rejects rolled calendar dates and invalid times", () => {
-    expect(parseStoryDateTime("2026-02-30", "9:42 PM")).toBeNull();
-    expect(parseStoryDateTime("2026-03-24", "13:42 PM")).toBeNull();
-    expect(parseStoryDateTime("2026-03-24", "25:00")).toBeNull();
-    expect(parseStoryDateTime("2026-03-24", "9:42 PM")).not.toBeNull();
+    expect(parseStoryDateTime("2026-02-30", "3:00 PM")).toBeNull();
+    expect(parseStoryDateTime("2026-01-15", "13:42 PM")).toBeNull();
+    expect(parseStoryDateTime("2026-01-15", "25:00")).toBeNull();
+    expect(parseStoryDateTime("2026-01-15", "3:00 PM")).not.toBeNull();
   });
 
   test("normalizes condition aliases and removes legacy state fields", () => {
     const state = normalizeWeatherTag({
       condition: "thunderstorm",
-      date: "2026-03-24",
-      time: "9:42 PM",
+      date: "2026-01-15",
+      time: "3:00 PM",
       intensity: "0.65",
       layer: "front",
       timestampMs: "123",
@@ -39,14 +40,14 @@ describe("story weather normalization", () => {
     expect(state.intensity).toBe(1);
     expect(state.summary).toBe(previous.summary);
 
-    const invalidDate = normalizeWeatherState({ date: "2026-02-30", time: "9:42 PM" }, previous);
+    const invalidDate = normalizeWeatherState({ date: "2026-02-30", time: "3:00 PM" }, previous);
     expect(invalidDate.date).toBe(previous.date);
     expect(invalidDate.time).toBe(previous.time);
   });
 
   test("derives day and night palettes from clear-scene time", () => {
-    expect(normalizeWeatherState({ condition: "clear", date: "2026-03-24", time: "10:00 PM" }).palette).toBe("night");
-    expect(normalizeWeatherState({ condition: "clear", date: "2026-03-24", time: "7:00 AM" }).palette).toBe("dawn");
+    expect(normalizeWeatherState({ condition: "clear", date: "2026-01-15", time: "10:00 PM" }).palette).toBe("night");
+    expect(normalizeWeatherState({ condition: "clear", date: "2026-01-15", time: "7:00 AM" }).palette).toBe("dawn");
   });
 
   test("supports story time parsing and unit conversion", () => {
@@ -60,5 +61,13 @@ describe("story weather normalization", () => {
     const prefs = normalizePrefs({ intensity: -2, widgetPosition: { x: "20", y: 40 } });
     expect(prefs.intensity).toBe(0.25);
     expect(prefs.widgetPosition).toEqual({ x: 20, y: 40 });
+  });
+
+  test("normalizes dedicated wind-direction tag values", () => {
+    expect(normalizeWindDirection("north-west", "none")).toBe("northwest");
+    expect(normalizeWindDirection("SW", "none")).toBe("southwest");
+    expect(normalizeWindDirection("unknown", "east")).toBe("east");
+    expect(normalizeWeatherTag({ windDirection: "west" }).windDirection).toBe("west");
+    expect(normalizeWeatherTag({ wind_direction: "north-east" }).windDirection).toBe("northeast");
   });
 });

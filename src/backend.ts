@@ -57,7 +57,7 @@ function pruneProcessedTags(now = Date.now()): void {
 }
 
 function buildWeatherTagExample(): string {
-  return '<weather-state location="Tengu City" date="2026-03-24" time="9:42 PM" condition="rain" summary="Cold spring rain" temperature="61F" intensity="0.65" wind="breezy" palette="storm"></weather-state>';
+  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>';
 }
 
 function summarizeWeatherState(state: WeatherState | null): string {
@@ -71,6 +71,7 @@ function summarizeWeatherState(state: WeatherState | null): string {
     `Temperature: ${state.temperature}`,
     `Intensity: ${state.intensity.toFixed(2)}`,
     `Wind: ${state.wind}`,
+    `Wind direction: ${state.windDirection}`,
     `Palette: ${state.palette}`,
   ].join(" | ");
 }
@@ -86,7 +87,8 @@ function buildTrackerMacro(): string {
     "Emit the tag as the very last text in the assistant message.",
     `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
     `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
-    "Use location, date, time, condition, summary, temperature, intensity, wind, and palette.",
+    "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, and palette.",
+    "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
     "Exact wrapper example:",
     buildWeatherTagExample(),
   ].join("\n");

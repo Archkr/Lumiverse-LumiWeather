@@ -1,6 +1,7 @@
 export type WeatherCondition = "clear" | "cloudy" | "rain" | "storm" | "snow" | "fog";
 export type WeatherLayerMode = "back" | "front" | "both";
 export type WeatherPalette = "dawn" | "day" | "dusk" | "night" | "storm" | "mist" | "snow";
+export type WeatherWindDirection = "none" | "north" | "northeast" | "east" | "southeast" | "south" | "southwest" | "west" | "northwest";
 export type ReducedMotionMode = "system" | "always" | "never";
 export type TemperatureUnit = "fahrenheit" | "celsius";
 export type WeatherSourceMode = "story" | "manual";
@@ -19,6 +20,7 @@ export interface WeatherState {
   temperature: string;
   intensity: number;
   wind: string;
+  windDirection: WeatherWindDirection;
   palette: WeatherPalette;
   updatedAt: number;
   source: WeatherSourceMode;

@@ -4,6 +4,7 @@ import {
   resolveRainDensityThreshold,
   resolveRainParticlePool,
   resolveRainProfile,
+  resolveRainVector,
 } from "./fx-utils";
 import {
   DEFAULT_PREFS,
@@ -376,6 +377,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     const backRainCount = resolveRainParticlePool(compact).back;
     for (let index = 0; index < backRainCount; index += 1) {
       const duration = 1.05 + Math.random() * 0.75;
+      const drift = randomRange(4.5, 10);
       const drop = createSpan("weather-fx-rain-drop", {
         "--drop-left": `${Math.round(Math.random() * 104)}%`,
         "--drop-top": `${(-20 - Math.random() * 28).toFixed(2)}%`,
@@ -383,11 +385,12 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
         "--drop-length": `${18 + Math.round(Math.random() * 28)}px`,
         "--drop-duration": `${duration}s`,
         "--drop-delay": `${Math.random() * -2.3}s`,
-        "--drop-drift": `${(-4.5 - Math.random() * 5.5).toFixed(2)}vw`,
+        "--drop-drift": `${cssNumber(drift * -1)}vw`,
         "--drop-opacity-scale": `${(0.36 + Math.random() * 0.56).toFixed(2)}`,
       });
       drop.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backRainCount), 4);
       drop.dataset.baseDuration = cssNumber(duration, 4);
+      drop.dataset.baseDrift = cssNumber(drift, 4);
       rain.appendChild(drop);
     }
 
@@ -395,36 +398,42 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     splashes.className = "weather-fx-rain-splashes";
     root.appendChild(splashes);
 
-    const backSplashCount = compact ? 12 : 20;
-    for (let index = 0; index < backSplashCount; index += 1) {
-      const size = randomRange(6, 15);
-      const splash = createSpan("weather-fx-rain-splash", {
-        "--splash-left": `${cssNumber(randomRange(1, 99))}%`,
-        "--splash-bottom": `${cssNumber(randomRange(0, 10))}%`,
-        "--splash-duration": `${cssNumber(randomRange(0.42, 0.8))}s`,
-        "--splash-delay": `${cssNumber(randomRange(-2.4, -0.1))}s`,
-        "--splash-size": `${cssNumber(size)}px`,
-        "--splash-height": `${cssNumber(size * 0.72)}px`,
-        "--splash-lift": `${cssNumber(randomRange(-10, -5))}px`,
-      });
-      splash.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backSplashCount), 4);
-      splashes.appendChild(splash);
-    }
-
     const ripples = document.createElement("div");
     ripples.className = "weather-fx-rain-ripples";
     root.appendChild(ripples);
 
-    const backRippleCount = compact ? 8 : 12;
-    for (let index = 0; index < backRippleCount; index += 1) {
-      const ripple = createSpan("weather-fx-rain-ripple", {
-        "--ripple-left": `${cssNumber(randomRange(1, 99))}%`,
-        "--ripple-bottom": `${cssNumber(randomRange(0, 8))}%`,
-        "--ripple-duration": `${cssNumber(randomRange(0.7, 1.45))}s`,
-        "--ripple-delay": `${cssNumber(randomRange(-2.4, -0.1))}s`,
-        "--ripple-size": `${cssNumber(randomRange(12, 30))}px`,
+    const backImpactCount = compact ? 12 : 20;
+    for (let index = 0; index < backImpactCount; index += 1) {
+      const position = randomRange(1, 99);
+      const bottom = randomRange(0, 10);
+      const duration = randomRange(1.05, 1.7);
+      const delay = randomRange(-3.4, -0.1);
+      const threshold = cssNumber(resolveRainDensityThreshold(index, backImpactCount), 4);
+      const splashSize = randomRange(6, 15);
+      const rippleSize = randomRange(12, 30);
+      const splash = createSpan("weather-fx-rain-splash", {
+        "--splash-left": `${cssNumber(position)}%`,
+        "--splash-bottom": `${cssNumber(bottom)}%`,
+        "--impact-duration": `${cssNumber(duration)}s`,
+        "--impact-delay": `${cssNumber(delay)}s`,
+        "--splash-size": `${cssNumber(splashSize)}px`,
+        "--splash-height": `${cssNumber(splashSize * 0.72)}px`,
+        "--splash-lift": `${cssNumber(randomRange(-10, -5))}px`,
+        "--splash-tilt": `${cssNumber(randomRange(-12, 12))}deg`,
+        "margin-left": `${cssNumber(splashSize * -0.5)}px`,
       });
-      ripple.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backRippleCount), 4);
+      splash.dataset.densityThreshold = threshold;
+      splashes.appendChild(splash);
+
+      const ripple = createSpan("weather-fx-rain-ripple", {
+        "--ripple-left": `${cssNumber(position)}%`,
+        "--ripple-bottom": `${cssNumber(bottom)}%`,
+        "--impact-duration": `${cssNumber(duration)}s`,
+        "--impact-delay": `${cssNumber(delay)}s`,
+        "--ripple-size": `${cssNumber(rippleSize)}px`,
+        "margin-left": `${cssNumber(rippleSize * -0.5)}px`,
+      });
+      ripple.dataset.densityThreshold = threshold;
       ripples.appendChild(ripple);
     }
 
@@ -459,6 +468,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     const frontRainCount = resolveRainParticlePool(compact).front;
     for (let index = 0; index < frontRainCount; index += 1) {
       const duration = 0.72 + Math.random() * 0.55;
+      const drift = randomRange(7, 15);
       const drop = createSpan("weather-fx-rain-drop weather-fx-rain-drop-front", {
         "--drop-left": `${Math.round(Math.random() * 104)}%`,
         "--drop-top": `${(-24 - Math.random() * 30).toFixed(2)}%`,
@@ -466,11 +476,12 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
         "--drop-length": `${32 + Math.round(Math.random() * 40)}px`,
         "--drop-duration": `${duration}s`,
         "--drop-delay": `${Math.random() * -2.1}s`,
-        "--drop-drift": `${(-7 - Math.random() * 8).toFixed(2)}vw`,
+        "--drop-drift": `${cssNumber(drift * -1)}vw`,
         "--drop-opacity-scale": `${(0.32 + Math.random() * 0.64).toFixed(2)}`,
       });
       drop.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, frontRainCount), 4);
       drop.dataset.baseDuration = cssNumber(duration, 4);
+      drop.dataset.baseDrift = cssNumber(drift, 4);
       rain.appendChild(drop);
     }
 
@@ -479,15 +490,18 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     root.appendChild(splashes);
 
     for (let index = 0; index < (compact ? 4 : 8); index += 1) {
-      splashes.appendChild(
-        createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
-          "--splash-left": `${Math.round(Math.random() * 100)}%`,
-          "--splash-bottom": `${Math.round(Math.random() * 14)}%`,
-          "--splash-duration": `${cssNumber(0.25 + Math.random() * 0.4)}s`,
-          "--splash-delay": `${cssNumber(Math.random() * -1.2)}s`,
-          "--splash-size": `${6 + Math.round(Math.random() * 10)}px`,
-        }),
-      );
+      const size = randomRange(6, 16);
+      splashes.appendChild(createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
+        "--splash-left": `${cssNumber(randomRange(1, 99))}%`,
+        "--splash-bottom": `${cssNumber(randomRange(0, 14))}%`,
+        "--impact-duration": `${cssNumber(randomRange(0.65, 1.05))}s`,
+        "--impact-delay": `${cssNumber(randomRange(-1.4, -0.1))}s`,
+        "--splash-size": `${cssNumber(size)}px`,
+        "--splash-height": `${cssNumber(size * 0.72)}px`,
+        "--splash-lift": `${cssNumber(randomRange(-12, -6))}px`,
+        "--splash-tilt": `${cssNumber(randomRange(-12, 12))}deg`,
+        "margin-left": `${cssNumber(size * -0.5)}px`,
+      }));
     }
 
     for (let index = 0; index < (compact ? 30 : 48); index += 1) {
@@ -1197,19 +1211,11 @@ function setFxVisibility(root: FxRoot, visible: boolean): void {
   root.root.classList.toggle("weather-visible", visible);
 }
 
-function resolveRainAngle(wind: string): number {
-  const normalized = wind.toLowerCase();
-  if (/hurricane|violent|gale|hard|strong|gust/.test(normalized)) return 20;
-  if (/steady|breezy|windy|crosswind/.test(normalized)) return 14;
-  if (/light|soft|cool drift/.test(normalized)) return 9;
-  if (/still|calm|hushed/.test(normalized)) return 4;
-  return 11;
-}
-
 function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs, reducedMotion: boolean): void {
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const tokens = resolveSceneTokens(state, effectiveIntensity);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
+  const rainVector = resolveRainVector(state.wind, state.windDirection);
   const isFront = root.kind === "front";
   const visibleRainDensity = reducedMotion ? Math.min(rainProfile.density, 0.22) : rainProfile.density;
   const rainLayerOpacity = tokens.rainOpacity * rainProfile.opacityScale * (isFront ? 0.82 : 0.72);
@@ -1245,7 +1251,7 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.style.setProperty("--weather-snow-opacity", String(tokens.snowOpacity * (isFront ? 0.96 : 0.82)));
   root.root.style.setProperty("--weather-mote-opacity", String(isFront ? 0 : tokens.moteOpacity));
   root.root.style.setProperty("--weather-flash-opacity", String(tokens.flashOpacity));
-  root.root.style.setProperty("--weather-rain-angle", `${resolveRainAngle(state.wind)}deg`);
+  root.root.style.setProperty("--weather-rain-angle", `${rainVector.angle}deg`);
   root.root.style.setProperty(
     "--weather-rain-color",
     state.condition === "storm" ? "rgba(212, 231, 255, 0.96)" : "rgba(190, 220, 255, 0.84)",
@@ -1264,8 +1270,10 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.querySelectorAll<HTMLElement>(".weather-fx-rain-drop").forEach((drop) => {
     const threshold = Number.parseFloat(drop.dataset.densityThreshold ?? "1");
     const baseDuration = Number.parseFloat(drop.dataset.baseDuration ?? "1");
+    const baseDrift = Number.parseFloat(drop.dataset.baseDrift ?? "0");
     drop.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
     drop.style.animationDuration = `${baseDuration * rainProfile.speedScale}s`;
+    drop.style.setProperty("--drop-drift", `${baseDrift * rainVector.driftDirection}vw`);
   });
   if (!isFront) {
     root.root.querySelectorAll<HTMLElement>(".weather-fx-rain-splash, .weather-fx-rain-ripple").forEach((impact) => {

@@ -350,12 +350,12 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const locationInput = document.createElement("input");
   locationInput.type = "text";
   locationInput.className = "weather-settings-input";
-  locationInput.placeholder = "Tengu City";
+  locationInput.placeholder = "Example Location";
 
   const timeInput = document.createElement("input");
   timeInput.type = "text";
   timeInput.className = "weather-settings-input";
-  timeInput.placeholder = "9:42 PM";
+  timeInput.placeholder = "3:00 PM";
 
   const temperatureInput = document.createElement("input");
   temperatureInput.type = "text";
@@ -370,7 +370,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const summaryInput = document.createElement("input");
   summaryInput.type = "text";
   summaryInput.className = "weather-settings-input";
-  summaryInput.placeholder = "Cold spring rain";
+  summaryInput.placeholder = "Steady afternoon rain";
 
   const sceneIntensityRow = document.createElement("div");
   sceneIntensityRow.className = "weather-settings-row";
@@ -442,7 +442,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     const hasDate = typeof nextState.date === "string" && nextState.date.trim();
     const hasTime = typeof nextState.time === "string" && nextState.time.trim();
     if ((hasDate && !hasTime) || (!hasDate && hasTime) || (hasDate && hasTime && parseStoryDateTime(nextState.date!, nextState.time!) === null)) {
-      manualError.textContent = "Use a valid story date and time, such as 2026-03-24 and 9:42 PM.";
+      manualError.textContent = "Use a valid story date and time, such as 2026-01-15 and 3:00 PM.";
       manualError.hidden = false;
       return;
     }

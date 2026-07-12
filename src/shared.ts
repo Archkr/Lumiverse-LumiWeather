@@ -7,6 +7,7 @@ import type {
   WeatherPrefs,
   WeatherSourceMode,
   WeatherState,
+  WeatherWindDirection,
 } from "./types";
 
 export const WEATHER_STATE_VAR = "weather_state_json";
@@ -16,6 +17,17 @@ export const WEATHER_TAG_NAME = "weather-state";
 export const WEATHER_CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 export const WEATHER_LAYERS: WeatherLayerMode[] = ["back", "front", "both"];
 export const WEATHER_PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
+export const WEATHER_WIND_DIRECTIONS: WeatherWindDirection[] = [
+  "none",
+  "north",
+  "northeast",
+  "east",
+  "southeast",
+  "south",
+  "southwest",
+  "west",
+  "northwest",
+];
 export const REDUCED_MOTION_VALUES: ReducedMotionMode[] = ["system", "always", "never"];
 export const TEMPERATURE_UNITS: TemperatureUnit[] = ["fahrenheit", "celsius"];
 
@@ -74,6 +86,32 @@ function normalizePalette(value: unknown, fallback: WeatherPalette): WeatherPale
   return WEATHER_PALETTES.includes(normalized as WeatherPalette)
     ? (normalized as WeatherPalette)
     : fallback;
+}
+
+export function normalizeWindDirection(value: unknown, fallback: WeatherWindDirection): WeatherWindDirection {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const aliases: Record<string, WeatherWindDirection> = {
+    none: "none",
+    calm: "none",
+    n: "north",
+    north: "north",
+    ne: "northeast",
+    northeast: "northeast",
+    e: "east",
+    east: "east",
+    se: "southeast",
+    southeast: "southeast",
+    s: "south",
+    south: "south",
+    sw: "southwest",
+    southwest: "southwest",
+    w: "west",
+    west: "west",
+    nw: "northwest",
+    northwest: "northwest",
+  };
+  return aliases[normalized] ?? fallback;
 }
 
 function normalizeReducedMotion(value: unknown, fallback: ReducedMotionMode): ReducedMotionMode {
@@ -225,6 +263,7 @@ export function makeDefaultWeatherState(now = Date.now()): WeatherState {
     temperature: "68F",
     intensity: 0.3,
     wind: "still",
+    windDirection: "none",
     palette: derivePalette("clear", dateValue, timeValue),
     updatedAt: now,
     source: "story",
@@ -243,6 +282,7 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
   const palette = normalizePalette(source.palette, derivePalette(condition, date, time));
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
+  const windDirectionValue = source.windDirection ?? source.wind_direction ?? source["wind-direction"];
 
   return {
     location: normalizeText(source.location, fallback.location, 72),
@@ -253,6 +293,7 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
     temperature: normalizeText(source.temperature, fallback.temperature, 16),
     intensity,
     wind: normalizeText(source.wind, fallback.wind, 32),
+    windDirection: normalizeWindDirection(windDirectionValue, fallback.windDirection),
     palette,
     updatedAt,
     source: normalizeSource(source.source, fallback.source),

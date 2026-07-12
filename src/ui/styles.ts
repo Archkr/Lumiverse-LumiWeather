@@ -1573,8 +1573,8 @@ export const WEATHER_HUD_CSS = `
   transform-origin: 50% 100%;
   opacity: 0;
   filter: drop-shadow(0 0 3px rgba(194, 225, 255, 0.58));
-  animation: weather-splash var(--splash-duration) ease-out infinite;
-  animation-delay: var(--splash-delay);
+  animation: weather-splash var(--impact-duration, 0.9s) ease-out infinite;
+  animation-delay: var(--impact-delay, 0s);
   animation-play-state: paused;
 }
 
@@ -1617,8 +1617,8 @@ export const WEATHER_HUD_CSS = `
   border-radius: 50%;
   opacity: 0;
   filter: drop-shadow(0 0 2px rgba(191, 221, 255, 0.42));
-  animation: weather-ripple var(--ripple-duration) ease-out infinite;
-  animation-delay: var(--ripple-delay);
+  animation: weather-ripple var(--impact-duration, 0.9s) ease-out infinite;
+  animation-delay: var(--impact-delay, 0s);
   animation-play-state: paused;
 }
 
@@ -1933,10 +1933,10 @@ export const WEATHER_HUD_CSS = `
 }
 
 @keyframes weather-splash {
-  0% { transform: translate3d(0, 2px, 0) scale(0.2); opacity: 0; }
+  0% { transform: translate3d(0, 2px, 0) scale(0.2) rotate(0deg); opacity: 0; }
   20% { opacity: calc(var(--weather-rain-opacity) * var(--splash-opacity-scale)); }
-  58% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1); }
-  100% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35); opacity: 0; }
+  58% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1) rotate(var(--splash-tilt, 0deg)); }
+  100% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35) rotate(var(--splash-tilt, 0deg)); opacity: 0; }
 }
 
 @keyframes weather-ripple {
