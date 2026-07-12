@@ -406,7 +406,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     for (let index = 0; index < backImpactCount; index += 1) {
       const position = randomRange(1, 99);
       const bottom = randomRange(0, 10);
-      const duration = randomRange(1.05, 1.7);
+      const duration = randomRange(0.65, 0.95);
       const delay = randomRange(-3.4, -0.1);
       const threshold = cssNumber(resolveRainDensityThreshold(index, backImpactCount), 4);
       const splashSize = randomRange(6, 15);

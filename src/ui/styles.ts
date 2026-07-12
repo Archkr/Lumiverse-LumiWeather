@@ -1934,14 +1934,15 @@ export const WEATHER_HUD_CSS = `
 
 @keyframes weather-splash {
   0% { transform: translate3d(0, 2px, 0) scale(0.2) rotate(0deg); opacity: 0; }
-  20% { opacity: calc(var(--weather-rain-opacity) * var(--splash-opacity-scale)); }
-  58% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1) rotate(var(--splash-tilt, 0deg)); }
+  18% { opacity: calc(var(--weather-rain-opacity) * var(--splash-opacity-scale)); }
+  42% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1) rotate(var(--splash-tilt, 0deg)); }
+  62% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35) rotate(var(--splash-tilt, 0deg)); opacity: 0; }
   100% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35) rotate(var(--splash-tilt, 0deg)); opacity: 0; }
 }
 
 @keyframes weather-ripple {
   0% { transform: scale(0.15); opacity: 0; }
-  25% { opacity: calc(var(--weather-rain-opacity) * var(--ripple-opacity-scale)); }
+  18% { opacity: calc(var(--weather-rain-opacity) * var(--ripple-opacity-scale)); }
   100% { transform: scale(3); opacity: 0; }
 }
 
