@@ -204,6 +204,62 @@ function createCloudElement(index: number, total: number): HTMLSpanElement {
   return cloud;
 }
 
+function createWindGustElement(): HTMLSpanElement {
+  const length = randomRange(90, 260);
+  const curve = randomRange(6, 22);
+  const height = curve * 2 + 6;
+  const midpoint = height / 2;
+  const gust = createSpan("weather-fx-wind-gust", {
+    "--gust-left": `${cssNumber(randomRange(-45, 45))}%`,
+    "--gust-top": `${cssNumber(randomRange(12, 90))}%`,
+    "--gust-width": `${cssNumber(length)}px`,
+    "--gust-height": `${cssNumber(height)}px`,
+    "--gust-duration": `${cssNumber(randomRange(5.5, 12))}s`,
+    "--gust-delay": `${cssNumber(randomRange(-12, -0.4))}s`,
+    "--gust-opacity": cssNumber(randomRange(0.04, 0.16)),
+  });
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${cssNumber(length)} ${cssNumber(height)}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("aria-hidden", "true");
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute(
+    "d",
+    `M 0 ${cssNumber(midpoint)} C ${cssNumber(length * 0.3)} ${cssNumber(midpoint - curve)}, ${cssNumber(length * 0.7)} ${cssNumber(midpoint + curve)}, ${cssNumber(length)} ${cssNumber(midpoint)}`,
+  );
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", cssNumber(randomRange(0.6, 1.6)));
+  path.setAttribute("stroke-linecap", "round");
+  svg.appendChild(path);
+  gust.appendChild(svg);
+  return gust;
+}
+
+function createSnowflakeElement(front: boolean): HTMLSpanElement {
+  const size = randomRange(front ? 1.6 : 1.2, front ? 5.2 : 4.3);
+  const direction = Math.random() < 0.5 ? -1 : 1;
+  const drift = randomRange(1.2, front ? 5.8 : 4.6) * direction;
+
+  return createSpan(front ? "weather-fx-snow-flake weather-fx-snow-flake-front" : "weather-fx-snow-flake", {
+    "--flake-left": `${cssNumber(randomRange(-4, 104))}%`,
+    "--flake-top": `${cssNumber(randomRange(-24, -6))}%`,
+    "--flake-size": `${cssNumber(size)}px`,
+    "--flake-glow": `${cssNumber(size * (front ? 3.1 : 2.7))}px`,
+    "--flake-duration": `${cssNumber(randomRange(front ? 7 : 8, front ? 16 : 20))}s`,
+    "--flake-shimmer-duration": `${cssNumber(randomRange(1.8, 3.8))}s`,
+    "--flake-delay": `${cssNumber(randomRange(-18, -0.2))}s`,
+    "--flake-drift-a": `${cssNumber(drift)}vw`,
+    "--flake-drift-b": `${cssNumber(drift * -0.65)}vw`,
+    "--flake-drift-c": `${cssNumber(drift * 0.85)}vw`,
+    "--flake-drift-end": `${cssNumber(drift * -0.45 - 0.8)}vw`,
+    "--flake-static-y": `${cssNumber(randomRange(12, 88))}vh`,
+    "--flake-opacity-scale": cssNumber(randomRange(0.3, 0.85)),
+  });
+}
+
 function protectInteractive(element: HTMLElement): void {
   const stop = (event: Event) => event.stopPropagation();
   element.addEventListener("pointerdown", stop);
@@ -252,13 +308,9 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     motes.className = "weather-fx-motes";
     root.appendChild(motes);
 
-    const windStreaks = document.createElement("div");
-    windStreaks.className = "weather-fx-wind-streaks";
-    root.appendChild(windStreaks);
-
-    const rainSheets = document.createElement("div");
-    rainSheets.className = "weather-fx-rain-sheets";
-    root.appendChild(rainSheets);
+    const windGusts = document.createElement("div");
+    windGusts.className = "weather-fx-wind-gusts";
+    root.appendChild(windGusts);
 
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain";
@@ -317,16 +369,8 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
-      windStreaks.appendChild(
-        createSpan("weather-fx-wind-streak", {
-          "--streak-top": `${Math.round(Math.random() * 82)}%`,
-          "--streak-width": `${60 + Math.round(Math.random() * 220)}px`,
-          "--streak-duration": `${cssNumber(1 + Math.random() * 2.4)}s`,
-          "--streak-delay": `${cssNumber(Math.random() * -3.5)}s`,
-          "--streak-opacity": `${cssNumber(0.06 + Math.random() * 0.16)}`,
-        }),
-      );
+    for (let index = 0; index < (compact ? 10 : 16); index += 1) {
+      windGusts.appendChild(createWindGustElement());
     }
 
     const backRainCount = resolveRainParticlePool(compact).back;
@@ -340,7 +384,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
         "--drop-duration": `${duration}s`,
         "--drop-delay": `${Math.random() * -2.3}s`,
         "--drop-drift": `${(-4.5 - Math.random() * 5.5).toFixed(2)}vw`,
-        "--drop-opacity-scale": `${(0.28 + Math.random() * 0.52).toFixed(2)}`,
+        "--drop-opacity-scale": `${(0.36 + Math.random() * 0.56).toFixed(2)}`,
       });
       drop.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backRainCount), 4);
       drop.dataset.baseDuration = cssNumber(duration, 4);
@@ -379,21 +423,8 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < (compact ? 10 : 18); index += 1) {
-      const flake = createSpan("weather-fx-snow-flake", {
-        "--flake-left": `${Math.round(Math.random() * 102)}%`,
-        "--flake-top": `${(-18 - Math.random() * 18).toFixed(2)}%`,
-        "--flake-size": `${2 + Math.random() * 4}px`,
-        "--flake-duration": `${6.4 + Math.random() * 4.6}s`,
-        "--flake-delay": `${Math.random() * -6}s`,
-        "--flake-drift-mid": `${(-1.8 + Math.random() * 3.6).toFixed(2)}vw`,
-        "--flake-drift-end": `${(-4 + Math.random() * 8).toFixed(2)}vw`,
-        "--flake-spin-mid": `${Math.round(-18 + Math.random() * 36)}deg`,
-        "--flake-spin-end": `${Math.round(-32 + Math.random() * 64)}deg`,
-        "--flake-opacity-scale": `${(0.48 + Math.random() * 0.62).toFixed(2)}`,
-      });
-      flake.dataset.shape = String(Math.floor(Math.random() * 4));
-      snow.appendChild(flake);
+    for (let index = 0; index < (compact ? 48 : 72); index += 1) {
+      snow.appendChild(createSnowflakeElement(false));
     }
 
     const snowBank = document.createElement("div");
@@ -458,21 +489,8 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       );
     }
 
-    for (let index = 0; index < (compact ? 12 : 20); index += 1) {
-      const flake = createSpan("weather-fx-snow-flake weather-fx-snow-flake-front", {
-        "--flake-left": `${Math.round(Math.random() * 102)}%`,
-        "--flake-top": `${(-18 - Math.random() * 20).toFixed(2)}%`,
-        "--flake-size": `${4 + Math.random() * 6}px`,
-        "--flake-duration": `${5.2 + Math.random() * 3.8}s`,
-        "--flake-delay": `${Math.random() * -5.4}s`,
-        "--flake-drift-mid": `${(-2.6 + Math.random() * 5.2).toFixed(2)}vw`,
-        "--flake-drift-end": `${(-6 + Math.random() * 12).toFixed(2)}vw`,
-        "--flake-spin-mid": `${Math.round(-28 + Math.random() * 56)}deg`,
-        "--flake-spin-end": `${Math.round(-60 + Math.random() * 120)}deg`,
-        "--flake-opacity-scale": `${(0.56 + Math.random() * 0.72).toFixed(2)}`,
-      });
-      flake.dataset.shape = String(Math.floor(Math.random() * 4));
-      snow.appendChild(flake);
+    for (let index = 0; index < (compact ? 30 : 48); index += 1) {
+      snow.appendChild(createSnowflakeElement(true));
     }
 
     const lightningGlow = document.createElement("div");
@@ -487,6 +505,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
 
 function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): void {
   const rainLike = condition === "rain" || condition === "storm";
+  const windLike = condition === "cloudy" || rainLike;
   const cloudLike = condition === "cloudy" || rainLike || condition === "snow";
   const fogLike = condition === "fog" || condition === "snow" || rainLike;
 
@@ -496,9 +515,8 @@ function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): v
     root.querySelector(".weather-fx-mist")?.remove();
   }
   if (condition !== "clear") root.querySelector(".weather-fx-motes")?.remove();
+  if (!windLike) root.querySelector(".weather-fx-wind-gusts")?.remove();
   if (!rainLike) {
-    root.querySelector(".weather-fx-wind-streaks")?.remove();
-    root.querySelector(".weather-fx-rain-sheets")?.remove();
     root.querySelector(".weather-fx-rain")?.remove();
     root.querySelector(".weather-fx-rain-splashes")?.remove();
     root.querySelector(".weather-fx-rain-ripples")?.remove();
@@ -1194,7 +1212,7 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
   const isFront = root.kind === "front";
   const visibleRainDensity = reducedMotion ? Math.min(rainProfile.density, 0.22) : rainProfile.density;
-  const rainLayerOpacity = tokens.rainOpacity * rainProfile.opacityScale * (isFront ? 0.82 : 0.55);
+  const rainLayerOpacity = tokens.rainOpacity * rainProfile.opacityScale * (isFront ? 0.82 : 0.72);
   const cloudSpeedScale = state.condition === "storm" ? 0.76 : state.condition === "rain" ? 0.9 : 1;
 
   root.root.dataset.condition = state.condition;
@@ -1224,12 +1242,7 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.style.setProperty("--weather-rain-opacity", String(rainLayerOpacity));
   root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
   root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
-  root.root.style.setProperty("--weather-rain-sheet-opacity", String(isFront ? 0 : rainProfile.sheetOpacity));
-  root.root.style.setProperty("--weather-rain-sheet-drift-duration", `${8.5 * rainProfile.speedScale}s`);
-  root.root.style.setProperty("--weather-rain-sheet-pulse-duration", `${9.5 * rainProfile.speedScale}s`);
-  root.root.style.setProperty("--weather-rain-sheet-drift-duration-alt", `${11.5 * rainProfile.speedScale}s`);
-  root.root.style.setProperty("--weather-rain-sheet-pulse-duration-alt", `${12.5 * rainProfile.speedScale}s`);
-  root.root.style.setProperty("--weather-snow-opacity", String(tokens.snowOpacity * (isFront ? 0.98 : 0.54)));
+  root.root.style.setProperty("--weather-snow-opacity", String(tokens.snowOpacity * (isFront ? 0.96 : 0.82)));
   root.root.style.setProperty("--weather-mote-opacity", String(isFront ? 0 : tokens.moteOpacity));
   root.root.style.setProperty("--weather-flash-opacity", String(tokens.flashOpacity));
   root.root.style.setProperty("--weather-rain-angle", `${resolveRainAngle(state.wind)}deg`);

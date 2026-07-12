@@ -6,9 +6,22 @@ import {
 } from "./fx-utils";
 
 describe("weather FX profiles", () => {
-  test("selects balanced desktop and compact rain pools", () => {
-    expect(resolveRainParticlePool(false)).toEqual({ back: 48, front: 72 });
-    expect(resolveRainParticlePool(true)).toEqual({ back: 28, front: 42 });
+  test("selects rear-heavy desktop and compact rain pools", () => {
+    expect(resolveRainParticlePool(false)).toEqual({ back: 96, front: 72 });
+    expect(resolveRainParticlePool(true)).toEqual({ back: 60, front: 42 });
+  });
+
+  test("keeps substantially more rear drops visible at the rain preset intensity", () => {
+    const profile = resolveRainProfile(0.74, "rain");
+    const desktopBack = resolveRainParticlePool(false).back;
+    const compactBack = resolveRainParticlePool(true).back;
+    const visibleCount = (total: number) =>
+      Array.from({ length: total }, (_, index) => resolveRainDensityThreshold(index, total)).filter(
+        (threshold) => threshold <= profile.density,
+      ).length;
+
+    expect(visibleCount(desktopBack)).toBe(78);
+    expect(visibleCount(compactBack)).toBe(49);
   });
 
   test("clamps intensity and grows rain density monotonically", () => {
@@ -32,7 +45,6 @@ describe("weather FX profiles", () => {
     expect(storm.density).toBeGreaterThan(rain.density);
     expect(storm.opacityScale).toBeGreaterThan(rain.opacityScale);
     expect(storm.speedScale).toBeLessThan(rain.speedScale);
-    expect(storm.sheetOpacity).toBeGreaterThan(rain.sheetOpacity);
   });
 
   test("distributes density thresholds evenly and disables dry conditions", () => {
@@ -43,7 +55,6 @@ describe("weather FX profiles", () => {
       density: 0,
       opacityScale: 0,
       speedScale: 1,
-      sheetOpacity: 0,
     });
   });
 });
