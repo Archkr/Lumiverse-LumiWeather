@@ -1564,25 +1564,51 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-fx-rain-splash {
+  --splash-color: rgba(191, 221, 255, 0.62);
+  --splash-dot-color: rgba(220, 238, 255, 0.82);
+  --splash-opacity-scale: 0.72;
   bottom: var(--splash-bottom);
   left: var(--splash-left);
   width: var(--splash-size);
-  height: var(--splash-size);
-  border: 1.5px solid rgba(191, 221, 255, 0.5);
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(191, 221, 255, 0.2) 0%, transparent 70%);
+  height: var(--splash-height, var(--splash-size));
+  transform-origin: 50% 100%;
   opacity: 0;
   animation: weather-splash var(--splash-duration) ease-out infinite;
   animation-delay: var(--splash-delay);
   animation-play-state: paused;
 }
 
+.weather-fx-rain-splash::before,
+.weather-fx-rain-splash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.weather-fx-rain-splash::before {
+  top: auto;
+  height: 48%;
+  border: 1.2px solid var(--splash-color);
+  border-radius: 50%;
+  clip-path: inset(0 0 48% 0);
+}
+
+.weather-fx-rain-splash::after {
+  background:
+    radial-gradient(circle at 15% 70%, var(--splash-dot-color) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 50% 5%, var(--splash-dot-color) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 84% 66%, var(--splash-dot-color) 0 0.8px, transparent 1.5px);
+}
+
 .weather-fx-rain-splash-front {
-  border-color: rgba(209, 229, 255, 0.6);
-  background: radial-gradient(circle, rgba(209, 229, 255, 0.25) 0%, transparent 70%);
+  --splash-color: rgba(218, 237, 255, 0.76);
+  --splash-dot-color: rgba(238, 247, 255, 0.94);
+  --splash-opacity-scale: 0.86;
 }
 
 .weather-fx-rain-ripple {
+  --ripple-opacity-scale: 0.46;
   bottom: var(--ripple-bottom);
   left: var(--ripple-left);
   width: var(--ripple-size);
@@ -1593,6 +1619,11 @@ export const WEATHER_HUD_CSS = `
   animation: weather-ripple var(--ripple-duration) ease-out infinite;
   animation-delay: var(--ripple-delay);
   animation-play-state: paused;
+}
+
+.weather-fx-rain-splash.weather-density-hidden,
+.weather-fx-rain-ripple.weather-density-hidden {
+  display: none;
 }
 
 .weather-fx-wind-gusts {
@@ -1818,14 +1849,6 @@ export const WEATHER_HUD_CSS = `
   animation-play-state: running;
 }
 
-.weather-fx-root.weather-rain-active .weather-fx-rain-splash {
-  opacity: calc(var(--weather-rain-opacity) * 0.5);
-}
-
-.weather-fx-root.weather-rain-active .weather-fx-rain-ripple {
-  opacity: calc(var(--weather-rain-opacity) * 0.35);
-}
-
 .weather-fx-root.weather-reduced-motion .weather-fx-cloud,
 .weather-fx-root.weather-reduced-motion .weather-fx-fog-band,
 .weather-fx-root.weather-reduced-motion .weather-fx-mist-plume,
@@ -1942,14 +1965,15 @@ export const WEATHER_HUD_CSS = `
 }
 
 @keyframes weather-splash {
-  0% { transform: scale(0.1); opacity: 0; }
-  20% { opacity: 0.7; }
-  100% { transform: scale(2.5); opacity: 0; }
+  0% { transform: translate3d(0, 2px, 0) scale(0.2); opacity: 0; }
+  20% { opacity: calc(var(--weather-rain-opacity) * var(--splash-opacity-scale)); }
+  58% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1); }
+  100% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35); opacity: 0; }
 }
 
 @keyframes weather-ripple {
   0% { transform: scale(0.15); opacity: 0; }
-  25% { opacity: 0.5; }
+  25% { opacity: calc(var(--weather-rain-opacity) * var(--ripple-opacity-scale)); }
   100% { transform: scale(3); opacity: 0; }
 }
 

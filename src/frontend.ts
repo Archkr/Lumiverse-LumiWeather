@@ -395,32 +395,37 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     splashes.className = "weather-fx-rain-splashes";
     root.appendChild(splashes);
 
-    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
-      splashes.appendChild(
-        createSpan("weather-fx-rain-splash", {
-          "--splash-left": `${Math.round(Math.random() * 100)}%`,
-          "--splash-bottom": `${Math.round(Math.random() * 8)}%`,
-          "--splash-duration": `${cssNumber(0.35 + Math.random() * 0.5)}s`,
-          "--splash-delay": `${cssNumber(Math.random() * -1.8)}s`,
-          "--splash-size": `${4 + Math.round(Math.random() * 7)}px`,
-        }),
-      );
+    const backSplashCount = compact ? 12 : 20;
+    for (let index = 0; index < backSplashCount; index += 1) {
+      const size = randomRange(6, 15);
+      const splash = createSpan("weather-fx-rain-splash", {
+        "--splash-left": `${cssNumber(randomRange(1, 99))}%`,
+        "--splash-bottom": `${cssNumber(randomRange(0, 10))}%`,
+        "--splash-duration": `${cssNumber(randomRange(0.42, 0.8))}s`,
+        "--splash-delay": `${cssNumber(randomRange(-2.4, -0.1))}s`,
+        "--splash-size": `${cssNumber(size)}px`,
+        "--splash-height": `${cssNumber(size * 0.72)}px`,
+        "--splash-lift": `${cssNumber(randomRange(-10, -5))}px`,
+      });
+      splash.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backSplashCount), 4);
+      splashes.appendChild(splash);
     }
 
     const ripples = document.createElement("div");
     ripples.className = "weather-fx-rain-ripples";
     root.appendChild(ripples);
 
-    for (let index = 0; index < (compact ? 3 : 5); index += 1) {
-      ripples.appendChild(
-        createSpan("weather-fx-rain-ripple", {
-          "--ripple-left": `${Math.round(Math.random() * 100)}%`,
-          "--ripple-bottom": `${Math.round(Math.random() * 6)}%`,
-          "--ripple-duration": `${cssNumber(0.7 + Math.random() * 0.9)}s`,
-          "--ripple-delay": `${cssNumber(Math.random() * -2.2)}s`,
-          "--ripple-size": `${10 + Math.round(Math.random() * 18)}px`,
-        }),
-      );
+    const backRippleCount = compact ? 8 : 12;
+    for (let index = 0; index < backRippleCount; index += 1) {
+      const ripple = createSpan("weather-fx-rain-ripple", {
+        "--ripple-left": `${cssNumber(randomRange(1, 99))}%`,
+        "--ripple-bottom": `${cssNumber(randomRange(0, 8))}%`,
+        "--ripple-duration": `${cssNumber(randomRange(0.7, 1.45))}s`,
+        "--ripple-delay": `${cssNumber(randomRange(-2.4, -0.1))}s`,
+        "--ripple-size": `${cssNumber(randomRange(12, 30))}px`,
+      });
+      ripple.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backRippleCount), 4);
+      ripples.appendChild(ripple);
     }
 
     for (let index = 0; index < (compact ? 48 : 72); index += 1) {
@@ -1267,6 +1272,12 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
     drop.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
     drop.style.animationDuration = `${baseDuration * rainProfile.speedScale}s`;
   });
+  if (!isFront) {
+    root.root.querySelectorAll<HTMLElement>(".weather-fx-rain-splash, .weather-fx-rain-ripple").forEach((impact) => {
+      const threshold = Number.parseFloat(impact.dataset.densityThreshold ?? "1");
+      impact.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
+    });
+  }
   root.root.querySelectorAll<HTMLElement>(".weather-fx-cloud").forEach((cloud) => {
     const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;

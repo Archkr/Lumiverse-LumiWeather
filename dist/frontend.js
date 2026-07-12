@@ -2393,25 +2393,51 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-fx-rain-splash {
+  --splash-color: rgba(191, 221, 255, 0.62);
+  --splash-dot-color: rgba(220, 238, 255, 0.82);
+  --splash-opacity-scale: 0.72;
   bottom: var(--splash-bottom);
   left: var(--splash-left);
   width: var(--splash-size);
-  height: var(--splash-size);
-  border: 1.5px solid rgba(191, 221, 255, 0.5);
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(191, 221, 255, 0.2) 0%, transparent 70%);
+  height: var(--splash-height, var(--splash-size));
+  transform-origin: 50% 100%;
   opacity: 0;
   animation: weather-splash var(--splash-duration) ease-out infinite;
   animation-delay: var(--splash-delay);
   animation-play-state: paused;
 }
 
+.weather-fx-rain-splash::before,
+.weather-fx-rain-splash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.weather-fx-rain-splash::before {
+  top: auto;
+  height: 48%;
+  border: 1.2px solid var(--splash-color);
+  border-radius: 50%;
+  clip-path: inset(0 0 48% 0);
+}
+
+.weather-fx-rain-splash::after {
+  background:
+    radial-gradient(circle at 15% 70%, var(--splash-dot-color) 0 0.8px, transparent 1.5px),
+    radial-gradient(circle at 50% 5%, var(--splash-dot-color) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 84% 66%, var(--splash-dot-color) 0 0.8px, transparent 1.5px);
+}
+
 .weather-fx-rain-splash-front {
-  border-color: rgba(209, 229, 255, 0.6);
-  background: radial-gradient(circle, rgba(209, 229, 255, 0.25) 0%, transparent 70%);
+  --splash-color: rgba(218, 237, 255, 0.76);
+  --splash-dot-color: rgba(238, 247, 255, 0.94);
+  --splash-opacity-scale: 0.86;
 }
 
 .weather-fx-rain-ripple {
+  --ripple-opacity-scale: 0.46;
   bottom: var(--ripple-bottom);
   left: var(--ripple-left);
   width: var(--ripple-size);
@@ -2422,6 +2448,11 @@ var WEATHER_HUD_CSS = `
   animation: weather-ripple var(--ripple-duration) ease-out infinite;
   animation-delay: var(--ripple-delay);
   animation-play-state: paused;
+}
+
+.weather-fx-rain-splash.weather-density-hidden,
+.weather-fx-rain-ripple.weather-density-hidden {
+  display: none;
 }
 
 .weather-fx-wind-gusts {
@@ -2647,14 +2678,6 @@ var WEATHER_HUD_CSS = `
   animation-play-state: running;
 }
 
-.weather-fx-root.weather-rain-active .weather-fx-rain-splash {
-  opacity: calc(var(--weather-rain-opacity) * 0.5);
-}
-
-.weather-fx-root.weather-rain-active .weather-fx-rain-ripple {
-  opacity: calc(var(--weather-rain-opacity) * 0.35);
-}
-
 .weather-fx-root.weather-reduced-motion .weather-fx-cloud,
 .weather-fx-root.weather-reduced-motion .weather-fx-fog-band,
 .weather-fx-root.weather-reduced-motion .weather-fx-mist-plume,
@@ -2771,14 +2794,15 @@ var WEATHER_HUD_CSS = `
 }
 
 @keyframes weather-splash {
-  0% { transform: scale(0.1); opacity: 0; }
-  20% { opacity: 0.7; }
-  100% { transform: scale(2.5); opacity: 0; }
+  0% { transform: translate3d(0, 2px, 0) scale(0.2); opacity: 0; }
+  20% { opacity: calc(var(--weather-rain-opacity) * var(--splash-opacity-scale)); }
+  58% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1); }
+  100% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35); opacity: 0; }
 }
 
 @keyframes weather-ripple {
   0% { transform: scale(0.15); opacity: 0; }
-  25% { opacity: 0.5; }
+  25% { opacity: calc(var(--weather-rain-opacity) * var(--ripple-opacity-scale)); }
   100% { transform: scale(3); opacity: 0; }
 }
 
@@ -3121,26 +3145,35 @@ function createFxMarkup(kind) {
     const splashes = document.createElement("div");
     splashes.className = "weather-fx-rain-splashes";
     root.appendChild(splashes);
-    for (let index = 0;index < (compact ? 4 : 8); index += 1) {
-      splashes.appendChild(createSpan("weather-fx-rain-splash", {
-        "--splash-left": `${Math.round(Math.random() * 100)}%`,
-        "--splash-bottom": `${Math.round(Math.random() * 8)}%`,
-        "--splash-duration": `${cssNumber(0.35 + Math.random() * 0.5)}s`,
-        "--splash-delay": `${cssNumber(Math.random() * -1.8)}s`,
-        "--splash-size": `${4 + Math.round(Math.random() * 7)}px`
-      }));
+    const backSplashCount = compact ? 12 : 20;
+    for (let index = 0;index < backSplashCount; index += 1) {
+      const size = randomRange(6, 15);
+      const splash = createSpan("weather-fx-rain-splash", {
+        "--splash-left": `${cssNumber(randomRange(1, 99))}%`,
+        "--splash-bottom": `${cssNumber(randomRange(0, 10))}%`,
+        "--splash-duration": `${cssNumber(randomRange(0.42, 0.8))}s`,
+        "--splash-delay": `${cssNumber(randomRange(-2.4, -0.1))}s`,
+        "--splash-size": `${cssNumber(size)}px`,
+        "--splash-height": `${cssNumber(size * 0.72)}px`,
+        "--splash-lift": `${cssNumber(randomRange(-10, -5))}px`
+      });
+      splash.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backSplashCount), 4);
+      splashes.appendChild(splash);
     }
     const ripples = document.createElement("div");
     ripples.className = "weather-fx-rain-ripples";
     root.appendChild(ripples);
-    for (let index = 0;index < (compact ? 3 : 5); index += 1) {
-      ripples.appendChild(createSpan("weather-fx-rain-ripple", {
-        "--ripple-left": `${Math.round(Math.random() * 100)}%`,
-        "--ripple-bottom": `${Math.round(Math.random() * 6)}%`,
-        "--ripple-duration": `${cssNumber(0.7 + Math.random() * 0.9)}s`,
-        "--ripple-delay": `${cssNumber(Math.random() * -2.2)}s`,
-        "--ripple-size": `${10 + Math.round(Math.random() * 18)}px`
-      }));
+    const backRippleCount = compact ? 8 : 12;
+    for (let index = 0;index < backRippleCount; index += 1) {
+      const ripple = createSpan("weather-fx-rain-ripple", {
+        "--ripple-left": `${cssNumber(randomRange(1, 99))}%`,
+        "--ripple-bottom": `${cssNumber(randomRange(0, 8))}%`,
+        "--ripple-duration": `${cssNumber(randomRange(0.7, 1.45))}s`,
+        "--ripple-delay": `${cssNumber(randomRange(-2.4, -0.1))}s`,
+        "--ripple-size": `${cssNumber(randomRange(12, 30))}px`
+      });
+      ripple.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backRippleCount), 4);
+      ripples.appendChild(ripple);
     }
     for (let index = 0;index < (compact ? 48 : 72); index += 1) {
       snow.appendChild(createSnowflakeElement(false));
@@ -3878,6 +3911,12 @@ function applySceneState(root, state, prefs, reducedMotion) {
     drop.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
     drop.style.animationDuration = `${baseDuration * rainProfile.speedScale}s`;
   });
+  if (!isFront) {
+    root.root.querySelectorAll(".weather-fx-rain-splash, .weather-fx-rain-ripple").forEach((impact) => {
+      const threshold = Number.parseFloat(impact.dataset.densityThreshold ?? "1");
+      impact.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
+    });
+  }
   root.root.querySelectorAll(".weather-fx-cloud").forEach((cloud) => {
     const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;
