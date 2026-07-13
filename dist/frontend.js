@@ -2590,8 +2590,11 @@ var WEATHER_HUD_CSS = `
   position: fixed;
   inset: 0;
   width: 100vw;
+  width: 100dvw;
   height: 100vh;
   height: 100dvh;
+  max-width: none;
+  max-height: none;
   overflow: hidden;
   pointer-events: none;
   opacity: 0;
@@ -2613,7 +2616,7 @@ var WEATHER_HUD_CSS = `
 
 .weather-fx-viewport-fog[data-placement="front"],
 .weather-fx-viewport-fog[data-placement="both"] {
-  z-index: 24;
+  z-index: 2;
 }
 
 .weather-fx-viewport-fog[data-placement="front"] .weather-fx-procedural-fog {
@@ -2785,10 +2788,10 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-fx-procedural-fog {
-  inset: -6%;
+  inset: 0;
   display: block;
-  width: 112%;
-  height: 112%;
+  width: 100%;
+  height: 100%;
   opacity: var(--weather-procedural-fog-opacity, 0);
   filter: blur(0.45px) saturate(0.92);
   pointer-events: none;
@@ -4508,7 +4511,7 @@ function setup(ctx) {
   viewportFogCanvas.className = "weather-fx-procedural-fog";
   viewportFogCanvas.setAttribute("aria-hidden", "true");
   viewportFog.appendChild(viewportFogCanvas);
-  document.body.appendChild(viewportFog);
+  document.documentElement.appendChild(viewportFog);
   let hostSyncFrame = null;
   const detachFxRoot = (fxRoot) => {
     fxRoot.root.remove();

@@ -1441,7 +1441,7 @@ export function setup(ctx: SpindleFrontendContext) {
   viewportFogCanvas.className = "weather-fx-procedural-fog";
   viewportFogCanvas.setAttribute("aria-hidden", "true");
   viewportFog.appendChild(viewportFogCanvas);
-  document.body.appendChild(viewportFog);
+  document.documentElement.appendChild(viewportFog);
   let hostSyncFrame: number | null = null;
 
   const detachFxRoot = (fxRoot: FxRoot) => {
