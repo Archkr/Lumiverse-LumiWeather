@@ -198,6 +198,18 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   });
   effectsLabel.appendChild(effectsToggle);
 
+  const lightningLabel = document.createElement("label");
+  lightningLabel.className = "weather-settings-label";
+  lightningLabel.textContent = "Lightning flashes";
+
+  const lightningToggle = document.createElement("input");
+  lightningToggle.type = "checkbox";
+  lightningToggle.className = "weather-settings-checkbox";
+  lightningToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { lightningFlashEnabled: lightningToggle.checked } });
+  });
+  lightningLabel.appendChild(lightningToggle);
+
   const layerLabel = document.createElement("label");
   layerLabel.className = "weather-settings-label";
   layerLabel.textContent = "Effect placement";
@@ -288,6 +300,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   pauseLabel.appendChild(pauseToggle);
 
   effectsSection.body.appendChild(effectsLabel);
+  effectsSection.body.appendChild(lightningLabel);
   placementSection.body.appendChild(layerLabel);
   placementSection.body.appendChild(temperatureUnitLabel);
   motionSection.body.appendChild(intensityLabel);
@@ -575,6 +588,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     sync(prefs, state, statusOverride) {
       currentState = state;
       effectsToggle.checked = prefs.effectsEnabled;
+      lightningToggle.checked = prefs.lightningFlashEnabled;
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
       intensitySlider.value = String(prefs.intensity.toFixed(2));

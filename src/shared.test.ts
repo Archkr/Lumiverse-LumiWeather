@@ -60,7 +60,10 @@ describe("story weather normalization", () => {
   test("normalizes preference bounds", () => {
     const prefs = normalizePrefs({ intensity: -2, widgetPosition: { x: "20", y: 40 } });
     expect(prefs.intensity).toBe(0.25);
+    expect(prefs.lightningFlashEnabled).toBe(true);
     expect(prefs.widgetPosition).toEqual({ x: 20, y: 40 });
+
+    expect(normalizePrefs({ lightningFlashEnabled: false }).lightningFlashEnabled).toBe(false);
   });
 
   test("normalizes dedicated wind-direction tag values", () => {

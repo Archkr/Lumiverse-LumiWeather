@@ -28,6 +28,7 @@ export interface WeatherState {
 
 export interface WeatherPrefs {
   effectsEnabled: boolean;
+  lightningFlashEnabled: boolean;
   layerMode: WeatherLayerMode;
   intensity: number;
   reducedMotion: ReducedMotionMode;

@@ -9,6 +9,7 @@ var REDUCED_MOTION_VALUES = ["system", "always", "never"];
 var TEMPERATURE_UNITS = ["fahrenheit", "celsius"];
 var DEFAULT_PREFS = {
   effectsEnabled: true,
+  lightningFlashEnabled: true,
   layerMode: "both",
   intensity: 1,
   reducedMotion: "system",
@@ -275,6 +276,7 @@ function normalizePrefs(input) {
   const layerMode = typeof source.layerMode === "string" && WEATHER_LAYERS.includes(source.layerMode) ? source.layerMode : DEFAULT_PREFS.layerMode;
   return {
     effectsEnabled: typeof source.effectsEnabled === "boolean" ? source.effectsEnabled : DEFAULT_PREFS.effectsEnabled,
+    lightningFlashEnabled: typeof source.lightningFlashEnabled === "boolean" ? source.lightningFlashEnabled : DEFAULT_PREFS.lightningFlashEnabled,
     layerMode,
     intensity: clamp(parseNumeric(source.intensity) ?? DEFAULT_PREFS.intensity, 0.25, 1.5),
     reducedMotion: normalizeReducedMotion(source.reducedMotion, DEFAULT_PREFS.reducedMotion),

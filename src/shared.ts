@@ -33,6 +33,7 @@ export const TEMPERATURE_UNITS: TemperatureUnit[] = ["fahrenheit", "celsius"];
 
 export const DEFAULT_PREFS: WeatherPrefs = {
   effectsEnabled: true,
+  lightningFlashEnabled: true,
   layerMode: "both",
   intensity: 1,
   reducedMotion: "system",
@@ -336,6 +337,10 @@ export function normalizePrefs(input: unknown): WeatherPrefs {
 
   return {
     effectsEnabled: typeof source.effectsEnabled === "boolean" ? source.effectsEnabled : DEFAULT_PREFS.effectsEnabled,
+    lightningFlashEnabled:
+      typeof source.lightningFlashEnabled === "boolean"
+        ? source.lightningFlashEnabled
+        : DEFAULT_PREFS.lightningFlashEnabled,
     layerMode,
     intensity: clamp(parseNumeric(source.intensity) ?? DEFAULT_PREFS.intensity, 0.25, 1.5),
     reducedMotion: normalizeReducedMotion(source.reducedMotion, DEFAULT_PREFS.reducedMotion),

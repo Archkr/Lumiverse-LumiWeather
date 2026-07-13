@@ -1576,8 +1576,10 @@ export function setup(ctx: SpindleFrontendContext) {
     }
 
     const trigger = () => {
-      backFx.root.classList.add("weather-storm-flash");
-      frontFx.root.classList.add("weather-storm-flash");
+      if (currentPrefs.lightningFlashEnabled) {
+        backFx.root.classList.add("weather-storm-flash");
+        frontFx.root.classList.add("weather-storm-flash");
+      }
 
       const bolts = backFx.root.querySelectorAll<HTMLElement>(".weather-fx-lightning-bolt");
       if (bolts.length > 0) {

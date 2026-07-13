@@ -31,6 +31,7 @@ var WEATHER_WIND_DIRECTIONS = [
 ];
 var DEFAULT_PREFS = {
   effectsEnabled: true,
+  lightningFlashEnabled: true,
   layerMode: "both",
   intensity: 1,
   reducedMotion: "system",
@@ -549,6 +550,16 @@ function createSettingsUI(sendToBackend) {
     sendToBackend({ type: "save_prefs", prefs: { effectsEnabled: effectsToggle.checked } });
   });
   effectsLabel.appendChild(effectsToggle);
+  const lightningLabel = document.createElement("label");
+  lightningLabel.className = "weather-settings-label";
+  lightningLabel.textContent = "Lightning flashes";
+  const lightningToggle = document.createElement("input");
+  lightningToggle.type = "checkbox";
+  lightningToggle.className = "weather-settings-checkbox";
+  lightningToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { lightningFlashEnabled: lightningToggle.checked } });
+  });
+  lightningLabel.appendChild(lightningToggle);
   const layerLabel = document.createElement("label");
   layerLabel.className = "weather-settings-label";
   layerLabel.textContent = "Effect placement";
@@ -626,6 +637,7 @@ function createSettingsUI(sendToBackend) {
   });
   pauseLabel.appendChild(pauseToggle);
   effectsSection.body.appendChild(effectsLabel);
+  effectsSection.body.appendChild(lightningLabel);
   placementSection.body.appendChild(layerLabel);
   placementSection.body.appendChild(temperatureUnitLabel);
   motionSection.body.appendChild(intensityLabel);
@@ -868,6 +880,7 @@ function createSettingsUI(sendToBackend) {
     sync(prefs, state, statusOverride) {
       currentState = state;
       effectsToggle.checked = prefs.effectsEnabled;
+      lightningToggle.checked = prefs.lightningFlashEnabled;
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
       intensitySlider.value = String(prefs.intensity.toFixed(2));
@@ -4225,8 +4238,10 @@ function setup(ctx) {
       return;
     }
     const trigger = () => {
-      backFx.root.classList.add("weather-storm-flash");
-      frontFx.root.classList.add("weather-storm-flash");
+      if (currentPrefs.lightningFlashEnabled) {
+        backFx.root.classList.add("weather-storm-flash");
+        frontFx.root.classList.add("weather-storm-flash");
+      }
       const bolts = backFx.root.querySelectorAll(".weather-fx-lightning-bolt");
       if (bolts.length > 0) {
         const boltIndex = Math.floor(Math.random() * bolts.length);
