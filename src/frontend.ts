@@ -181,20 +181,20 @@ function createCloudElement(index: number, total: number): HTMLSpanElement {
   const height = width * (280 / 420);
   const blur = Math.max(0.2, randomRange(0.6, 1.6) - depth * 0.5);
   const scale = randomRange(0.82, 0.98) + depth * 0.12;
-  const driftStart = -20 - depth * 5 - randomRange(0, 8);
-  const driftEnd = 20 + depth * 8 + randomRange(4, 12);
+  const driftStart = -14 - depth * 4 - randomRange(0, 6);
+  const driftEnd = 14 + depth * 6 + randomRange(3, 9);
   const driftMid = (driftStart + driftEnd) / 2 + randomRange(-3, 3);
   const duration = randomRange(58, 82) - depth * 8;
 
   const cloud = createSpan("weather-fx-cloud", {
     "--cloud-width": `${Math.round(width)}px`,
     "--cloud-height": `${Math.round(height)}px`,
-    "--cloud-top": `${cssNumber(-14 + depth * 24 + randomRange(-3, 3))}%`,
-    "--cloud-left": `${cssNumber(-28 + randomRange(0, 108))}%`,
+    "--cloud-top": `${cssNumber(-18 + depth * 18 + randomRange(-3, 2))}%`,
+    "--cloud-left": `${cssNumber(-16 + randomRange(0, 96))}%`,
     "--cloud-duration": `${cssNumber(duration)}s`,
     "--cloud-delay": `${cssNumber(randomRange(-46, -4))}s`,
     "--cloud-blur": `${cssNumber(blur)}px`,
-    "--cloud-opacity-scale": `${cssNumber(0.72 + randomRange(0.08, 0.2) + depth * 0.1)}`,
+    "--cloud-opacity-scale": `${cssNumber(0.46 + randomRange(0.06, 0.14) + depth * 0.08)}`,
     "--cloud-depth": `${cssNumber(depth)}`,
     "--cloud-scale": `${cssNumber(scale)}`,
     "--cloud-scale-mid": `${cssNumber(scale + randomRange(0.02, 0.06))}`,
@@ -204,8 +204,10 @@ function createCloudElement(index: number, total: number): HTMLSpanElement {
     "--cloud-drift-y": `${cssNumber(randomRange(-0.45, 0.45))}vh`,
   });
   cloud.dataset.baseDuration = cssNumber(duration, 4);
+  const imageSource = CLOUD_IMAGES[Math.floor(Math.random() * CLOUD_IMAGES.length)];
+  cloud.style.setProperty("--cloud-image", `url("${imageSource}")`);
   const image = document.createElement("img");
-  image.src = CLOUD_IMAGES[Math.floor(Math.random() * CLOUD_IMAGES.length)];
+  image.src = imageSource;
   image.alt = "";
   image.draggable = false;
   image.decoding = "async";
@@ -348,7 +350,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     root.appendChild(snow);
 
     const compact = window.matchMedia("(max-width: 768px)").matches;
-    const cloudCount = compact ? 6 : 8;
+    const cloudCount = compact ? 8 : 10;
     for (let index = 0; index < cloudCount; index += 1) {
       clouds.appendChild(createCloudElement(index, cloudCount));
     }
