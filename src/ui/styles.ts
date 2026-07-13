@@ -1340,6 +1340,16 @@ export const WEATHER_HUD_CSS = `
   opacity: 1;
 }
 
+.weather-fx-root[data-condition="fog"] {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+}
+
 .weather-fx-root[data-kind="back"] {
   z-index: 1;
 }
@@ -1347,6 +1357,10 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-root[data-kind="front"] {
   z-index: 24;
   mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0.55) 46%, #000 78%);
+}
+
+.weather-fx-root[data-kind="front"][data-condition="fog"] {
+  mask-image: none;
 }
 
 .weather-fx-root.weather-hidden {

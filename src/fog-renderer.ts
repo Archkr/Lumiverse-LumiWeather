@@ -95,9 +95,6 @@ const FRAGMENT_SHADER = `
 
     float density = clamp(fog * mix(0.58, 0.94, u_intensity), 0.0, 0.9);
     vec3 pearl = mix(u_tint, vec3(0.90, 0.93, 0.94), 0.34 + nearFog * 0.16);
-    float grain = noise(gl_FragCoord.xy * 0.31 + u_time * 31.0) - 0.5;
-    pearl += grain * 0.025;
-
     gl_FragColor = vec4(max(pearl, 0.0), density);
   }
 `;
