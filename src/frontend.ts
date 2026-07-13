@@ -1157,7 +1157,9 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   hud.summary.textContent = state ? displayState.summary : "Waiting for the first weather tag";
-  hud.wind.textContent = state ? `Wind ${displayState.wind}` : "Add {{weather_tracker}} to the prompt";
+  hud.wind.textContent = state
+    ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`
+    : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.source.textContent = state ? (displayState.source === "manual" ? "Scene lock" : "Story sync") : "Waiting";
   hud.drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";

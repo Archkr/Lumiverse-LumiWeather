@@ -1,6 +1,6 @@
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "../presets";
-import { formatTemperatureForUnit, parseStoryDateTime } from "../shared";
-import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherState } from "../types";
+import { formatTemperatureForUnit, parseStoryDateTime, WEATHER_WIND_DIRECTIONS } from "../shared";
+import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherState, WeatherWindDirection } from "../types";
 
 const CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 const PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
@@ -73,6 +73,7 @@ function applyStateToInputs(
     timeInput: HTMLInputElement;
     temperatureInput: HTMLInputElement;
     windInput: HTMLInputElement;
+    windDirectionSelect: HTMLSelectElement;
     summaryInput: HTMLInputElement;
     sceneIntensity: HTMLInputElement;
     sceneIntensityValue: HTMLSpanElement;
@@ -85,6 +86,7 @@ function applyStateToInputs(
   if (state.time) fields.timeInput.value = state.time;
   if (state.temperature) fields.temperatureInput.value = state.temperature;
   if (state.wind) fields.windInput.value = state.wind;
+  if (state.windDirection) fields.windDirectionSelect.value = state.windDirection;
   if (state.summary) fields.summaryInput.value = state.summary;
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
     fields.sceneIntensity.value = state.intensity.toFixed(2);
@@ -367,6 +369,17 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   windInput.className = "weather-settings-input";
   windInput.placeholder = "breezy";
 
+  const windDirectionSelect = document.createElement("select");
+  windDirectionSelect.className = "weather-settings-select";
+  windDirectionSelect.innerHTML = WEATHER_WIND_DIRECTIONS.map((direction) =>
+    `<option value="${direction}">${direction.charAt(0).toUpperCase()}${direction.slice(1)}</option>`,
+  ).join("");
+
+  const windControls = document.createElement("div");
+  windControls.className = "weather-settings-wind-controls";
+  windControls.appendChild(windInput);
+  windControls.appendChild(windDirectionSelect);
+
   const summaryInput = document.createElement("input");
   summaryInput.type = "text";
   summaryInput.className = "weather-settings-input";
@@ -398,6 +411,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     timeInput,
     temperatureInput,
     windInput,
+    windDirectionSelect,
     summaryInput,
     sceneIntensity,
     sceneIntensityValue,
@@ -412,7 +426,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     manualError.hidden = true;
   };
 
-  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, summaryInput]) {
+  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
@@ -425,6 +439,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     summary: summaryInput.value.trim() || currentState?.summary,
     temperature: temperatureInput.value.trim() || currentState?.temperature,
     wind: windInput.value.trim() || currentState?.wind,
+    windDirection: windDirectionSelect.value as WeatherWindDirection,
     palette: paletteSelect.value as WeatherPalette,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual",
@@ -493,7 +508,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualGrid.appendChild(createLabeledInput("Story date", dateInput));
   manualGrid.appendChild(createLabeledInput("Story time", timeInput));
   manualGrid.appendChild(createLabeledInput("Temperature", temperatureInput));
-  manualGrid.appendChild(createLabeledInput("Wind", windInput));
+  manualGrid.appendChild(createLabeledInput("Wind", windControls));
   manualGrid.appendChild(createLabeledInput("Summary", summaryInput));
 
   const sceneIntensityLabel = createLabeledInput("Scene intensity", sceneIntensityRow);
@@ -585,7 +600,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         : "Waiting for LumiWeather");
 
       previewValue.textContent = state
-        ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind} | placement ${prefs.layerMode}`
+        ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}`
         : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
 
       manualModePill.textContent = state?.source === "manual" ? "Manual lock" : "Story sync";
@@ -602,6 +617,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         timeInput.value = "";
         temperatureInput.value = "";
         windInput.value = "";
+        windDirectionSelect.value = "none";
         summaryInput.value = "";
         sceneIntensity.value = "0.30";
         sceneIntensityValue.textContent = "30%";

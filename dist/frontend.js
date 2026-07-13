@@ -1,5 +1,16 @@
 // src/shared.ts
 var WEATHER_TAG_NAME = "weather-state";
+var WEATHER_WIND_DIRECTIONS = [
+  "none",
+  "north",
+  "northeast",
+  "east",
+  "southeast",
+  "south",
+  "southwest",
+  "west",
+  "northwest"
+];
 var DEFAULT_PREFS = {
   effectsEnabled: true,
   layerMode: "both",
@@ -433,6 +444,8 @@ function applyStateToInputs(state, fields) {
     fields.temperatureInput.value = state.temperature;
   if (state.wind)
     fields.windInput.value = state.wind;
+  if (state.windDirection)
+    fields.windDirectionSelect.value = state.windDirection;
   if (state.summary)
     fields.summaryInput.value = state.summary;
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
@@ -656,6 +669,13 @@ function createSettingsUI(sendToBackend) {
   windInput.type = "text";
   windInput.className = "weather-settings-input";
   windInput.placeholder = "breezy";
+  const windDirectionSelect = document.createElement("select");
+  windDirectionSelect.className = "weather-settings-select";
+  windDirectionSelect.innerHTML = WEATHER_WIND_DIRECTIONS.map((direction) => `<option value="${direction}">${direction.charAt(0).toUpperCase()}${direction.slice(1)}</option>`).join("");
+  const windControls = document.createElement("div");
+  windControls.className = "weather-settings-wind-controls";
+  windControls.appendChild(windInput);
+  windControls.appendChild(windDirectionSelect);
   const summaryInput = document.createElement("input");
   summaryInput.type = "text";
   summaryInput.className = "weather-settings-input";
@@ -685,6 +705,7 @@ function createSettingsUI(sendToBackend) {
     timeInput,
     temperatureInput,
     windInput,
+    windDirectionSelect,
     summaryInput,
     sceneIntensity,
     sceneIntensityValue
@@ -696,7 +717,7 @@ function createSettingsUI(sendToBackend) {
     manualDraftDirty = true;
     manualError.hidden = true;
   };
-  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, summaryInput]) {
+  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
@@ -708,6 +729,7 @@ function createSettingsUI(sendToBackend) {
     summary: summaryInput.value.trim() || currentState?.summary,
     temperature: temperatureInput.value.trim() || currentState?.temperature,
     wind: windInput.value.trim() || currentState?.wind,
+    windDirection: windDirectionSelect.value,
     palette: paletteSelect.value,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual"
@@ -772,7 +794,7 @@ function createSettingsUI(sendToBackend) {
   manualGrid.appendChild(createLabeledInput("Story date", dateInput));
   manualGrid.appendChild(createLabeledInput("Story time", timeInput));
   manualGrid.appendChild(createLabeledInput("Temperature", temperatureInput));
-  manualGrid.appendChild(createLabeledInput("Wind", windInput));
+  manualGrid.appendChild(createLabeledInput("Wind", windControls));
   manualGrid.appendChild(createLabeledInput("Summary", summaryInput));
   const sceneIntensityLabel = createLabeledInput("Scene intensity", sceneIntensityRow);
   const manualActions = document.createElement("div");
@@ -846,7 +868,7 @@ function createSettingsUI(sendToBackend) {
       preview.dataset.mode = stateMode;
       preview.dataset.condition = state?.condition ?? "waiting";
       status.textContent = statusOverride ?? (state ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}` : "Waiting for LumiWeather");
-      previewValue.textContent = state ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind} | placement ${prefs.layerMode}` : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
+      previewValue.textContent = state ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}` : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
       manualModePill.textContent = state?.source === "manual" ? "Manual lock" : "Story sync";
       manualModePill.dataset.mode = state?.source === "manual" ? "manual" : "story";
       manualToggle.checked = state?.source === "manual";
@@ -860,6 +882,7 @@ function createSettingsUI(sendToBackend) {
         timeInput.value = "";
         temperatureInput.value = "";
         windInput.value = "";
+        windDirectionSelect.value = "none";
         summaryInput.value = "";
         sceneIntensity.value = "0.30";
         sceneIntensityValue.textContent = "30%";
@@ -1269,6 +1292,13 @@ var WEATHER_HUD_CSS = `
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.weather-settings-wind-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 0.5fr);
+  gap: 8px;
+  min-width: 0;
 }
 
 .weather-settings-actions {
@@ -3856,7 +3886,7 @@ function syncHudState(hud, prefs, state, expanded) {
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   hud.summary.textContent = state ? displayState.summary : "Waiting for the first weather tag";
-  hud.wind.textContent = state ? `Wind ${displayState.wind}` : "Add {{weather_tracker}} to the prompt";
+  hud.wind.textContent = state ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}` : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.source.textContent = state ? displayState.source === "manual" ? "Scene lock" : "Story sync" : "Waiting";
   hud.drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
