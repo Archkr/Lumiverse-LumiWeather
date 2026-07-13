@@ -194,7 +194,7 @@ function createCloudElement(index: number, total: number): HTMLSpanElement {
   const cloud = createSpan("weather-fx-cloud", {
     "--cloud-width": `${Math.round(width)}px`,
     "--cloud-height": `${Math.round(height)}px`,
-    "--cloud-top": `${cssNumber((row === 0 ? -9 : -2) + randomRange(-2, 1))}%`,
+    "--cloud-top": `${cssNumber((row === 0 ? -7 : 0) + randomRange(-2, 1))}%`,
     "--cloud-left": `${cssNumber(lanePosition + stagger + randomRange(-2.5, 2.5))}%`,
     "--cloud-duration": `${cssNumber(duration)}s`,
     "--cloud-delay": `${cssNumber(randomRange(-46, -4))}s`,
