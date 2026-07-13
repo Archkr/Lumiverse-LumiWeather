@@ -3,8 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const targets = [
-  { source: "src/backend.ts", output: "dist/backend.js", target: "bun" },
-  { source: "src/frontend.ts", output: "dist/frontend.js", target: "browser" },
+  {
+    output: "dist/backend.js",
+    generatedName: "dist_backend.js",
+    command: (temporaryDirectory: string) => [
+      "bun",
+      "build",
+      "src/backend.ts",
+      "--outfile",
+      join(temporaryDirectory, "dist_backend.js"),
+      "--target",
+      "bun",
+    ],
+  },
+  {
+    output: "dist/frontend.js",
+    generatedName: "frontend.js",
+    command: (temporaryDirectory: string) => ["bun", "scripts/build-frontend.ts", temporaryDirectory],
+  },
 ] as const;
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -20,12 +36,12 @@ let hasDrift = false;
 
 try {
   for (const target of targets) {
-    const generatedPath = join(temporaryDirectory, target.output.replaceAll("/", "_"));
+    const generatedPath = join(temporaryDirectory, target.generatedName);
     const child = Bun.spawn(
-      ["bun", "build", target.source, "--outfile", generatedPath, "--target", target.target],
+      target.command(temporaryDirectory),
       { stdout: "inherit", stderr: "inherit" },
     );
-    if ((await child.exited) !== 0) throw new Error(`Bundle build failed: ${target.source}`);
+    if ((await child.exited) !== 0) throw new Error(`Bundle build failed: ${target.output}`);
 
     const [generated, committed] = await Promise.all([
       readFile(generatedPath),

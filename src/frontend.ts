@@ -1,4 +1,10 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
+import cloud1 from "./assets/cloud_1.png";
+import cloud2 from "./assets/cloud_2.png";
+import cloud3 from "./assets/cloud_3.png";
+import cloud4 from "./assets/cloud_4.png";
+import cloud5 from "./assets/cloud_5.png";
+import cloud6 from "./assets/cloud_6.png";
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "./presets";
 import {
   resolveRainDensityThreshold,
@@ -35,6 +41,7 @@ const LIGHTNING_BOLT_SVGS = [
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M50 0 L38 52 L55 52 L30 120 L50 80 L32 80 L55 200 L38 158 L55 300"/><path d="M55 52 L75 75 L65 80" stroke-width="1.8"/><path d="M50 80 L25 100 L35 105" stroke-width="1.8"/><path d="M55 200 L75 220 L65 225" stroke-width="1.5"/></g></svg>`,
 ] as const;
 const LIGHTNING_BOLT_POSITIONS = [23, 51, 75] as const;
+const CLOUD_IMAGES = [cloud1, cloud2, cloud3, cloud4, cloud5, cloud6] as const;
 
 const HUD_COLLAPSED_SIZE = { width: 272, height: 148 };
 const HUD_EXPANDED_SIZE = { width: 312, height: 360 };
@@ -170,9 +177,9 @@ function cssNumber(value: number, precision = 2): string {
 
 function createCloudElement(index: number, total: number): HTMLSpanElement {
   const depth = total <= 1 ? 0 : index / (total - 1);
-  const width = randomRange(240, 420) + depth * 60;
-  const height = width * randomRange(0.16, 0.24);
-  const blur = Math.max(3, randomRange(5, 10) - depth * 2);
+  const width = randomRange(220, 380) + depth * 70;
+  const height = width * (280 / 420);
+  const blur = Math.max(0.2, randomRange(0.6, 1.6) - depth * 0.5);
   const scale = randomRange(0.82, 0.98) + depth * 0.12;
   const driftStart = -20 - depth * 5 - randomRange(0, 8);
   const driftEnd = 20 + depth * 8 + randomRange(4, 12);
@@ -182,13 +189,12 @@ function createCloudElement(index: number, total: number): HTMLSpanElement {
   const cloud = createSpan("weather-fx-cloud", {
     "--cloud-width": `${Math.round(width)}px`,
     "--cloud-height": `${Math.round(height)}px`,
-    "--cloud-top": `${cssNumber(-2 + depth * 26 + randomRange(-2, 4))}%`,
+    "--cloud-top": `${cssNumber(-14 + depth * 24 + randomRange(-3, 3))}%`,
     "--cloud-left": `${cssNumber(-28 + randomRange(0, 108))}%`,
     "--cloud-duration": `${cssNumber(duration)}s`,
     "--cloud-delay": `${cssNumber(randomRange(-46, -4))}s`,
     "--cloud-blur": `${cssNumber(blur)}px`,
-    "--cloud-soft-blur": `${cssNumber(Math.max(1.5, blur * 0.55))}px`,
-    "--cloud-opacity-scale": `${cssNumber(0.68 + randomRange(0.1, 0.24) + depth * 0.18)}`,
+    "--cloud-opacity-scale": `${cssNumber(0.72 + randomRange(0.08, 0.2) + depth * 0.1)}`,
     "--cloud-depth": `${cssNumber(depth)}`,
     "--cloud-scale": `${cssNumber(scale)}`,
     "--cloud-scale-mid": `${cssNumber(scale + randomRange(0.02, 0.06))}`,
@@ -196,12 +202,14 @@ function createCloudElement(index: number, total: number): HTMLSpanElement {
     "--cloud-drift-x-mid": `${cssNumber(driftMid)}vw`,
     "--cloud-drift-x-end": `${cssNumber(driftEnd)}vw`,
     "--cloud-drift-y": `${cssNumber(randomRange(-0.45, 0.45))}vh`,
-    "--cloud-lift": `${cssNumber(randomRange(-18, -6))}%`,
-    "--cloud-shear": `${cssNumber(randomRange(-1.2, 1.2))}deg`,
-    "--cloud-shadow-opacity": `${cssNumber(0.14 + depth * 0.18)}`,
-    "--cloud-highlight-opacity": `${cssNumber(0.46 - depth * 0.12)}`,
   });
   cloud.dataset.baseDuration = cssNumber(duration, 4);
+  const image = document.createElement("img");
+  image.src = CLOUD_IMAGES[Math.floor(Math.random() * CLOUD_IMAGES.length)];
+  image.alt = "";
+  image.draggable = false;
+  image.decoding = "async";
+  cloud.appendChild(image);
   return cloud;
 }
 

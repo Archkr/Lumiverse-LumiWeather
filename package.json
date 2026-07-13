@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build:backend": "bun build src/backend.ts --outfile dist/backend.js --target bun",
-    "build:frontend": "bun build src/frontend.ts --outfile dist/frontend.js --target browser",
+    "build:frontend": "bun scripts/build-frontend.ts",
     "build": "bun run build:backend && bun run build:frontend",
     "typecheck": "tsc --noEmit",
     "test": "bun test",

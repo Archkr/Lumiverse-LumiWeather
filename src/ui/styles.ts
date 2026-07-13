@@ -1443,68 +1443,26 @@ export const WEATHER_HUD_CSS = `
   will-change: transform, opacity;
 }
 
-.weather-fx-clouds::before {
-  content: "";
-  position: absolute;
-  inset: -10% -8% 64%;
-  background:
-    radial-gradient(ellipse at 22% 30%, color-mix(in srgb, var(--weather-cloud-core) 86%, white 8%), transparent 42%),
-    radial-gradient(ellipse at 72% 20%, color-mix(in srgb, var(--weather-cloud-edge) 92%, transparent), transparent 38%),
-    linear-gradient(180deg, color-mix(in srgb, var(--weather-cloud-core) 82%, rgba(8, 14, 24, 0.18)) 0%, transparent 100%);
-  opacity: calc(var(--weather-cloud-opacity) * 0.7);
-  filter: blur(34px);
-  transform: translateY(-8%);
-}
-
 .weather-fx-cloud {
   --cloud-base-y: 0vh;
   width: var(--cloud-width);
   height: var(--cloud-height);
   top: var(--cloud-top);
   left: var(--cloud-left);
-  border-radius: 46% 54% 52% 48% / 54% 58% 42% 46%;
-  background:
-    radial-gradient(ellipse at 20% 62%, color-mix(in srgb, var(--weather-cloud-core) 82%, transparent), transparent 54%),
-    radial-gradient(ellipse at 36% 38%, color-mix(in srgb, var(--weather-cloud-edge) 92%, white 4%), transparent 56%),
-    radial-gradient(ellipse at 58% 42%, color-mix(in srgb, var(--weather-cloud-core) 96%, white 6%), transparent 58%),
-    radial-gradient(ellipse at 82% 60%, color-mix(in srgb, var(--weather-cloud-core) 76%, transparent), transparent 56%),
-    linear-gradient(180deg, color-mix(in srgb, var(--weather-cloud-core) 96%, white 4%) 0%, color-mix(in srgb, var(--weather-cloud-core) 22%, transparent) 100%);
-  filter: blur(var(--cloud-blur)) saturate(1.04);
+  filter: blur(var(--cloud-blur)) brightness(0.86) saturate(0.82) drop-shadow(0 10px 18px rgba(7, 15, 28, 0.14));
   opacity: calc(var(--weather-cloud-opacity) * var(--cloud-opacity-scale));
   transform-origin: 50% 58%;
   animation: weather-cloud-drift var(--cloud-duration) linear infinite;
   animation-delay: var(--cloud-delay);
 }
 
-.weather-fx-cloud::before,
-.weather-fx-cloud::after {
-  content: "";
-  position: absolute;
+.weather-fx-cloud img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
   pointer-events: none;
-}
-
-.weather-fx-cloud::before {
-  inset: -24% -10% 16%;
-  border-radius: 48% 52% 56% 44% / 62% 64% 40% 42%;
-  background:
-    radial-gradient(ellipse at 18% 72%, color-mix(in srgb, var(--weather-cloud-edge) 86%, transparent), transparent 48%),
-    radial-gradient(ellipse at 42% 38%, color-mix(in srgb, var(--weather-cloud-core) 98%, white 8%), transparent 54%),
-    radial-gradient(ellipse at 68% 46%, color-mix(in srgb, var(--weather-cloud-core) 88%, transparent), transparent 56%),
-    radial-gradient(ellipse at 88% 70%, color-mix(in srgb, var(--weather-cloud-edge) 72%, transparent), transparent 50%);
-  filter: blur(var(--cloud-soft-blur));
-  opacity: var(--cloud-highlight-opacity);
-  transform: translate3d(0, var(--cloud-lift), 0) rotate(var(--cloud-shear));
-}
-
-.weather-fx-cloud::after {
-  inset: 42% -8% -24%;
-  border-radius: 44% 56% 50% 50% / 42% 44% 58% 60%;
-  background:
-    radial-gradient(ellipse at 26% 16%, color-mix(in srgb, rgba(4, 12, 24, 0.26) 76%, var(--weather-cloud-core)), transparent 58%),
-    radial-gradient(ellipse at 72% 18%, color-mix(in srgb, rgba(4, 12, 24, 0.18) 70%, var(--weather-cloud-core)), transparent 60%),
-    linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--weather-cloud-core) 18%, rgba(4, 12, 24, 0.36)) 100%);
-  filter: blur(var(--cloud-soft-blur));
-  opacity: var(--cloud-shadow-opacity);
 }
 
 .weather-fx-fog-band {
@@ -1800,32 +1758,22 @@ export const WEATHER_HUD_CSS = `
   animation: weather-flash-sequence 650ms ease-out;
 }
 
-.weather-fx-root[data-condition="rain"] .weather-fx-clouds::before,
-.weather-fx-root[data-condition="storm"] .weather-fx-clouds::before {
-  inset: -10% -8% 62%;
-  opacity: calc(var(--weather-cloud-opacity) * 0.9);
-  filter: blur(36px);
-}
-
 .weather-fx-root[data-condition="rain"] .weather-fx-cloud,
 .weather-fx-root[data-condition="storm"] .weather-fx-cloud {
   --cloud-base-y: -0.8vh;
-  --cloud-shadow-opacity: 0.42;
-  filter: blur(calc(var(--cloud-blur) + 1px)) saturate(0.92);
+  filter: blur(var(--cloud-blur)) brightness(0.62) saturate(0.72) sepia(0.12) hue-rotate(168deg) drop-shadow(0 12px 20px rgba(3, 10, 20, 0.24));
 }
 
 .weather-fx-root[data-condition="storm"] .weather-fx-cloud {
-  --cloud-shadow-opacity: 0.5;
-  filter: blur(calc(var(--cloud-blur) + 1.5px)) saturate(0.82) brightness(0.9);
+  filter: blur(var(--cloud-blur)) brightness(0.42) saturate(0.64) sepia(0.16) hue-rotate(168deg) drop-shadow(0 14px 24px rgba(1, 6, 14, 0.34));
 }
 
 .weather-fx-root[data-condition="cloudy"] .weather-fx-cloud {
-  filter: blur(var(--cloud-blur)) saturate(0.94);
+  filter: blur(var(--cloud-blur)) brightness(0.82) saturate(0.72) drop-shadow(0 10px 18px rgba(7, 15, 28, 0.16));
 }
 
 .weather-fx-root[data-condition="snow"] .weather-fx-cloud {
-  --cloud-shadow-opacity: 0.18;
-  filter: blur(var(--cloud-blur)) saturate(0.88) brightness(1.08);
+  filter: blur(var(--cloud-blur)) brightness(1.03) saturate(0.76) drop-shadow(0 10px 18px rgba(70, 92, 122, 0.14));
 }
 
 .weather-fx-root.weather-storm-flash .weather-fx-clouds {
