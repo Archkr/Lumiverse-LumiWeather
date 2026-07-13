@@ -393,6 +393,272 @@ function resolveRainVector(wind, windDirection) {
   };
 }
 
+// src/fog-renderer.ts
+var VERTEX_SHADER = `
+  attribute vec2 a_position;
+
+  void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+  }
+`;
+var FRAGMENT_SHADER = `
+  precision highp float;
+
+  uniform vec2 u_resolution;
+  uniform float u_time;
+  uniform float u_intensity;
+  uniform vec3 u_tint;
+
+  #define OCTAVES 6
+
+  float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x)
+      + (c - a) * u.y * (1.0 - u.x)
+      + (d - b) * u.x * u.y;
+  }
+
+  mat2 rot(float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat2(c, -s, s, c);
+  }
+
+  float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.52;
+    mat2 rotation = rot(0.48);
+
+    for (int i = 0; i < OCTAVES; i++) {
+      value += amplitude * noise(p);
+      p = rotation * p * 2.02 + vec2(13.7, 7.9);
+      amplitude *= 0.5;
+    }
+    return value;
+  }
+
+  float fogLayer(vec2 uv, float scale, float speed, vec2 drift, float warp) {
+    float t = u_time * speed;
+    vec2 q;
+    q.x = fbm(uv * scale + drift * t);
+    q.y = fbm(uv * scale + vec2(5.2, 1.3) - drift.yx * t * 0.75);
+
+    vec2 r;
+    r.x = fbm(uv * scale + warp * q + vec2(1.7, 9.2) + drift * t * 0.65);
+    r.y = fbm(uv * scale + warp * q + vec2(8.3, 2.8) - drift * t * 0.45);
+    return fbm(uv * scale + warp * r + drift * t);
+  }
+
+  void main() {
+    vec2 resolution = max(u_resolution, vec2(1.0));
+    vec2 uv = gl_FragCoord.xy / resolution;
+    vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
+    vec2 flow = vec2(0.34, 0.06);
+
+    float farFog = fogLayer(p + vec2(0.0, 0.18), 1.35, 0.030, flow, 1.05);
+    float midFog = fogLayer(p * rot(-0.06) + vec2(0.0, 0.04), 2.15, 0.052, flow * 1.28, 1.20);
+    float nearFog = fogLayer(p * rot(0.08) - vec2(0.0, 0.12), 3.15, 0.078, flow * 1.55, 1.35);
+    float curl = fbm(p * 4.8 + vec2(u_time * 0.10, -u_time * 0.035) + vec2(farFog, midFog) * 2.0);
+
+    farFog = smoothstep(0.35, 0.84, farFog);
+    midFog = smoothstep(0.37, 0.82, midFog + curl * 0.08);
+    nearFog = smoothstep(0.40, 0.80, nearFog + curl * 0.11);
+
+    float fog = farFog * 0.34 + midFog * 0.54 + nearFog * 0.76;
+    float lowerBias = smoothstep(0.96, 0.12, uv.y);
+    float horizon = smoothstep(0.85, 0.18, uv.y);
+    fog *= mix(0.55, 1.35, lowerBias) * mix(0.70, 1.0, horizon);
+
+    float density = clamp(fog * mix(0.58, 0.94, u_intensity), 0.0, 0.9);
+    vec3 pearl = mix(u_tint, vec3(0.90, 0.93, 0.94), 0.34 + nearFog * 0.16);
+    float grain = noise(gl_FragCoord.xy * 0.31 + u_time * 31.0) - 0.5;
+    pearl += grain * 0.025;
+
+    gl_FragColor = vec4(max(pearl, 0.0), density);
+  }
+`;
+function compileShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  if (!shader)
+    throw new Error("Unable to create fog shader.");
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const message = gl.getShaderInfoLog(shader) || "Fog shader compilation failed.";
+    gl.deleteShader(shader);
+    throw new Error(message);
+  }
+  return shader;
+}
+
+class ProceduralFogRenderer {
+  canvas;
+  root;
+  gl;
+  program;
+  buffer;
+  resolutionLocation;
+  timeLocation;
+  intensityLocation;
+  tintLocation;
+  animationFrame = null;
+  elapsed = Math.random() * 40;
+  lastFrame = performance.now();
+  destroyed = false;
+  dirty = true;
+  options = {
+    intensity: 0.7,
+    paused: false,
+    reducedMotion: false,
+    tint: [0.74, 0.8, 0.84]
+  };
+  constructor(canvas, root) {
+    this.canvas = canvas;
+    this.root = root;
+    const gl = canvas.getContext("webgl", {
+      alpha: true,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: false,
+      powerPreference: "high-performance"
+    });
+    if (!gl)
+      throw new Error("WebGL is unavailable.");
+    this.gl = gl;
+    const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
+    const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+    const program = gl.createProgram();
+    if (!program)
+      throw new Error("Unable to create fog program.");
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const message = gl.getProgramInfoLog(program) || "Fog shader linking failed.";
+      gl.deleteProgram(program);
+      throw new Error(message);
+    }
+    this.program = program;
+    const buffer = gl.createBuffer();
+    if (!buffer)
+      throw new Error("Unable to create fog geometry.");
+    this.buffer = buffer;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+    gl.useProgram(program);
+    const position = gl.getAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+    this.resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+    this.timeLocation = gl.getUniformLocation(program, "u_time");
+    this.intensityLocation = gl.getUniformLocation(program, "u_intensity");
+    this.tintLocation = gl.getUniformLocation(program, "u_tint");
+    gl.clearColor(0, 0, 0, 0);
+    this.frame = this.frame.bind(this);
+    this.animationFrame = window.requestAnimationFrame(this.frame);
+  }
+  update(options) {
+    this.options = options;
+    this.dirty = true;
+  }
+  destroy() {
+    if (this.destroyed)
+      return;
+    this.destroyed = true;
+    if (this.animationFrame !== null)
+      window.cancelAnimationFrame(this.animationFrame);
+    this.gl.deleteBuffer(this.buffer);
+    this.gl.deleteProgram(this.program);
+    fogRenderers.delete(this.canvas);
+  }
+  frame(now) {
+    if (this.destroyed)
+      return;
+    if (!this.canvas.isConnected) {
+      this.destroy();
+      return;
+    }
+    const visible = this.root.dataset.condition === "fog" && this.root.classList.contains("weather-visible") && !this.root.classList.contains("weather-hidden") && document.visibilityState !== "hidden";
+    const animated = visible && !this.options.paused && !this.options.reducedMotion;
+    const delta = Math.min(0.05, Math.max(0, (now - this.lastFrame) / 1000));
+    this.lastFrame = now;
+    if (animated)
+      this.elapsed += delta;
+    if (visible && (animated || this.dirty)) {
+      this.render(this.options.reducedMotion ? 12 : this.elapsed);
+      this.dirty = false;
+    }
+    this.animationFrame = window.requestAnimationFrame(this.frame);
+  }
+  render(time) {
+    const width = this.canvas.clientWidth;
+    const height = this.canvas.clientHeight;
+    if (width < 1 || height < 1)
+      return;
+    const compact = width <= 768;
+    const requestedDpr = Math.min(window.devicePixelRatio || 1, compact ? 0.8 : 1.15);
+    const pixelBudgetScale = Math.sqrt(1200000 / Math.max(1, width * height));
+    const dpr = Math.min(requestedDpr, pixelBudgetScale);
+    const pixelWidth = Math.max(1, Math.floor(width * dpr));
+    const pixelHeight = Math.max(1, Math.floor(height * dpr));
+    if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight) {
+      this.canvas.width = pixelWidth;
+      this.canvas.height = pixelHeight;
+    }
+    const gl = this.gl;
+    gl.viewport(0, 0, pixelWidth, pixelHeight);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.program);
+    gl.uniform2f(this.resolutionLocation, pixelWidth, pixelHeight);
+    gl.uniform1f(this.timeLocation, time);
+    gl.uniform1f(this.intensityLocation, Math.min(1, Math.max(0, this.options.intensity / 1.5)));
+    gl.uniform3f(this.tintLocation, ...this.options.tint);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+}
+var fogRenderers = new WeakMap;
+function updateProceduralFog(root, options) {
+  const canvas = root.querySelector(".weather-fx-procedural-fog");
+  if (!canvas) {
+    root.classList.remove("weather-fog-webgl-ready");
+    return;
+  }
+  let renderer = fogRenderers.get(canvas);
+  if (!renderer) {
+    try {
+      renderer = new ProceduralFogRenderer(canvas, root);
+      fogRenderers.set(canvas, renderer);
+      root.classList.add("weather-fog-webgl-ready");
+    } catch (error) {
+      root.classList.remove("weather-fog-webgl-ready");
+      console.warn("[weather_hud] Procedural fog unavailable; using the CSS fallback.", error);
+      return;
+    }
+  }
+  renderer.update(options);
+}
+function destroyProceduralFog(root) {
+  const canvas = root.querySelector(".weather-fx-procedural-fog");
+  if (canvas)
+    fogRenderers.get(canvas)?.destroy();
+  root.classList.remove("weather-fog-webgl-ready");
+}
+
 // src/state-utils.ts
 function shouldApplyChatState(currentChatId, responseChatId, responseRequestId, activeRequestId) {
   if (responseRequestId !== undefined)
@@ -2297,6 +2563,7 @@ var WEATHER_HUD_CSS = `
 .weather-fx-horizon,
 .weather-fx-mist,
 .weather-fx-fog,
+.weather-fx-procedural-fog,
 .weather-fx-motes,
 .weather-fx-rain,
 .weather-fx-snow,
@@ -2416,6 +2683,27 @@ var WEATHER_HUD_CSS = `
   filter: grayscale(1) contrast(0.9) brightness(0.92);
   user-select: none;
   pointer-events: none;
+}
+
+.weather-fx-procedural-fog {
+  inset: -6%;
+  display: block;
+  width: 112%;
+  height: 112%;
+  opacity: var(--weather-procedural-fog-opacity, 0);
+  filter: blur(0.45px) saturate(0.92);
+  pointer-events: none;
+  transition: opacity 800ms ease;
+}
+
+.weather-fx-procedural-fog-front {
+  mix-blend-mode: screen;
+  filter: blur(0.7px) saturate(0.84);
+}
+
+.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-fog,
+.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-mist {
+  opacity: 0;
 }
 
 .weather-fx-fog-band {
@@ -3034,6 +3322,25 @@ function randomRange(min, max) {
 function cssNumber(value, precision = 2) {
   return value.toFixed(precision).replace(/\.?0+$/, "");
 }
+function resolveProceduralFogTint(palette) {
+  switch (palette) {
+    case "dawn":
+      return [0.82, 0.76, 0.75];
+    case "dusk":
+      return [0.7, 0.66, 0.76];
+    case "night":
+      return [0.52, 0.62, 0.73];
+    case "storm":
+      return [0.48, 0.57, 0.67];
+    case "snow":
+      return [0.82, 0.87, 0.9];
+    case "mist":
+      return [0.7, 0.78, 0.81];
+    case "day":
+    default:
+      return [0.72, 0.8, 0.84];
+  }
+}
 function createCloudElement(index, total) {
   const row = index % 2;
   const column = Math.floor(index / 2);
@@ -3165,6 +3472,10 @@ function createFxMarkup(kind) {
     const horizon = document.createElement("div");
     horizon.className = "weather-fx-horizon";
     root.appendChild(horizon);
+    const proceduralFog = document.createElement("canvas");
+    proceduralFog.className = "weather-fx-procedural-fog";
+    proceduralFog.setAttribute("aria-hidden", "true");
+    root.appendChild(proceduralFog);
     const mist = document.createElement("div");
     mist.className = "weather-fx-mist";
     root.appendChild(mist);
@@ -3303,6 +3614,10 @@ function createFxMarkup(kind) {
     }
     root.appendChild(lightning);
   } else {
+    const proceduralFog = document.createElement("canvas");
+    proceduralFog.className = "weather-fx-procedural-fog weather-fx-procedural-fog-front";
+    proceduralFog.setAttribute("aria-hidden", "true");
+    root.appendChild(proceduralFog);
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain weather-fx-rain-front";
     root.appendChild(rain);
@@ -3392,6 +3707,8 @@ function pruneFxMarkup(root, condition) {
     root.querySelector(".weather-fx-fog")?.remove();
     root.querySelector(".weather-fx-mist")?.remove();
   }
+  if (condition !== "fog")
+    root.querySelector(".weather-fx-procedural-fog")?.remove();
   if (condition !== "clear")
     root.querySelector(".weather-fx-motes")?.remove();
   if (!windLike)
@@ -3415,6 +3732,7 @@ function pruneFxMarkup(root, condition) {
 function syncFxCondition(fxRoot, condition) {
   if (fxRoot.poolCondition === condition)
     return;
+  destroyProceduralFog(fxRoot.root);
   const next = createFxMarkup(fxRoot.kind);
   pruneFxMarkup(next.root, condition);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
@@ -4027,6 +4345,7 @@ function applySceneState(root, state, prefs, reducedMotion) {
   root.root.style.setProperty("--weather-horizon-opacity", String(isFront ? 0 : tokens.horizonOpacity));
   root.root.style.setProperty("--weather-mist-opacity", String(isFront ? 0 : tokens.mistOpacity));
   root.root.style.setProperty("--weather-fog-opacity", String(isFront ? 0 : tokens.fogOpacity));
+  root.root.style.setProperty("--weather-procedural-fog-opacity", String(state.condition === "fog" ? clamp((isFront ? 0.12 : 0.48) + effectiveIntensity * (isFront ? 0.07 : 0.18), 0, isFront ? 0.23 : 0.74) : 0));
   root.root.style.setProperty("--weather-rain-opacity", String(rainLayerOpacity));
   root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
   root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
@@ -4053,6 +4372,16 @@ function applySceneState(root, state, prefs, reducedMotion) {
     const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;
   });
+  if (state.condition === "fog") {
+    updateProceduralFog(root.root, {
+      intensity: effectiveIntensity,
+      paused: prefs.pauseEffects || document.visibilityState === "hidden",
+      reducedMotion,
+      tint: resolveProceduralFogTint(state.palette)
+    });
+  } else {
+    destroyProceduralFog(root.root);
+  }
 }
 function setup(ctx) {
   const cleanups = [];
@@ -4165,6 +4494,8 @@ function setup(ctx) {
       hostSyncFrame = null;
     }
     stopHostObserver();
+    destroyProceduralFog(backFx.root);
+    destroyProceduralFog(frontFx.root);
     detachFxRoot(backFx);
     detachFxRoot(frontFx);
   });

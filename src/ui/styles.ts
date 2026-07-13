@@ -1366,6 +1366,7 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-horizon,
 .weather-fx-mist,
 .weather-fx-fog,
+.weather-fx-procedural-fog,
 .weather-fx-motes,
 .weather-fx-rain,
 .weather-fx-snow,
@@ -1485,6 +1486,27 @@ export const WEATHER_HUD_CSS = `
   filter: grayscale(1) contrast(0.9) brightness(0.92);
   user-select: none;
   pointer-events: none;
+}
+
+.weather-fx-procedural-fog {
+  inset: -6%;
+  display: block;
+  width: 112%;
+  height: 112%;
+  opacity: var(--weather-procedural-fog-opacity, 0);
+  filter: blur(0.45px) saturate(0.92);
+  pointer-events: none;
+  transition: opacity 800ms ease;
+}
+
+.weather-fx-procedural-fog-front {
+  mix-blend-mode: screen;
+  filter: blur(0.7px) saturate(0.84);
+}
+
+.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-fog,
+.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-mist {
+  opacity: 0;
 }
 
 .weather-fx-fog-band {

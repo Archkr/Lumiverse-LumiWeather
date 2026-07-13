@@ -12,6 +12,7 @@ import {
   resolveRainProfile,
   resolveRainVector,
 } from "./fx-utils";
+import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
 import {
   DEFAULT_PREFS,
   WEATHER_TAG_NAME,
@@ -175,6 +176,26 @@ function cssNumber(value: number, precision = 2): string {
   return value.toFixed(precision).replace(/\.?0+$/, "");
 }
 
+function resolveProceduralFogTint(palette: WeatherState["palette"]): readonly [number, number, number] {
+  switch (palette) {
+    case "dawn":
+      return [0.82, 0.76, 0.75];
+    case "dusk":
+      return [0.7, 0.66, 0.76];
+    case "night":
+      return [0.52, 0.62, 0.73];
+    case "storm":
+      return [0.48, 0.57, 0.67];
+    case "snow":
+      return [0.82, 0.87, 0.9];
+    case "mist":
+      return [0.7, 0.78, 0.81];
+    case "day":
+    default:
+      return [0.72, 0.8, 0.84];
+  }
+}
+
 function createCloudElement(index: number, total: number): HTMLSpanElement {
   const row = index % 2;
   const column = Math.floor(index / 2);
@@ -329,6 +350,11 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     const horizon = document.createElement("div");
     horizon.className = "weather-fx-horizon";
     root.appendChild(horizon);
+
+    const proceduralFog = document.createElement("canvas");
+    proceduralFog.className = "weather-fx-procedural-fog";
+    proceduralFog.setAttribute("aria-hidden", "true");
+    root.appendChild(proceduralFog);
 
     const mist = document.createElement("div");
     mist.className = "weather-fx-mist";
@@ -492,6 +518,11 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     }
     root.appendChild(lightning);
   } else {
+    const proceduralFog = document.createElement("canvas");
+    proceduralFog.className = "weather-fx-procedural-fog weather-fx-procedural-fog-front";
+    proceduralFog.setAttribute("aria-hidden", "true");
+    root.appendChild(proceduralFog);
+
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain weather-fx-rain-front";
     root.appendChild(rain);
@@ -593,6 +624,7 @@ function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): v
     root.querySelector(".weather-fx-fog")?.remove();
     root.querySelector(".weather-fx-mist")?.remove();
   }
+  if (condition !== "fog") root.querySelector(".weather-fx-procedural-fog")?.remove();
   if (condition !== "clear") root.querySelector(".weather-fx-motes")?.remove();
   if (!windLike) root.querySelector(".weather-fx-wind-gusts")?.remove();
   if (!rainLike) {
@@ -614,6 +646,7 @@ function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): v
 function syncFxCondition(fxRoot: FxRoot, condition: WeatherCondition | null): void {
   if (fxRoot.poolCondition === condition) return;
 
+  destroyProceduralFog(fxRoot.root);
   const next = createFxMarkup(fxRoot.kind);
   pruneFxMarkup(next.root, condition);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
@@ -1315,6 +1348,10 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.style.setProperty("--weather-horizon-opacity", String(isFront ? 0 : tokens.horizonOpacity));
   root.root.style.setProperty("--weather-mist-opacity", String(isFront ? 0 : tokens.mistOpacity));
   root.root.style.setProperty("--weather-fog-opacity", String(isFront ? 0 : tokens.fogOpacity));
+  root.root.style.setProperty(
+    "--weather-procedural-fog-opacity",
+    String(state.condition === "fog" ? clamp((isFront ? 0.12 : 0.48) + effectiveIntensity * (isFront ? 0.07 : 0.18), 0, isFront ? 0.23 : 0.74) : 0),
+  );
   root.root.style.setProperty("--weather-rain-opacity", String(rainLayerOpacity));
   root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
   root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
@@ -1353,6 +1390,17 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
     const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;
   });
+
+  if (state.condition === "fog") {
+    updateProceduralFog(root.root, {
+      intensity: effectiveIntensity,
+      paused: prefs.pauseEffects || document.visibilityState === "hidden",
+      reducedMotion,
+      tint: resolveProceduralFogTint(state.palette),
+    });
+  } else {
+    destroyProceduralFog(root.root);
+  }
 }
 
 export function setup(ctx: SpindleFrontendContext) {
@@ -1483,6 +1531,8 @@ export function setup(ctx: SpindleFrontendContext) {
       hostSyncFrame = null;
     }
     stopHostObserver();
+    destroyProceduralFog(backFx.root);
+    destroyProceduralFog(frontFx.root);
     detachFxRoot(backFx);
     detachFxRoot(frontFx);
   });
