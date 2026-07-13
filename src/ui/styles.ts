@@ -1468,8 +1468,8 @@ export const WEATHER_HUD_CSS = `
     var(--weather-cloud-core) 58%,
     color-mix(in srgb, var(--weather-cloud-core) 78%, rgba(4, 12, 24, 0.3)) 100%
   );
-  -webkit-mask: var(--cloud-image) no-repeat center / contain;
-  mask: var(--cloud-image) no-repeat center / contain;
+  -webkit-mask: var(--cloud-image) no-repeat center 58% / cover;
+  mask: var(--cloud-image) no-repeat center 58% / cover;
   pointer-events: none;
 }
 
@@ -1479,7 +1479,8 @@ export const WEATHER_HUD_CSS = `
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center 58%;
   opacity: var(--cloud-detail-opacity);
   filter: grayscale(1) contrast(0.9) brightness(0.92);
   user-select: none;

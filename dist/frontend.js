@@ -2386,8 +2386,8 @@ var WEATHER_HUD_CSS = `
     var(--weather-cloud-core) 58%,
     color-mix(in srgb, var(--weather-cloud-core) 78%, rgba(4, 12, 24, 0.3)) 100%
   );
-  -webkit-mask: var(--cloud-image) no-repeat center / contain;
-  mask: var(--cloud-image) no-repeat center / contain;
+  -webkit-mask: var(--cloud-image) no-repeat center 58% / cover;
+  mask: var(--cloud-image) no-repeat center 58% / cover;
   pointer-events: none;
 }
 
@@ -2397,7 +2397,8 @@ var WEATHER_HUD_CSS = `
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center 58%;
   opacity: var(--cloud-detail-opacity);
   filter: grayscale(1) contrast(0.9) brightness(0.92);
   user-select: none;
@@ -3021,24 +3022,29 @@ function cssNumber(value, precision = 2) {
   return value.toFixed(precision).replace(/\.?0+$/, "");
 }
 function createCloudElement(index, total) {
-  const depth = total <= 1 ? 0 : index / (total - 1);
-  const width = randomRange(220, 380) + depth * 70;
-  const height = width * (280 / 420);
+  const row = index % 2;
+  const column = Math.floor(index / 2);
+  const columns = Math.max(1, Math.ceil(total / 2));
+  const depth = clamp((row === 0 ? 0.32 : 0.68) + randomRange(-0.16, 0.16), 0, 1);
+  const lanePosition = columns <= 1 ? 40 : -18 + column / (columns - 1) * 108;
+  const stagger = row === 0 ? 0 : 7;
+  const width = randomRange(300, 440) + depth * 80;
+  const height = width * 0.46;
   const blur = Math.max(0.2, randomRange(0.6, 1.6) - depth * 0.5);
   const scale = randomRange(0.82, 0.98) + depth * 0.12;
-  const driftStart = -14 - depth * 4 - randomRange(0, 6);
-  const driftEnd = 14 + depth * 6 + randomRange(3, 9);
-  const driftMid = (driftStart + driftEnd) / 2 + randomRange(-3, 3);
+  const driftStart = -4 - randomRange(0, 3);
+  const driftEnd = 4 + randomRange(0, 3);
+  const driftMid = (driftStart + driftEnd) / 2 + randomRange(-1.5, 1.5);
   const duration = randomRange(58, 82) - depth * 8;
   const cloud = createSpan("weather-fx-cloud", {
     "--cloud-width": `${Math.round(width)}px`,
     "--cloud-height": `${Math.round(height)}px`,
-    "--cloud-top": `${cssNumber(-18 + depth * 18 + randomRange(-3, 2))}%`,
-    "--cloud-left": `${cssNumber(-16 + randomRange(0, 96))}%`,
+    "--cloud-top": `${cssNumber((row === 0 ? -9 : -2) + randomRange(-2, 1))}%`,
+    "--cloud-left": `${cssNumber(lanePosition + stagger + randomRange(-2.5, 2.5))}%`,
     "--cloud-duration": `${cssNumber(duration)}s`,
     "--cloud-delay": `${cssNumber(randomRange(-46, -4))}s`,
     "--cloud-blur": `${cssNumber(blur)}px`,
-    "--cloud-opacity-scale": `${cssNumber(0.46 + randomRange(0.06, 0.14) + depth * 0.08)}`,
+    "--cloud-opacity-scale": `${cssNumber(0.6 + randomRange(0.06, 0.12) + depth * 0.06)}`,
     "--cloud-depth": `${cssNumber(depth)}`,
     "--cloud-scale": `${cssNumber(scale)}`,
     "--cloud-scale-mid": `${cssNumber(scale + randomRange(0.02, 0.06))}`,
@@ -3165,7 +3171,7 @@ function createFxMarkup(kind) {
     snow.className = "weather-fx-snow";
     root.appendChild(snow);
     const compact = window.matchMedia("(max-width: 768px)").matches;
-    const cloudCount = compact ? 8 : 10;
+    const cloudCount = compact ? 12 : 16;
     for (let index = 0;index < cloudCount; index += 1) {
       clouds.appendChild(createCloudElement(index, cloudCount));
     }
