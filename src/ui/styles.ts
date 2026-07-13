@@ -1046,8 +1046,7 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-hud-control-icon,
-.weather-hud-gear svg,
-.weather-hud-icon svg {
+.weather-hud-gear svg {
   width: 14px;
   height: 14px;
   display: inline-flex;
@@ -1080,7 +1079,6 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-hud-gear svg,
-.weather-hud-icon svg,
 .weather-hud-control-icon svg {
   width: 14px;
   height: 14px;
@@ -1140,18 +1138,41 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-hud-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 15px;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--weather-hud-icon-bg) 94%, white 6%), color-mix(in srgb, var(--weather-hud-icon-bg) 72%, transparent));
+  position: relative;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--weather-hud-icon-color) 24%, rgba(255, 255, 255, 0.1));
+  background:
+    radial-gradient(circle at 32% 22%, color-mix(in srgb, var(--weather-hud-icon-color) 14%, transparent), transparent 48%),
+    linear-gradient(155deg, color-mix(in srgb, var(--weather-hud-icon-bg) 76%, white 16%), color-mix(in srgb, var(--weather-hud-icon-bg) 88%, rgba(6, 15, 30, 0.34)));
   color: var(--weather-hud-icon-color);
   box-shadow:
-    0 10px 24px rgba(3, 10, 23, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    0 10px 24px rgba(3, 10, 23, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -10px 18px rgba(4, 12, 24, 0.12);
+}
+
+.weather-hud-icon svg {
+  width: 27px;
+  height: 27px;
+  display: block;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 3px rgba(1, 8, 18, 0.48));
+}
+
+.weather-hud-icon .weather-hud-icon-solid {
+  fill: currentColor;
+  stroke: none;
 }
 
 .weather-hud-temp {

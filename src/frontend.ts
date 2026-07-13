@@ -119,18 +119,18 @@ type SceneTokens = {
 function conditionIcon(condition: WeatherCondition): string {
   switch (condition) {
     case "cloudy":
-      return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a4 4 0 010-8 5.5 5.5 0 0110.68-1.84A4.5 4.5 0 1118.5 18H7z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 18.2h10.7a3.8 3.8 0 00.6-7.55 5.5 5.5 0 00-10.45-1.2 4.4 4.4 0 00-.85 8.75Z"/></svg>`;
     case "rain":
-      return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 17a4.5 4.5 0 010-9 6 6 0 0111.55-1.98A4.5 4.5 0 1118.5 17h-12zm2.1 5l-1.1-2.6h1.6l1.1 2.6H8.6zm5 0l-1.1-2.6h1.6l1.1 2.6h-1.6zm-2.5-3l-1.1-2.6h1.6l1.1 2.6H11.1z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 14.8h10.8a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6.3a4.3 4.3 0 00-1 8.5Z"/><path d="m8.2 17.4-1 2.3M12.3 17.4l-1 2.3M16.4 17.4l-1 2.3"/></svg>`;
     case "storm":
-      return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 16.5a4.5 4.5 0 010-9 6 6 0 0111.55-1.98A4.5 4.5 0 1118.5 16.5h-4.01l1.02-4.02-4.52 5.02h2.98L12.96 22 17 16.5H6.5z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.5h10.9a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6a4.3 4.3 0 00-1.1 8.5Z"/><path class="weather-hud-icon-solid" d="m13.1 12.8-3.25 5h2.45l-.75 3.7 4.6-5.65h-2.7l1.45-3.05Z"/></svg>`;
     case "snow":
-      return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 2h2v4.1l2.85-1.64 1 1.73L14 7.83l3.54 2.04-1 1.73L13 9.56V13h4v2h-4v3.44l3.85-2.22 1 1.73L14 20.17l2.85 1.65-1 1.73L13 21.9V26h-2v-4.1l-2.85 1.65-1-1.73L10 20.17l-3.85-2.22 1-1.73L11 18.44V15H7v-2h4V9.56L7.15 11.78l-1-1.73L10 7.83 7.15 6.18l1-1.73L11 6.1V2z" transform="translate(0 -2)"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8v18.4M4.05 7.4l15.9 9.2M4.05 16.6l15.9-9.2M12 2.8 9.8 5M12 2.8 14.2 5M12 21.2 9.8 19M12 21.2l2.2-2.2M4.05 7.4l3-.8M4.05 7.4l.8 3M19.95 16.6l-3 .8M19.95 16.6l-.8-3"/></svg>`;
     case "fog":
-      return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 9.5A4.5 4.5 0 019.58 5a6 6 0 0111.18 2.44A4 4 0 0119 15H5a3 3 0 010-6h14a4 4 0 010 8H7v-2h12a2 2 0 000-4H5a1 1 0 000 2h11v2H5a3 3 0 010-6h14v2H5a1 1 0 000 2h10v2H5a3 3 0 010-6z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 13.5h11a3.45 3.45 0 00.5-6.85A5.1 5.1 0 008.2 5.6a4 4 0 00-1.8 7.9Z"/><path d="M4 17.1h13M7 20.2h13"/></svg>`;
     case "clear":
     default:
-      return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5a1 1 0 011-1h0a1 1 0 011 1v1.1a1 1 0 01-1 1h0a1 1 0 01-1-1V5zm0 11.8a1 1 0 011 1V19a1 1 0 01-2 0v-1.2a1 1 0 011-1zM5 11a1 1 0 011-1h1.2a1 1 0 010 2H6a1 1 0 01-1-1zm11.8 0a1 1 0 011-1H19a1 1 0 010 2h-1.2a1 1 0 01-1-1zM7.05 7.05a1 1 0 011.41 0l.85.85a1 1 0 11-1.41 1.41l-.85-.85a1 1 0 010-1.41zm7.64 7.64a1 1 0 011.41 0l.85.85a1 1 0 01-1.41 1.41l-.85-.85a1 1 0 010-1.41zm1.41-7.64a1 1 0 010 1.41l-.85.85a1 1 0 01-1.41-1.41l.85-.85a1 1 0 011.41 0zm-7.64 7.64a1 1 0 010 1.41l-.85.85a1 1 0 01-1.41-1.41l.85-.85a1 1 0 011.41 0zM12 8a4 4 0 110 8 4 4 0 010-8z"/></svg>`;
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.25"/><path d="M12 2.5v2.1M12 19.4v2.1M2.5 12h2.1M19.4 12h2.1M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M18.7 5.3l-1.5 1.5M6.8 17.2l-1.5 1.5"/></svg>`;
   }
 }
 
@@ -1151,6 +1151,10 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.root.style.setProperty("--weather-hud-scene-intensity", sceneIntensity.toFixed(2));
 
   hud.icon.innerHTML = conditionIcon(displayState.condition);
+  const iconLabel = `${displayState.condition.charAt(0).toUpperCase()}${displayState.condition.slice(1)} weather`;
+  hud.icon.setAttribute("role", "img");
+  hud.icon.setAttribute("aria-label", iconLabel);
+  hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   hud.summary.textContent = state ? displayState.summary : "Waiting for the first weather tag";
   hud.wind.textContent = state ? `Wind ${displayState.wind}` : "Add {{weather_tracker}} to the prompt";
