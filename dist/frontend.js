@@ -2468,6 +2468,12 @@ var WEATHER_HUD_CSS = `
   animation-play-state: paused;
 }
 
+.weather-fx-rain-ripple-front {
+  --ripple-opacity-scale: 0.78;
+  border-color: rgba(226, 242, 255, 0.78);
+  filter: drop-shadow(0 0 4px rgba(209, 232, 255, 0.58));
+}
+
 .weather-fx-rain-drop-front {
   filter: drop-shadow(0 0 5px rgba(209, 229, 255, 0.34));
 }
@@ -3312,23 +3318,44 @@ function createFxMarkup(kind) {
     const splashes = document.createElement("div");
     splashes.className = "weather-fx-rain-splashes weather-fx-rain-splashes-front";
     root.appendChild(splashes);
-    for (let index = 0;index < (compact ? 4 : 8); index += 1) {
-      const size = randomRange(6, 16);
+    const ripples = document.createElement("div");
+    ripples.className = "weather-fx-rain-ripples weather-fx-rain-ripples-front";
+    root.appendChild(ripples);
+    const frontImpactCount = compact ? 4 : 8;
+    for (let index = 0;index < frontImpactCount; index += 1) {
+      const position = randomRange(1, 99);
+      const bottom = randomRange(0, 14);
+      const duration = randomRange(0.65, 1.05);
+      const delay = randomRange(-1.4, -0.1);
+      const threshold = cssNumber(resolveRainDensityThreshold(index, frontImpactCount), 4);
+      const splashSize = randomRange(6, 16);
+      const rippleSize = randomRange(16, 36);
       const splash = createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
-        "--splash-left": `${cssNumber(randomRange(1, 99))}%`,
-        "--splash-bottom": `${cssNumber(randomRange(0, 14))}%`,
-        "--impact-duration": `${cssNumber(randomRange(0.65, 1.05))}s`,
-        "--impact-delay": `${cssNumber(randomRange(-1.4, -0.1))}s`,
-        "--splash-size": `${cssNumber(size)}px`,
-        "--splash-height": `${cssNumber(size * 0.72)}px`,
+        "--splash-left": `${cssNumber(position)}%`,
+        "--splash-bottom": `${cssNumber(bottom)}%`,
+        "--impact-duration": `${cssNumber(duration)}s`,
+        "--impact-delay": `${cssNumber(delay)}s`,
+        "--splash-size": `${cssNumber(splashSize)}px`,
+        "--splash-height": `${cssNumber(splashSize * 0.72)}px`,
         "--splash-lift": `${cssNumber(randomRange(-12, -6))}px`,
         "--splash-tilt": `${cssNumber(randomRange(-12, 12))}deg`,
-        "margin-left": `${cssNumber(size * -0.5)}px`
+        "margin-left": `${cssNumber(splashSize * -0.5)}px`
       });
+      splash.dataset.densityThreshold = threshold;
+      const ripple = createSpan("weather-fx-rain-ripple weather-fx-rain-ripple-front", {
+        "--ripple-left": `${cssNumber(position)}%`,
+        "--ripple-bottom": `${cssNumber(bottom)}%`,
+        "--impact-duration": `${cssNumber(duration)}s`,
+        "--impact-delay": `${cssNumber(delay)}s`,
+        "--ripple-size": `${cssNumber(rippleSize)}px`,
+        "margin-left": `${cssNumber(rippleSize * -0.5)}px`
+      });
+      ripple.dataset.densityThreshold = threshold;
       splash.addEventListener("animationiteration", () => {
-        randomizeRainImpactPosition(splash, null, 14);
+        randomizeRainImpactPosition(splash, ripple, 14);
       });
       splashes.appendChild(splash);
+      ripples.appendChild(ripple);
     }
     for (let index = 0;index < (compact ? 30 : 48); index += 1) {
       snow.appendChild(createSnowflakeElement(true));
@@ -4004,12 +4031,10 @@ function applySceneState(root, state, prefs, reducedMotion) {
     drop.style.animationDuration = `${baseDuration * rainProfile.speedScale}s`;
     drop.style.setProperty("--drop-drift", `${baseDrift * rainVector.driftDirection}vw`);
   });
-  if (!isFront) {
-    root.root.querySelectorAll(".weather-fx-rain-splash, .weather-fx-rain-ripple").forEach((impact) => {
-      const threshold = Number.parseFloat(impact.dataset.densityThreshold ?? "1");
-      impact.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
-    });
-  }
+  root.root.querySelectorAll(".weather-fx-rain-splash, .weather-fx-rain-ripple").forEach((impact) => {
+    const threshold = Number.parseFloat(impact.dataset.densityThreshold ?? "1");
+    impact.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
+  });
   root.root.querySelectorAll(".weather-fx-cloud").forEach((cloud) => {
     const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;

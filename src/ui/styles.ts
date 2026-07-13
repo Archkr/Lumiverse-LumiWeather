@@ -1568,6 +1568,12 @@ export const WEATHER_HUD_CSS = `
   animation-play-state: paused;
 }
 
+.weather-fx-rain-ripple-front {
+  --ripple-opacity-scale: 0.78;
+  border-color: rgba(226, 242, 255, 0.78);
+  filter: drop-shadow(0 0 4px rgba(209, 232, 255, 0.58));
+}
+
 .weather-fx-rain-drop-front {
   filter: drop-shadow(0 0 5px rgba(209, 229, 255, 0.34));
 }
