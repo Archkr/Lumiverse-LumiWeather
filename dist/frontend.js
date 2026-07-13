@@ -409,7 +409,7 @@ var FRAGMENT_SHADER = `
   uniform float u_intensity;
   uniform vec3 u_tint;
 
-  #define OCTAVES 6
+  #define OCTAVES 4
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -467,7 +467,7 @@ var FRAGMENT_SHADER = `
     vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
     vec2 flow = vec2(0.34, 0.06);
 
-    float farFog = fogLayer(p + vec2(0.0, 0.18), 1.35, 0.030, flow, 1.05);
+    float farFog = fbm((p + vec2(0.0, 0.18)) * 1.35 + flow * u_time * 0.030);
     float midFog = fogLayer(p * rot(-0.06) + vec2(0.0, 0.04), 2.15, 0.052, flow * 1.28, 1.20);
     float nearFog = fogLayer(p * rot(0.08) - vec2(0.0, 0.12), 3.15, 0.078, flow * 1.55, 1.35);
     float curl = fbm(p * 4.8 + vec2(u_time * 0.10, -u_time * 0.035) + vec2(farFog, midFog) * 2.0);
@@ -513,6 +513,7 @@ class ProceduralFogRenderer {
   animationFrame = null;
   elapsed = Math.random() * 40;
   lastFrame = performance.now();
+  lastRender = 0;
   destroyed = false;
   dirty = true;
   options = {
@@ -596,9 +597,11 @@ class ProceduralFogRenderer {
     this.lastFrame = now;
     if (animated)
       this.elapsed += delta;
-    if (visible && (animated || this.dirty)) {
+    const renderDue = now - this.lastRender >= 1000 / 24;
+    if (visible && (this.dirty || animated && renderDue)) {
       this.render(this.options.reducedMotion ? 12 : this.elapsed);
       this.dirty = false;
+      this.lastRender = now;
     }
     this.animationFrame = window.requestAnimationFrame(this.frame);
   }
@@ -608,8 +611,8 @@ class ProceduralFogRenderer {
     if (width < 1 || height < 1)
       return;
     const compact = width <= 768;
-    const requestedDpr = Math.min(window.devicePixelRatio || 1, compact ? 0.8 : 1.15);
-    const pixelBudgetScale = Math.sqrt(1200000 / Math.max(1, width * height));
+    const requestedDpr = Math.min(window.devicePixelRatio || 1, compact ? 0.52 : 0.7);
+    const pixelBudgetScale = Math.sqrt(360000 / Math.max(1, width * height));
     const dpr = Math.min(requestedDpr, pixelBudgetScale);
     const pixelWidth = Math.max(1, Math.floor(width * dpr));
     const pixelHeight = Math.max(1, Math.floor(height * dpr));
@@ -629,6 +632,7 @@ class ProceduralFogRenderer {
   }
 }
 var fogRenderers = new WeakMap;
+var pendingFogInitializations = new WeakMap;
 function updateProceduralFog(root, options) {
   const canvas = root.querySelector(".weather-fx-procedural-fog");
   if (!canvas) {
@@ -637,22 +641,57 @@ function updateProceduralFog(root, options) {
   }
   let renderer = fogRenderers.get(canvas);
   if (!renderer) {
-    try {
-      renderer = new ProceduralFogRenderer(canvas, root);
-      fogRenderers.set(canvas, renderer);
-      root.classList.add("weather-fog-webgl-ready");
-    } catch (error) {
-      root.classList.remove("weather-fog-webgl-ready");
-      console.warn("[weather_hud] Procedural fog unavailable; using the CSS fallback.", error);
+    const pending = pendingFogInitializations.get(canvas);
+    if (pending) {
+      pending.options = options;
       return;
     }
+    const idleWindow = window;
+    let cancelled = false;
+    let handle = 0;
+    let usesIdleCallback = false;
+    const initialization = {
+      options,
+      cancel: () => {
+        cancelled = true;
+        if (usesIdleCallback)
+          idleWindow.cancelIdleCallback?.(handle);
+        else
+          window.clearTimeout(handle);
+      }
+    };
+    const initialize = () => {
+      pendingFogInitializations.delete(canvas);
+      if (cancelled || !canvas.isConnected || !root.classList.contains("weather-visible"))
+        return;
+      try {
+        const nextRenderer = new ProceduralFogRenderer(canvas, root);
+        fogRenderers.set(canvas, nextRenderer);
+        root.classList.add("weather-fog-webgl-ready");
+        nextRenderer.update(initialization.options);
+      } catch (error) {
+        root.classList.remove("weather-fog-webgl-ready");
+        console.warn("[weather_hud] Procedural fog unavailable; using the CSS fallback.", error);
+      }
+    };
+    if (idleWindow.requestIdleCallback) {
+      usesIdleCallback = true;
+      handle = idleWindow.requestIdleCallback(initialize, { timeout: 800 });
+    } else {
+      handle = window.setTimeout(initialize, 120);
+    }
+    pendingFogInitializations.set(canvas, initialization);
+    return;
   }
   renderer.update(options);
 }
 function destroyProceduralFog(root) {
   const canvas = root.querySelector(".weather-fx-procedural-fog");
-  if (canvas)
+  if (canvas) {
+    pendingFogInitializations.get(canvas)?.cancel();
+    pendingFogInitializations.delete(canvas);
     fogRenderers.get(canvas)?.destroy();
+  }
   root.classList.remove("weather-fog-webgl-ready");
 }
 
@@ -2534,16 +2573,6 @@ var WEATHER_HUD_CSS = `
   opacity: 1;
 }
 
-.weather-fx-root[data-condition="fog"] {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-}
-
 .weather-fx-root[data-kind="back"] {
   z-index: 1;
 }
@@ -2553,12 +2582,71 @@ var WEATHER_HUD_CSS = `
   mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0.55) 46%, #000 78%);
 }
 
-.weather-fx-root[data-kind="front"][data-condition="fog"] {
-  mask-image: none;
-}
-
 .weather-fx-root.weather-hidden {
   display: none;
+}
+
+.weather-fx-viewport-fog {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  isolation: isolate;
+  transition: opacity 320ms ease;
+}
+
+.weather-fx-viewport-fog.weather-visible {
+  opacity: 1;
+}
+
+.weather-fx-viewport-fog.weather-hidden {
+  display: none;
+}
+
+.weather-fx-viewport-fog[data-placement="back"] {
+  z-index: 1;
+}
+
+.weather-fx-viewport-fog[data-placement="front"],
+.weather-fx-viewport-fog[data-placement="both"] {
+  z-index: 24;
+}
+
+.weather-fx-viewport-fog[data-placement="front"] .weather-fx-procedural-fog {
+  opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.48);
+  mix-blend-mode: screen;
+}
+
+.weather-fx-viewport-fog[data-placement="both"] .weather-fx-procedural-fog {
+  opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.74);
+}
+
+.weather-fx-viewport-fog::before {
+  content: "";
+  position: absolute;
+  inset: -8%;
+  background:
+    radial-gradient(ellipse at 18% 72%, rgba(202, 216, 225, 0.26), transparent 46%),
+    radial-gradient(ellipse at 78% 28%, rgba(182, 202, 215, 0.2), transparent 50%);
+  filter: blur(30px);
+  opacity: 0.8;
+  transition: opacity 400ms ease;
+}
+
+.weather-fx-viewport-fog[data-placement="front"]::before {
+  opacity: 0.34;
+}
+
+.weather-fx-viewport-fog[data-placement="both"]::before {
+  opacity: 0.56;
+}
+
+.weather-fx-viewport-fog.weather-fog-webgl-ready::before {
+  opacity: 0;
 }
 
 .weather-fx-root.weather-paused *,
@@ -2707,13 +2795,8 @@ var WEATHER_HUD_CSS = `
   transition: opacity 800ms ease;
 }
 
-.weather-fx-procedural-fog-front {
-  mix-blend-mode: screen;
-  filter: blur(0.7px) saturate(0.84);
-}
-
-.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-fog,
-.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-mist {
+.weather-fx-root[data-condition="fog"] .weather-fx-fog,
+.weather-fx-root[data-condition="fog"] .weather-fx-mist {
   opacity: 0;
 }
 
@@ -3483,10 +3566,6 @@ function createFxMarkup(kind) {
     const horizon = document.createElement("div");
     horizon.className = "weather-fx-horizon";
     root.appendChild(horizon);
-    const proceduralFog = document.createElement("canvas");
-    proceduralFog.className = "weather-fx-procedural-fog";
-    proceduralFog.setAttribute("aria-hidden", "true");
-    root.appendChild(proceduralFog);
     const mist = document.createElement("div");
     mist.className = "weather-fx-mist";
     root.appendChild(mist);
@@ -3625,10 +3704,6 @@ function createFxMarkup(kind) {
     }
     root.appendChild(lightning);
   } else {
-    const proceduralFog = document.createElement("canvas");
-    proceduralFog.className = "weather-fx-procedural-fog weather-fx-procedural-fog-front";
-    proceduralFog.setAttribute("aria-hidden", "true");
-    root.appendChild(proceduralFog);
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain weather-fx-rain-front";
     root.appendChild(rain);
@@ -3718,8 +3793,6 @@ function pruneFxMarkup(root, condition) {
     root.querySelector(".weather-fx-fog")?.remove();
     root.querySelector(".weather-fx-mist")?.remove();
   }
-  if (condition !== "fog")
-    root.querySelector(".weather-fx-procedural-fog")?.remove();
   if (condition !== "clear")
     root.querySelector(".weather-fx-motes")?.remove();
   if (!windLike)
@@ -3743,7 +3816,6 @@ function pruneFxMarkup(root, condition) {
 function syncFxCondition(fxRoot, condition) {
   if (fxRoot.poolCondition === condition)
     return;
-  destroyProceduralFog(fxRoot.root);
   const next = createFxMarkup(fxRoot.kind);
   pruneFxMarkup(next.root, condition);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
@@ -4356,7 +4428,6 @@ function applySceneState(root, state, prefs, reducedMotion) {
   root.root.style.setProperty("--weather-horizon-opacity", String(isFront ? 0 : tokens.horizonOpacity));
   root.root.style.setProperty("--weather-mist-opacity", String(isFront ? 0 : tokens.mistOpacity));
   root.root.style.setProperty("--weather-fog-opacity", String(isFront ? 0 : tokens.fogOpacity));
-  root.root.style.setProperty("--weather-procedural-fog-opacity", String(state.condition === "fog" ? clamp((isFront ? 0.12 : 0.48) + effectiveIntensity * (isFront ? 0.07 : 0.18), 0, isFront ? 0.23 : 0.74) : 0));
   root.root.style.setProperty("--weather-rain-opacity", String(rainLayerOpacity));
   root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
   root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
@@ -4383,16 +4454,6 @@ function applySceneState(root, state, prefs, reducedMotion) {
     const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;
   });
-  if (state.condition === "fog") {
-    updateProceduralFog(root.root, {
-      intensity: effectiveIntensity,
-      paused: prefs.pauseEffects || document.visibilityState === "hidden",
-      reducedMotion,
-      tint: resolveProceduralFogTint(state.palette)
-    });
-  } else {
-    destroyProceduralFog(root.root);
-  }
 }
 function setup(ctx) {
   const cleanups = [];
@@ -4439,6 +4500,15 @@ function setup(ctx) {
   cleanups.push(() => settingsUI.destroy());
   const backFx = createFxMarkup("back");
   const frontFx = createFxMarkup("front");
+  const viewportFog = document.createElement("div");
+  viewportFog.className = "weather-fx-viewport-fog weather-hidden";
+  viewportFog.dataset.condition = "fog";
+  viewportFog.dataset.placement = currentPrefs.layerMode;
+  const viewportFogCanvas = document.createElement("canvas");
+  viewportFogCanvas.className = "weather-fx-procedural-fog";
+  viewportFogCanvas.setAttribute("aria-hidden", "true");
+  viewportFog.appendChild(viewportFogCanvas);
+  document.body.appendChild(viewportFog);
   let hostSyncFrame = null;
   const detachFxRoot = (fxRoot) => {
     fxRoot.root.remove();
@@ -4505,8 +4575,8 @@ function setup(ctx) {
       hostSyncFrame = null;
     }
     stopHostObserver();
-    destroyProceduralFog(backFx.root);
-    destroyProceduralFog(frontFx.root);
+    destroyProceduralFog(viewportFog);
+    viewportFog.remove();
     detachFxRoot(backFx);
     detachFxRoot(frontFx);
   });
@@ -4624,6 +4694,20 @@ function setup(ctx) {
     applySceneState(frontFx, sceneState, currentPrefs, reducedMotion);
     setFxVisibility(backFx, showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both"));
     setFxVisibility(frontFx, showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both"));
+    const showFog = showEffects && currentState?.condition === "fog";
+    viewportFog.dataset.placement = layerMode;
+    viewportFog.classList.toggle("weather-hidden", !showFog);
+    viewportFog.classList.toggle("weather-visible", showFog);
+    viewportFog.classList.toggle("weather-paused", currentPrefs.pauseEffects || document.visibilityState === "hidden");
+    viewportFog.style.setProperty("--weather-procedural-fog-opacity", String(clamp(0.42 + sceneState.intensity * currentPrefs.intensity * 0.18, 0.42, 0.72)));
+    if (showFog) {
+      updateProceduralFog(viewportFog, {
+        intensity: clamp(sceneState.intensity * currentPrefs.intensity, 0, 1.5),
+        paused: currentPrefs.pauseEffects || document.visibilityState === "hidden",
+        reducedMotion,
+        tint: resolveProceduralFogTint(sceneState.palette)
+      });
+    }
     scheduleStormFlash();
   };
   const clockTimer = window.setInterval(() => {

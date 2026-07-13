@@ -21,7 +21,7 @@ const FRAGMENT_SHADER = `
   uniform float u_intensity;
   uniform vec3 u_tint;
 
-  #define OCTAVES 6
+  #define OCTAVES 4
 
   float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -79,7 +79,7 @@ const FRAGMENT_SHADER = `
     vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
     vec2 flow = vec2(0.34, 0.06);
 
-    float farFog = fogLayer(p + vec2(0.0, 0.18), 1.35, 0.030, flow, 1.05);
+    float farFog = fbm((p + vec2(0.0, 0.18)) * 1.35 + flow * u_time * 0.030);
     float midFog = fogLayer(p * rot(-0.06) + vec2(0.0, 0.04), 2.15, 0.052, flow * 1.28, 1.20);
     float nearFog = fogLayer(p * rot(0.08) - vec2(0.0, 0.12), 3.15, 0.078, flow * 1.55, 1.35);
     float curl = fbm(p * 4.8 + vec2(u_time * 0.10, -u_time * 0.035) + vec2(farFog, midFog) * 2.0);
@@ -123,6 +123,7 @@ class ProceduralFogRenderer {
   private animationFrame: number | null = null;
   private elapsed = Math.random() * 40;
   private lastFrame = performance.now();
+  private lastRender = 0;
   private destroyed = false;
   private dirty = true;
   private options: FogRendererOptions = {
@@ -215,9 +216,11 @@ class ProceduralFogRenderer {
     this.lastFrame = now;
     if (animated) this.elapsed += delta;
 
-    if (visible && (animated || this.dirty)) {
+    const renderDue = now - this.lastRender >= 1000 / 24;
+    if (visible && (this.dirty || (animated && renderDue))) {
       this.render(this.options.reducedMotion ? 12 : this.elapsed);
       this.dirty = false;
+      this.lastRender = now;
     }
     this.animationFrame = window.requestAnimationFrame(this.frame);
   }
@@ -227,8 +230,8 @@ class ProceduralFogRenderer {
     const height = this.canvas.clientHeight;
     if (width < 1 || height < 1) return;
     const compact = width <= 768;
-    const requestedDpr = Math.min(window.devicePixelRatio || 1, compact ? 0.8 : 1.15);
-    const pixelBudgetScale = Math.sqrt(1_200_000 / Math.max(1, width * height));
+    const requestedDpr = Math.min(window.devicePixelRatio || 1, compact ? 0.52 : 0.7);
+    const pixelBudgetScale = Math.sqrt(360_000 / Math.max(1, width * height));
     const dpr = Math.min(requestedDpr, pixelBudgetScale);
     const pixelWidth = Math.max(1, Math.floor(width * dpr));
     const pixelHeight = Math.max(1, Math.floor(height * dpr));
@@ -251,6 +254,13 @@ class ProceduralFogRenderer {
 
 const fogRenderers = new WeakMap<HTMLCanvasElement, ProceduralFogRenderer>();
 
+type PendingFogInitialization = {
+  options: FogRendererOptions;
+  cancel(): void;
+};
+
+const pendingFogInitializations = new WeakMap<HTMLCanvasElement, PendingFogInitialization>();
+
 export function updateProceduralFog(root: HTMLElement, options: FogRendererOptions): void {
   const canvas = root.querySelector<HTMLCanvasElement>(".weather-fx-procedural-fog");
   if (!canvas) {
@@ -260,21 +270,59 @@ export function updateProceduralFog(root: HTMLElement, options: FogRendererOptio
 
   let renderer = fogRenderers.get(canvas);
   if (!renderer) {
-    try {
-      renderer = new ProceduralFogRenderer(canvas, root);
-      fogRenderers.set(canvas, renderer);
-      root.classList.add("weather-fog-webgl-ready");
-    } catch (error) {
-      root.classList.remove("weather-fog-webgl-ready");
-      console.warn("[weather_hud] Procedural fog unavailable; using the CSS fallback.", error);
+    const pending = pendingFogInitializations.get(canvas);
+    if (pending) {
+      pending.options = options;
       return;
     }
+
+    const idleWindow = window as typeof window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    let cancelled = false;
+    let handle = 0;
+    let usesIdleCallback = false;
+    const initialization: PendingFogInitialization = {
+      options,
+      cancel: () => {
+        cancelled = true;
+        if (usesIdleCallback) idleWindow.cancelIdleCallback?.(handle);
+        else window.clearTimeout(handle);
+      },
+    };
+    const initialize = () => {
+      pendingFogInitializations.delete(canvas);
+      if (cancelled || !canvas.isConnected || !root.classList.contains("weather-visible")) return;
+      try {
+        const nextRenderer = new ProceduralFogRenderer(canvas, root);
+        fogRenderers.set(canvas, nextRenderer);
+        root.classList.add("weather-fog-webgl-ready");
+        nextRenderer.update(initialization.options);
+      } catch (error) {
+        root.classList.remove("weather-fog-webgl-ready");
+        console.warn("[weather_hud] Procedural fog unavailable; using the CSS fallback.", error);
+      }
+    };
+
+    if (idleWindow.requestIdleCallback) {
+      usesIdleCallback = true;
+      handle = idleWindow.requestIdleCallback(initialize, { timeout: 800 });
+    } else {
+      handle = window.setTimeout(initialize, 120);
+    }
+    pendingFogInitializations.set(canvas, initialization);
+    return;
   }
   renderer.update(options);
 }
 
 export function destroyProceduralFog(root: HTMLElement): void {
   const canvas = root.querySelector<HTMLCanvasElement>(".weather-fx-procedural-fog");
-  if (canvas) fogRenderers.get(canvas)?.destroy();
+  if (canvas) {
+    pendingFogInitializations.get(canvas)?.cancel();
+    pendingFogInitializations.delete(canvas);
+    fogRenderers.get(canvas)?.destroy();
+  }
   root.classList.remove("weather-fog-webgl-ready");
 }

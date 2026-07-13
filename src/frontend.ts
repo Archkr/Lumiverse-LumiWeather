@@ -351,11 +351,6 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     horizon.className = "weather-fx-horizon";
     root.appendChild(horizon);
 
-    const proceduralFog = document.createElement("canvas");
-    proceduralFog.className = "weather-fx-procedural-fog";
-    proceduralFog.setAttribute("aria-hidden", "true");
-    root.appendChild(proceduralFog);
-
     const mist = document.createElement("div");
     mist.className = "weather-fx-mist";
     root.appendChild(mist);
@@ -518,11 +513,6 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     }
     root.appendChild(lightning);
   } else {
-    const proceduralFog = document.createElement("canvas");
-    proceduralFog.className = "weather-fx-procedural-fog weather-fx-procedural-fog-front";
-    proceduralFog.setAttribute("aria-hidden", "true");
-    root.appendChild(proceduralFog);
-
     const rain = document.createElement("div");
     rain.className = "weather-fx-rain weather-fx-rain-front";
     root.appendChild(rain);
@@ -624,7 +614,6 @@ function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): v
     root.querySelector(".weather-fx-fog")?.remove();
     root.querySelector(".weather-fx-mist")?.remove();
   }
-  if (condition !== "fog") root.querySelector(".weather-fx-procedural-fog")?.remove();
   if (condition !== "clear") root.querySelector(".weather-fx-motes")?.remove();
   if (!windLike) root.querySelector(".weather-fx-wind-gusts")?.remove();
   if (!rainLike) {
@@ -646,7 +635,6 @@ function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): v
 function syncFxCondition(fxRoot: FxRoot, condition: WeatherCondition | null): void {
   if (fxRoot.poolCondition === condition) return;
 
-  destroyProceduralFog(fxRoot.root);
   const next = createFxMarkup(fxRoot.kind);
   pruneFxMarkup(next.root, condition);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
@@ -1348,10 +1336,6 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.style.setProperty("--weather-horizon-opacity", String(isFront ? 0 : tokens.horizonOpacity));
   root.root.style.setProperty("--weather-mist-opacity", String(isFront ? 0 : tokens.mistOpacity));
   root.root.style.setProperty("--weather-fog-opacity", String(isFront ? 0 : tokens.fogOpacity));
-  root.root.style.setProperty(
-    "--weather-procedural-fog-opacity",
-    String(state.condition === "fog" ? clamp((isFront ? 0.12 : 0.48) + effectiveIntensity * (isFront ? 0.07 : 0.18), 0, isFront ? 0.23 : 0.74) : 0),
-  );
   root.root.style.setProperty("--weather-rain-opacity", String(rainLayerOpacity));
   root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
   root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
@@ -1391,16 +1375,6 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
     cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;
   });
 
-  if (state.condition === "fog") {
-    updateProceduralFog(root.root, {
-      intensity: effectiveIntensity,
-      paused: prefs.pauseEffects || document.visibilityState === "hidden",
-      reducedMotion,
-      tint: resolveProceduralFogTint(state.palette),
-    });
-  } else {
-    destroyProceduralFog(root.root);
-  }
 }
 
 export function setup(ctx: SpindleFrontendContext) {
@@ -1459,6 +1433,15 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const backFx = createFxMarkup("back");
   const frontFx = createFxMarkup("front");
+  const viewportFog = document.createElement("div");
+  viewportFog.className = "weather-fx-viewport-fog weather-hidden";
+  viewportFog.dataset.condition = "fog";
+  viewportFog.dataset.placement = currentPrefs.layerMode;
+  const viewportFogCanvas = document.createElement("canvas");
+  viewportFogCanvas.className = "weather-fx-procedural-fog";
+  viewportFogCanvas.setAttribute("aria-hidden", "true");
+  viewportFog.appendChild(viewportFogCanvas);
+  document.body.appendChild(viewportFog);
   let hostSyncFrame: number | null = null;
 
   const detachFxRoot = (fxRoot: FxRoot) => {
@@ -1531,8 +1514,8 @@ export function setup(ctx: SpindleFrontendContext) {
       hostSyncFrame = null;
     }
     stopHostObserver();
-    destroyProceduralFog(backFx.root);
-    destroyProceduralFog(frontFx.root);
+    destroyProceduralFog(viewportFog);
+    viewportFog.remove();
     detachFxRoot(backFx);
     detachFxRoot(frontFx);
   });
@@ -1679,6 +1662,23 @@ export function setup(ctx: SpindleFrontendContext) {
     applySceneState(frontFx, sceneState, currentPrefs, reducedMotion);
     setFxVisibility(backFx, showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both"));
     setFxVisibility(frontFx, showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both"));
+    const showFog = showEffects && currentState?.condition === "fog";
+    viewportFog.dataset.placement = layerMode;
+    viewportFog.classList.toggle("weather-hidden", !showFog);
+    viewportFog.classList.toggle("weather-visible", showFog);
+    viewportFog.classList.toggle("weather-paused", currentPrefs.pauseEffects || document.visibilityState === "hidden");
+    viewportFog.style.setProperty(
+      "--weather-procedural-fog-opacity",
+      String(clamp(0.42 + sceneState.intensity * currentPrefs.intensity * 0.18, 0.42, 0.72)),
+    );
+    if (showFog) {
+      updateProceduralFog(viewportFog, {
+        intensity: clamp(sceneState.intensity * currentPrefs.intensity, 0, 1.5),
+        paused: currentPrefs.pauseEffects || document.visibilityState === "hidden",
+        reducedMotion,
+        tint: resolveProceduralFogTint(sceneState.palette),
+      });
+    }
     scheduleStormFlash();
   };
 

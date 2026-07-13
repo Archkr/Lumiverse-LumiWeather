@@ -1340,16 +1340,6 @@ export const WEATHER_HUD_CSS = `
   opacity: 1;
 }
 
-.weather-fx-root[data-condition="fog"] {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-}
-
 .weather-fx-root[data-kind="back"] {
   z-index: 1;
 }
@@ -1359,12 +1349,71 @@ export const WEATHER_HUD_CSS = `
   mask-image: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0.55) 46%, #000 78%);
 }
 
-.weather-fx-root[data-kind="front"][data-condition="fog"] {
-  mask-image: none;
-}
-
 .weather-fx-root.weather-hidden {
   display: none;
+}
+
+.weather-fx-viewport-fog {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  isolation: isolate;
+  transition: opacity 320ms ease;
+}
+
+.weather-fx-viewport-fog.weather-visible {
+  opacity: 1;
+}
+
+.weather-fx-viewport-fog.weather-hidden {
+  display: none;
+}
+
+.weather-fx-viewport-fog[data-placement="back"] {
+  z-index: 1;
+}
+
+.weather-fx-viewport-fog[data-placement="front"],
+.weather-fx-viewport-fog[data-placement="both"] {
+  z-index: 24;
+}
+
+.weather-fx-viewport-fog[data-placement="front"] .weather-fx-procedural-fog {
+  opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.48);
+  mix-blend-mode: screen;
+}
+
+.weather-fx-viewport-fog[data-placement="both"] .weather-fx-procedural-fog {
+  opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.74);
+}
+
+.weather-fx-viewport-fog::before {
+  content: "";
+  position: absolute;
+  inset: -8%;
+  background:
+    radial-gradient(ellipse at 18% 72%, rgba(202, 216, 225, 0.26), transparent 46%),
+    radial-gradient(ellipse at 78% 28%, rgba(182, 202, 215, 0.2), transparent 50%);
+  filter: blur(30px);
+  opacity: 0.8;
+  transition: opacity 400ms ease;
+}
+
+.weather-fx-viewport-fog[data-placement="front"]::before {
+  opacity: 0.34;
+}
+
+.weather-fx-viewport-fog[data-placement="both"]::before {
+  opacity: 0.56;
+}
+
+.weather-fx-viewport-fog.weather-fog-webgl-ready::before {
+  opacity: 0;
 }
 
 .weather-fx-root.weather-paused *,
@@ -1513,13 +1562,8 @@ export const WEATHER_HUD_CSS = `
   transition: opacity 800ms ease;
 }
 
-.weather-fx-procedural-fog-front {
-  mix-blend-mode: screen;
-  filter: blur(0.7px) saturate(0.84);
-}
-
-.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-fog,
-.weather-fx-root.weather-fog-webgl-ready[data-condition="fog"] .weather-fx-mist {
+.weather-fx-root[data-condition="fog"] .weather-fx-fog,
+.weather-fx-root[data-condition="fog"] .weather-fx-mist {
   opacity: 0;
 }
 
