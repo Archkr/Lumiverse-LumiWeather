@@ -3105,6 +3105,18 @@ function createSnowflakeElement(front) {
     "--flake-opacity-scale": cssNumber(randomRange(0.3, 0.85))
   });
 }
+function randomizeRainImpactPosition(splash, ripple, maxBottom) {
+  const position = randomRange(1, 99);
+  const bottom = randomRange(0, maxBottom);
+  splash.style.setProperty("--splash-left", `${cssNumber(position)}%`);
+  splash.style.setProperty("--splash-bottom", `${cssNumber(bottom)}%`);
+  splash.style.setProperty("--splash-lift", `${cssNumber(randomRange(-10, -5))}px`);
+  splash.style.setProperty("--splash-tilt", `${cssNumber(randomRange(-12, 12))}deg`);
+  if (ripple) {
+    ripple.style.setProperty("--ripple-left", `${cssNumber(position)}%`);
+    ripple.style.setProperty("--ripple-bottom", `${cssNumber(bottom)}%`);
+  }
+}
 function protectInteractive(element) {
   const stop = (event) => event.stopPropagation();
   element.addEventListener("pointerdown", stop);
@@ -3250,6 +3262,9 @@ function createFxMarkup(kind) {
       });
       ripple.dataset.densityThreshold = threshold;
       ripples.appendChild(ripple);
+      splash.addEventListener("animationiteration", () => {
+        randomizeRainImpactPosition(splash, ripple, 10);
+      });
     }
     for (let index = 0;index < (compact ? 48 : 72); index += 1) {
       snow.appendChild(createSnowflakeElement(false));
@@ -3299,7 +3314,7 @@ function createFxMarkup(kind) {
     root.appendChild(splashes);
     for (let index = 0;index < (compact ? 4 : 8); index += 1) {
       const size = randomRange(6, 16);
-      splashes.appendChild(createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
+      const splash = createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
         "--splash-left": `${cssNumber(randomRange(1, 99))}%`,
         "--splash-bottom": `${cssNumber(randomRange(0, 14))}%`,
         "--impact-duration": `${cssNumber(randomRange(0.65, 1.05))}s`,
@@ -3309,7 +3324,11 @@ function createFxMarkup(kind) {
         "--splash-lift": `${cssNumber(randomRange(-12, -6))}px`,
         "--splash-tilt": `${cssNumber(randomRange(-12, 12))}deg`,
         "margin-left": `${cssNumber(size * -0.5)}px`
-      }));
+      });
+      splash.addEventListener("animationiteration", () => {
+        randomizeRainImpactPosition(splash, null, 14);
+      });
+      splashes.appendChild(splash);
     }
     for (let index = 0;index < (compact ? 30 : 48); index += 1) {
       snow.appendChild(createSnowflakeElement(true));
