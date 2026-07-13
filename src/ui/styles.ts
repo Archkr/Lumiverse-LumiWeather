@@ -1353,49 +1353,20 @@ export const WEATHER_HUD_CSS = `
   display: none;
 }
 
-.weather-fx-viewport-fog {
-  position: fixed;
+.weather-fx-procedural-fog-layer {
+  position: absolute;
   inset: 0;
-  width: 100vw;
-  width: 100dvw;
-  height: 100vh;
-  height: 100dvh;
-  max-width: none;
-  max-height: none;
-  overflow: hidden;
+  opacity: var(--weather-procedural-fog-opacity, 0);
   pointer-events: none;
-  opacity: 0;
-  isolation: isolate;
-  transition: opacity 320ms ease;
+  transition: opacity 800ms ease;
 }
 
-.weather-fx-viewport-fog.weather-visible {
-  opacity: 1;
-}
-
-.weather-fx-viewport-fog.weather-hidden {
-  display: none;
-}
-
-.weather-fx-viewport-fog[data-placement="back"] {
-  z-index: 1;
-}
-
-.weather-fx-viewport-fog[data-placement="front"],
-.weather-fx-viewport-fog[data-placement="both"] {
-  z-index: 2;
-}
-
-.weather-fx-viewport-fog[data-placement="front"] .weather-fx-procedural-fog {
+.weather-fx-root[data-kind="front"] .weather-fx-procedural-fog-layer {
   opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.48);
   mix-blend-mode: screen;
 }
 
-.weather-fx-viewport-fog[data-placement="both"] .weather-fx-procedural-fog {
-  opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.74);
-}
-
-.weather-fx-viewport-fog::before {
+.weather-fx-procedural-fog-layer::before {
   content: "";
   position: absolute;
   inset: -8%;
@@ -1407,15 +1378,11 @@ export const WEATHER_HUD_CSS = `
   transition: opacity 400ms ease;
 }
 
-.weather-fx-viewport-fog[data-placement="front"]::before {
+.weather-fx-root[data-kind="front"] .weather-fx-procedural-fog-layer::before {
   opacity: 0.34;
 }
 
-.weather-fx-viewport-fog[data-placement="both"]::before {
-  opacity: 0.56;
-}
-
-.weather-fx-viewport-fog.weather-fog-webgl-ready::before {
+.weather-fx-root.weather-fog-webgl-ready .weather-fx-procedural-fog-layer::before {
   opacity: 0;
 }
 
@@ -1432,6 +1399,7 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-horizon,
 .weather-fx-mist,
 .weather-fx-fog,
+.weather-fx-procedural-fog-layer,
 .weather-fx-procedural-fog,
 .weather-fx-motes,
 .weather-fx-rain,
@@ -1559,10 +1527,9 @@ export const WEATHER_HUD_CSS = `
   display: block;
   width: 100%;
   height: 100%;
-  opacity: var(--weather-procedural-fog-opacity, 0);
+  opacity: 1;
   filter: blur(0.45px) saturate(0.92);
   pointer-events: none;
-  transition: opacity 800ms ease;
 }
 
 .weather-fx-root[data-condition="fog"] .weather-fx-fog,
