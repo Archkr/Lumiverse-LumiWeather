@@ -26,9 +26,9 @@ import {
   normalizeWeatherState,
   normalizeWeatherTag,
 } from "./shared";
-import { stripWeatherStateTags } from "./tag-utils";
 import { selectEffectiveWeatherState } from "./state-utils";
 import { makeWeatherLumiStateSnapshot } from "./lumi-state";
+import { injectWeatherInstruction } from "./prompt-injection";
 
 const PREFS_FILE = "weather_prefs.json";
 const EXTENSION_VERSION = "1.3.1";
@@ -131,17 +131,6 @@ function extractChatId(payload: unknown): string | null {
 
 function send(userId: string, message: BackendToFrontend): void {
   spindle.sendToFrontend(message, userId);
-}
-
-function stripWeatherStateMessageContent<T>(content: T): T {
-  if (typeof content === "string") return stripWeatherStateTags(content) as T;
-  if (!Array.isArray(content)) return content;
-
-  return content.map((part) => {
-    if (!part || typeof part !== "object" || !("text" in part)) return part;
-    const text = (part as { text?: unknown }).text;
-    return typeof text === "string" ? { ...part, text: stripWeatherStateTags(text) } : part;
-  }) as T;
 }
 
 async function loadPrefs(userId: string): Promise<WeatherPrefs> {
@@ -325,21 +314,8 @@ pushMacroValues();
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
-  const cleanedMessages = messages.map((message) =>
-    message?.content ? { ...message, content: stripWeatherStateMessageContent(message.content) } : message,
-  );
   const instruction = buildPromptInstruction(state);
-  const systemIndex = cleanedMessages.findIndex((message) => message.role === "system");
-
-  if (systemIndex >= 0) {
-    const systemMessage = cleanedMessages[systemIndex];
-    cleanedMessages[systemIndex] = typeof systemMessage.content === "string"
-      ? { ...systemMessage, content: `${systemMessage.content.trim()}\n\n${instruction}`.trim() }
-      : { ...systemMessage, content: [...systemMessage.content, { type: "text", text: instruction }] };
-    return cleanedMessages;
-  }
-
-  return [{ role: "system" as const, content: instruction }, ...cleanedMessages];
+  return injectWeatherInstruction(messages, instruction);
 }, 90);
 
 spindle.onFrontendMessage(async (raw, userId) => {

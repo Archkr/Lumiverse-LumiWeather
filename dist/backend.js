@@ -286,16 +286,6 @@ function normalizePrefs(input) {
   };
 }
 
-// src/tag-utils.ts
-function buildWeatherTagRegex(flags = "ig") {
-  return new RegExp(String.raw`<weather-state\b[^>]*?(?:\/>|>[\s\S]*?<\/weather-state>)`, flags);
-}
-function stripWeatherStateTags(content) {
-  return content.replace(buildWeatherTagRegex(), "").replace(/\n{3,}/g, `
-
-`).trim();
-}
-
 // src/state-utils.ts
 function selectEffectiveWeatherState(storyState, manualState) {
   return manualState ?? storyState;
@@ -367,6 +357,43 @@ function makeWeatherLumiStateSnapshot(chatId, state, revision, extensionVersion,
     updatedAt: state?.updatedAt ?? null,
     visibility: "public",
     state: scene
+  };
+}
+
+// src/tag-utils.ts
+function buildWeatherTagRegex(flags = "ig") {
+  return new RegExp(String.raw`<weather-state\b[^>]*?(?:\/>|>[\s\S]*?<\/weather-state>)`, flags);
+}
+function stripWeatherStateTags(content) {
+  return content.replace(buildWeatherTagRegex(), "").replace(/\n{3,}/g, `
+
+`).trim();
+}
+
+// src/prompt-injection.ts
+var WEATHER_BREAKDOWN_NAME = "LumiWeather \u2014 Scene State";
+function stripWeatherStateMessageContent(content) {
+  if (typeof content === "string")
+    return stripWeatherStateTags(content);
+  if (!Array.isArray(content))
+    return content;
+  return content.map((part) => {
+    if (!part || typeof part !== "object" || !("text" in part))
+      return part;
+    const text = part.text;
+    return typeof text === "string" ? { ...part, text: stripWeatherStateTags(text) } : part;
+  });
+}
+function injectWeatherInstruction(messages, instruction) {
+  const cleanedMessages = messages.map((message) => message?.content ? { ...message, content: stripWeatherStateMessageContent(message.content) } : message);
+  const firstSystemIndex = cleanedMessages.findIndex((message) => message.role === "system");
+  const messageIndex = firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0;
+  const injected = { role: "system", content: instruction };
+  const nextMessages = [...cleanedMessages];
+  nextMessages.splice(messageIndex, 0, injected);
+  return {
+    messages: nextMessages,
+    breakdown: [{ messageIndex, name: WEATHER_BREAKDOWN_NAME }]
   };
 }
 
@@ -465,18 +492,6 @@ function extractChatId(payload) {
 }
 function send(userId, message) {
   spindle.sendToFrontend(message, userId);
-}
-function stripWeatherStateMessageContent(content) {
-  if (typeof content === "string")
-    return stripWeatherStateTags(content);
-  if (!Array.isArray(content))
-    return content;
-  return content.map((part) => {
-    if (!part || typeof part !== "object" || !("text" in part))
-      return part;
-    const text = part.text;
-    return typeof text === "string" ? { ...part, text: stripWeatherStateTags(text) } : part;
-  });
 }
 async function loadPrefs(userId) {
   try {
@@ -635,17 +650,8 @@ pushMacroValues();
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
-  const cleanedMessages = messages.map((message) => message?.content ? { ...message, content: stripWeatherStateMessageContent(message.content) } : message);
   const instruction = buildPromptInstruction(state);
-  const systemIndex = cleanedMessages.findIndex((message) => message.role === "system");
-  if (systemIndex >= 0) {
-    const systemMessage = cleanedMessages[systemIndex];
-    cleanedMessages[systemIndex] = typeof systemMessage.content === "string" ? { ...systemMessage, content: `${systemMessage.content.trim()}
-
-${instruction}`.trim() } : { ...systemMessage, content: [...systemMessage.content, { type: "text", text: instruction }] };
-    return cleanedMessages;
-  }
-  return [{ role: "system", content: instruction }, ...cleanedMessages];
+  return injectWeatherInstruction(messages, instruction);
 }, 90);
 spindle.onFrontendMessage(async (raw, userId) => {
   const message = raw;
