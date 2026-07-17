@@ -28,8 +28,11 @@ import {
 } from "./shared";
 import { stripWeatherStateTags } from "./tag-utils";
 import { selectEffectiveWeatherState } from "./state-utils";
+import { makeWeatherLumiStateSnapshot } from "./lumi-state";
 
 const PREFS_FILE = "weather_prefs.json";
+const EXTENSION_VERSION = "1.3.1";
+const WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
 const WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"] as const;
 const WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"] as const;
 const WEATHER_STATE_MACROS = ["story_weather_state", "weather_state"] as const;
@@ -199,6 +202,36 @@ async function loadEffectiveWeatherState(chatId: string): Promise<WeatherState |
   return selectEffectiveWeatherState(storyState, manualState);
 }
 
+async function loadWeatherRevision(chatId: string): Promise<number> {
+  try {
+    const raw = await spindle.variables.local.get(chatId, WEATHER_REVISION_VAR);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw) as { revision?: unknown };
+    const revision = Number(parsed?.revision);
+    return Number.isFinite(revision) ? Math.max(0, Math.round(revision)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function bumpWeatherRevision(chatId: string): Promise<number> {
+  const current = await loadWeatherRevision(chatId);
+  const revision = Math.max(Date.now(), current + 1);
+  await spindle.variables.local.set(chatId, WEATHER_REVISION_VAR, JSON.stringify({ schemaVersion: 1, revision }));
+  return revision;
+}
+
+async function publishWeatherState(chatId: string | null, state?: WeatherState | null, revision?: number): Promise<void> {
+  const resolvedState = chatId ? state === undefined ? await loadEffectiveWeatherState(chatId) : state : null;
+  const storedRevision = chatId ? revision ?? await loadWeatherRevision(chatId) : 0;
+  const resolvedRevision = storedRevision || resolvedState?.updatedAt || 0;
+  spindle.rpcPool.sync(
+    "state.current",
+    makeWeatherLumiStateSnapshot(chatId, resolvedState, resolvedRevision, EXTENSION_VERSION),
+    { requires: [] },
+  );
+}
+
 async function resolveActiveChatId(userId: string, candidate?: string | null): Promise<string | null> {
   const session = getSession(userId);
   if (typeof candidate === "string" && candidate.trim()) {
@@ -223,17 +256,39 @@ async function resolveActiveChatId(userId: string, candidate?: string | null): P
 async function pushActiveChatState(userId: string, explicitChatId?: string | null, requestId?: number): Promise<void> {
   const chatId = await resolveActiveChatId(userId, explicitChatId);
   if (!chatId) {
+    await publishWeatherState(null);
     send(userId, { type: "active_chat_state", chatId: null, state: null, requestId });
     return;
   }
 
+  const state = await loadEffectiveWeatherState(chatId);
+  await publishWeatherState(chatId, state);
+
   send(userId, {
     type: "active_chat_state",
     chatId,
-    state: await loadEffectiveWeatherState(chatId),
+    state,
     requestId,
   });
 }
+
+spindle.rpcPool.sync("contract.v1", {
+  schemaVersion: 1,
+  protocol: "lumi_state.v1",
+  extension: "lumi_weather",
+  extensionVersion: EXTENSION_VERSION,
+  capabilities: ["scene_location", "calendar_time", "weather_conditions", "manual_override"],
+  endpoints: { public: "lumi_weather.state.current" },
+  channels: [{
+    endpoint: "lumi_weather.state.current",
+    schema: "lumi_state.snapshot.v1",
+    visibility: "public",
+    requires: [],
+    mode: "sync",
+  }],
+}, { requires: [] });
+
+void publishWeatherState(null);
 
 for (const name of WEATHER_FORMAT_MACROS) {
   spindle.registerMacro({
@@ -320,7 +375,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const previousStory = await loadStoryWeatherState(chatId);
         const nextStory = normalizeWeatherTag(message.attrs, previousStory);
         await saveStoryWeatherState(chatId, nextStory);
+        const revision = await bumpWeatherRevision(chatId);
         const effective = (await loadManualWeatherState(chatId)) ?? nextStory;
+        await publishWeatherState(chatId, effective, revision);
         send(userId, { type: "weather_state", chatId, state: effective });
         break;
       }
@@ -341,6 +398,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
           previous,
         );
         await saveManualWeatherState(chatId, nextState);
+        const revision = await bumpWeatherRevision(chatId);
+        await publishWeatherState(chatId, nextState, revision);
         send(userId, { type: "weather_state", chatId, state: nextState });
         break;
       }
@@ -353,10 +412,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
         }
 
         await clearManualWeatherState(chatId);
+        const revision = await bumpWeatherRevision(chatId);
+        const storyState = await loadStoryWeatherState(chatId);
+        await publishWeatherState(chatId, storyState, revision);
         send(userId, {
           type: "active_chat_state",
           chatId,
-          state: await loadStoryWeatherState(chatId),
+          state: storyState,
         });
         break;
       }
