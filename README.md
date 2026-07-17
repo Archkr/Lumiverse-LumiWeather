@@ -145,6 +145,14 @@ If you do not want the model driving the scene, you can skip prompt setup and us
 
 On the home screen, the HUD intentionally shows an empty waiting state and effects remain off until a chat is active and that chat has emitted a weather tag.
 
+## LumiState interoperability
+
+LumiWeather publishes its normalized visible scene through the public, read-only `lumi_weather.state.current` endpoint. Compatible extensions receive the active chat ID, source-local revision, freshness, scene location, calendar date and time, and weather conditions with provenance.
+
+Manual-lock and story-sync transitions both increase the per-chat revision. Returning to story sync also creates a new revision, even when the restored story state is older than the removed manual override.
+
+`lumi_weather.contract.v1` describes the endpoint and LumiState v1 capability metadata. Publishing is an in-memory state update and never makes an additional generation call.
+
 ## Project Layout
 
 ```text
@@ -152,6 +160,7 @@ src/
   backend.ts      Backend state, macros, prompt interception, chat persistence
   frontend.ts     HUD, message interception, FX mounting, scene updates
   shared.ts       Normalization, defaults, parsing helpers
+  lumi-state.ts   Public LumiState v1 snapshot mapping
   presets.ts      Quick scene presets
   types.ts        Shared types
   ui/
