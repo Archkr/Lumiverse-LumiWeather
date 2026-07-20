@@ -91,7 +91,7 @@ Supported palettes:
 5. The backend stores the normalized weather state per chat.
 6. If the model does not emit a weather tag, the current scene remains unchanged and the HUD reports that it is waiting for LumiWeather.
 
-Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice.
+Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice. When a tagged message is deleted, edited, or swiped, LumiWeather rebuilds story state from the latest remaining assistant tag.
 
 ## Story Sync vs Manual Lock
 
@@ -122,7 +122,7 @@ https://github.com/Archkr/Lumiverse-StoryWeather
 - Paste the repo URL into the repo URL field
 - Click `Install`
 
-3. Enable the extension and grant `interceptor`, `chats`, and `ui_panels` permissions. LumiWeather does not request generation, message mutation, or app-manipulation permissions.
+3. Enable the extension and grant `interceptor`, `chats`, `chat_mutation`, and `ui_panels` permissions. LumiWeather uses the broadly named `chat_mutation` permission only to read remaining message history after deletes, edits, and swipes; it does not append, update, delete, hide, or swipe chat messages.
 
 4. Open the extension settings panel and confirm the HUD/settings panel loaded correctly.
 

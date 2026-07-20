@@ -369,6 +369,27 @@ function stripWeatherStateTags(content) {
 
 `).trim();
 }
+function parseTagAttributes(raw) {
+  const attrs = {};
+  const attributePattern = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+  let match;
+  while ((match = attributePattern.exec(raw)) !== null) {
+    attrs[match[1]] = match[2] ?? match[3] ?? match[4] ?? "";
+  }
+  return attrs;
+}
+function extractLastWeatherTag(content) {
+  let lastMatch = null;
+  for (const match of content.matchAll(buildWeatherTagRegex())) {
+    const fullMatch = match[0] ?? "";
+    const openingTag = fullMatch.match(/^<weather-state\b([^>]*)/i);
+    lastMatch = {
+      fullMatch,
+      attrs: parseTagAttributes(openingTag?.[1] ?? "")
+    };
+  }
+  return lastMatch;
+}
 
 // src/prompt-injection.ts
 var WEATHER_BREAKDOWN_NAME = "LumiWeather \u2014 Scene State";
@@ -397,30 +418,32 @@ function injectWeatherInstruction(messages, instruction) {
   };
 }
 
-// src/backend.ts
-var PREFS_FILE = "weather_prefs.json";
-var EXTENSION_VERSION = "1.3.1";
-var WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
-var WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"];
-var WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"];
-var WEATHER_STATE_MACROS = ["story_weather_state", "weather_state"];
-var TAG_DEDUPE_TTL_MS = 10 * 60 * 1000;
-var sessions = new Map;
-var processedTags = new Map;
-function getSession(userId) {
-  const existing = sessions.get(userId);
-  if (existing)
-    return existing;
-  const next = { activeChatId: null };
-  sessions.set(userId, next);
-  return next;
-}
-function pruneProcessedTags(now = Date.now()) {
-  for (const [key, timestamp] of processedTags) {
-    if (now - timestamp > TAG_DEDUPE_TTL_MS)
-      processedTags.delete(key);
+// src/story-history.ts
+function rebuildStoryWeatherState(messages, updatedAt = Date.now()) {
+  const ordered = messages.map((message, originalIndex) => ({ message, originalIndex })).sort((left, right) => {
+    const leftIndex = Number.isFinite(left.message.index_in_chat) ? left.message.index_in_chat : left.originalIndex;
+    const rightIndex = Number.isFinite(right.message.index_in_chat) ? right.message.index_in_chat : right.originalIndex;
+    return leftIndex - rightIndex || left.originalIndex - right.originalIndex;
+  });
+  let state = null;
+  for (const { message } of ordered) {
+    const role = message.role ?? (message.is_user ? "user" : "assistant");
+    if (role !== "assistant" || typeof message.content !== "string")
+      continue;
+    const tag = extractLastWeatherTag(message.content);
+    if (!tag)
+      continue;
+    state = normalizeWeatherState({ ...tag.attrs, updatedAt, source: "story" }, state);
   }
+  return state;
 }
+function hasSameStoryScene(left, right) {
+  if (!left || !right)
+    return left === right;
+  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.source === right.source;
+}
+
+// src/weather-prompt.ts
 function buildWeatherTagExample() {
   return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>';
 }
@@ -444,7 +467,13 @@ function buildTrackerMacro() {
   return [
     "IMPORTANT OUTPUT FORMAT:",
     "Write the visible reply first, then append exactly one final XML weather-state tag.",
-    "Never omit the weather-state tag, even if the scene only changed slightly.",
+    "Never omit the weather-state tag, even when the scene state stays unchanged.",
+    "Treat date and time as story-continuity state, not as a timestamp for this reply.",
+    "Copy the current date and time exactly unless the visible narrative explicitly establishes that time passed.",
+    "Do not advance time merely because another message was sent, because dialogue occurred, or because real-world time passed.",
+    "Brief dialogue and quick actions normally keep the exact same time; only advance it for narrated waits, travel, sleep, time skips, or other clear elapsed time.",
+    "When time does advance, make the amount match the elapsed time established by the narrative.",
+    "Preserve every other current scene field unless the visible narrative changes it.",
     "Do not wrap the tag in markdown fences.",
     "Do not explain the tag or mention it in visible prose.",
     "Never place visible prose after the tag.",
@@ -461,6 +490,42 @@ function buildTrackerMacro() {
 function buildStaticStateMacro() {
   return "The current LumiWeather scene state is injected for the active chat during generation.";
 }
+function buildPromptInstruction(state) {
+  return [
+    "[LumiWeather HUD]",
+    "Keep the visible reply natural and in-character.",
+    buildTrackerMacro(),
+    `Current scene: ${summarizeWeatherState(state)}`
+  ].join(`
+`);
+}
+
+// src/backend.ts
+var PREFS_FILE = "weather_prefs.json";
+var EXTENSION_VERSION = "1.3.2";
+var WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
+var WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"];
+var WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"];
+var WEATHER_STATE_MACROS = ["story_weather_state", "weather_state"];
+var TAG_DEDUPE_TTL_MS = 10 * 60 * 1000;
+var HISTORY_RECONCILE_DELAY_MS = 150;
+var sessions = new Map;
+var processedTags = new Map;
+var historyReconcileTimers = new Map;
+function getSession(userId) {
+  const existing = sessions.get(userId);
+  if (existing)
+    return existing;
+  const next = { activeChatId: null };
+  sessions.set(userId, next);
+  return next;
+}
+function pruneProcessedTags(now = Date.now()) {
+  for (const [key, timestamp] of processedTags) {
+    if (now - timestamp > TAG_DEDUPE_TTL_MS)
+      processedTags.delete(key);
+  }
+}
 function pushMacroValues() {
   const formatValue = buildWeatherTagExample();
   const trackerValue = buildTrackerMacro();
@@ -471,15 +536,6 @@ function pushMacroValues() {
     spindle.updateMacroValue(macroName, trackerValue);
   for (const macroName of WEATHER_STATE_MACROS)
     spindle.updateMacroValue(macroName, stateValue);
-}
-function buildPromptInstruction(state) {
-  return [
-    "[LumiWeather HUD]",
-    "Keep the visible reply natural and in-character.",
-    buildTrackerMacro(),
-    `Current scene: ${summarizeWeatherState(state)}`
-  ].join(`
-`);
 }
 function extractChatId(payload) {
   if (!payload || typeof payload !== "object")
@@ -519,6 +575,11 @@ async function loadStoryWeatherState(chatId) {
 }
 async function saveStoryWeatherState(chatId, state) {
   await spindle.variables.local.set(chatId, WEATHER_STATE_VAR, JSON.stringify(state));
+}
+async function clearStoryWeatherState(chatId) {
+  try {
+    await spindle.variables.local.delete(chatId, WEATHER_STATE_VAR);
+  } catch {}
 }
 async function loadManualWeatherState(chatId) {
   try {
@@ -567,6 +628,37 @@ async function publishWeatherState(chatId, state, revision) {
   const resolvedRevision = storedRevision || resolvedState?.updatedAt || 0;
   spindle.rpcPool.sync("state.current", makeWeatherLumiStateSnapshot(chatId, resolvedState, resolvedRevision, EXTENSION_VERSION), { requires: [] });
 }
+async function reconcileStoryWeatherState(userId, chatId, notifyFrontend = true) {
+  const previousStory = await loadStoryWeatherState(chatId);
+  const messages = await spindle.chat.getMessages(chatId);
+  const rebuiltStory = rebuildStoryWeatherState(messages);
+  const nextStory = hasSameStoryScene(previousStory, rebuiltStory) ? previousStory : rebuiltStory;
+  const changed = nextStory !== previousStory;
+  if (changed) {
+    if (nextStory)
+      await saveStoryWeatherState(chatId, nextStory);
+    else
+      await clearStoryWeatherState(chatId);
+  }
+  const effective = await loadManualWeatherState(chatId) ?? nextStory;
+  const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
+  await publishWeatherState(chatId, effective, revision);
+  if (notifyFrontend)
+    send(userId, { type: "active_chat_state", chatId, state: effective });
+  return effective;
+}
+function scheduleStoryWeatherReconcile(userId, chatId) {
+  const key = `${userId}:${chatId}`;
+  const existing = historyReconcileTimers.get(key);
+  if (existing)
+    clearTimeout(existing);
+  historyReconcileTimers.set(key, setTimeout(() => {
+    historyReconcileTimers.delete(key);
+    reconcileStoryWeatherState(userId, chatId).catch((error) => {
+      spindle.log.warn(`LumiWeather history reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, HISTORY_RECONCILE_DELAY_MS));
+}
 async function resolveActiveChatId(userId, candidate) {
   const session = getSession(userId);
   if (typeof candidate === "string" && candidate.trim()) {
@@ -594,7 +686,13 @@ async function pushActiveChatState(userId, explicitChatId, requestId) {
     send(userId, { type: "active_chat_state", chatId: null, state: null, requestId });
     return;
   }
-  const state = await loadEffectiveWeatherState(chatId);
+  let state;
+  try {
+    state = await reconcileStoryWeatherState(userId, chatId, false);
+  } catch (error) {
+    spindle.log.warn(`LumiWeather could not verify chat history: ${error instanceof Error ? error.message : String(error)}`);
+    state = await loadEffectiveWeatherState(chatId);
+  }
   await publishWeatherState(chatId, state);
   send(userId, {
     type: "active_chat_state",
@@ -653,6 +751,20 @@ spindle.registerInterceptor(async (messages, context) => {
   const instruction = buildPromptInstruction(state);
   return injectWeatherInstruction(messages, instruction);
 }, 90);
+var onEvent = spindle.on;
+for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWIPE_EDITED"]) {
+  onEvent(event, (payload, eventUserId) => {
+    const value = payload && typeof payload === "object" ? payload : {};
+    const chatId = extractChatId(payload) ?? extractChatId(value.message);
+    if (!chatId)
+      return;
+    const userIds = eventUserId ? [eventUserId] : [...sessions.entries()].filter(([, session]) => session.activeChatId === chatId).map(([userId]) => userId);
+    for (const userId of userIds) {
+      if (getSession(userId).activeChatId === chatId)
+        scheduleStoryWeatherReconcile(userId, chatId);
+    }
+  });
+}
 spindle.onFrontendMessage(async (raw, userId) => {
   const message = raw;
   try {

@@ -17,9 +17,7 @@ declare const spindle: WeatherSpindleAPI;
 import type { BackendToFrontend, FrontendToBackend, WeatherPrefs, WeatherState } from "./types";
 import {
   DEFAULT_PREFS,
-  WEATHER_CONDITIONS,
   WEATHER_MANUAL_STATE_VAR,
-  WEATHER_PALETTES,
   WEATHER_STATE_VAR,
   makeDefaultWeatherState,
   normalizePrefs,
@@ -29,14 +27,22 @@ import {
 import { selectEffectiveWeatherState } from "./state-utils";
 import { makeWeatherLumiStateSnapshot } from "./lumi-state";
 import { injectWeatherInstruction } from "./prompt-injection";
+import { hasSameStoryScene, rebuildStoryWeatherState } from "./story-history";
+import {
+  buildPromptInstruction,
+  buildStaticStateMacro,
+  buildTrackerMacro,
+  buildWeatherTagExample,
+} from "./weather-prompt";
 
 const PREFS_FILE = "weather_prefs.json";
-const EXTENSION_VERSION = "1.3.1";
+const EXTENSION_VERSION = "1.3.2";
 const WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
 const WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"] as const;
 const WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"] as const;
 const WEATHER_STATE_MACROS = ["story_weather_state", "weather_state"] as const;
 const TAG_DEDUPE_TTL_MS = 10 * 60 * 1000;
+const HISTORY_RECONCILE_DELAY_MS = 150;
 
 type BackendSession = {
   activeChatId: string | null;
@@ -44,6 +50,7 @@ type BackendSession = {
 
 const sessions = new Map<string, BackendSession>();
 const processedTags = new Map<string, number>();
+const historyReconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function getSession(userId: string): BackendSession {
   const existing = sessions.get(userId);
@@ -59,48 +66,6 @@ function pruneProcessedTags(now = Date.now()): void {
   }
 }
 
-function buildWeatherTagExample(): string {
-  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>';
-}
-
-function summarizeWeatherState(state: WeatherState | null): string {
-  if (!state) return "No saved weather state yet.";
-  return [
-    `Location: ${state.location}`,
-    `Date: ${state.date}`,
-    `Time: ${state.time}`,
-    `Condition: ${state.condition}`,
-    `Summary: ${state.summary}`,
-    `Temperature: ${state.temperature}`,
-    `Intensity: ${state.intensity.toFixed(2)}`,
-    `Wind: ${state.wind}`,
-    `Wind direction: ${state.windDirection}`,
-    `Palette: ${state.palette}`,
-  ].join(" | ");
-}
-
-function buildTrackerMacro(): string {
-  return [
-    "IMPORTANT OUTPUT FORMAT:",
-    "Write the visible reply first, then append exactly one final XML weather-state tag.",
-    "Never omit the weather-state tag, even if the scene only changed slightly.",
-    "Do not wrap the tag in markdown fences.",
-    "Do not explain the tag or mention it in visible prose.",
-    "Never place visible prose after the tag.",
-    "Emit the tag as the very last text in the assistant message.",
-    `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
-    `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
-    "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, and palette.",
-    "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
-    "Exact wrapper example:",
-    buildWeatherTagExample(),
-  ].join("\n");
-}
-
-function buildStaticStateMacro(): string {
-  return "The current LumiWeather scene state is injected for the active chat during generation.";
-}
-
 function pushMacroValues(): void {
   const formatValue = buildWeatherTagExample();
   const trackerValue = buildTrackerMacro();
@@ -109,15 +74,6 @@ function pushMacroValues(): void {
   for (const macroName of WEATHER_FORMAT_MACROS) spindle.updateMacroValue(macroName, formatValue);
   for (const macroName of WEATHER_TRACKER_MACROS) spindle.updateMacroValue(macroName, trackerValue);
   for (const macroName of WEATHER_STATE_MACROS) spindle.updateMacroValue(macroName, stateValue);
-}
-
-function buildPromptInstruction(state: WeatherState | null): string {
-  return [
-    "[LumiWeather HUD]",
-    "Keep the visible reply natural and in-character.",
-    buildTrackerMacro(),
-    `Current scene: ${summarizeWeatherState(state)}`,
-  ].join("\n");
 }
 
 function extractChatId(payload: unknown): string | null {
@@ -161,6 +117,14 @@ async function loadStoryWeatherState(chatId: string): Promise<WeatherState | nul
 
 async function saveStoryWeatherState(chatId: string, state: WeatherState): Promise<void> {
   await spindle.variables.local.set(chatId, WEATHER_STATE_VAR, JSON.stringify(state));
+}
+
+async function clearStoryWeatherState(chatId: string): Promise<void> {
+  try {
+    await spindle.variables.local.delete(chatId, WEATHER_STATE_VAR);
+  } catch {
+    // Ignore a missing story state.
+  }
 }
 
 async function loadManualWeatherState(chatId: string): Promise<WeatherState | null> {
@@ -221,6 +185,41 @@ async function publishWeatherState(chatId: string | null, state?: WeatherState |
   );
 }
 
+async function reconcileStoryWeatherState(
+  userId: string,
+  chatId: string,
+  notifyFrontend = true,
+): Promise<WeatherState | null> {
+  const previousStory = await loadStoryWeatherState(chatId);
+  const messages = await spindle.chat.getMessages(chatId);
+  const rebuiltStory = rebuildStoryWeatherState(messages);
+  const nextStory = hasSameStoryScene(previousStory, rebuiltStory) ? previousStory : rebuiltStory;
+  const changed = nextStory !== previousStory;
+
+  if (changed) {
+    if (nextStory) await saveStoryWeatherState(chatId, nextStory);
+    else await clearStoryWeatherState(chatId);
+  }
+
+  const effective = (await loadManualWeatherState(chatId)) ?? nextStory;
+  const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
+  await publishWeatherState(chatId, effective, revision);
+  if (notifyFrontend) send(userId, { type: "active_chat_state", chatId, state: effective });
+  return effective;
+}
+
+function scheduleStoryWeatherReconcile(userId: string, chatId: string): void {
+  const key = `${userId}:${chatId}`;
+  const existing = historyReconcileTimers.get(key);
+  if (existing) clearTimeout(existing);
+  historyReconcileTimers.set(key, setTimeout(() => {
+    historyReconcileTimers.delete(key);
+    void reconcileStoryWeatherState(userId, chatId).catch((error: unknown) => {
+      spindle.log.warn(`LumiWeather history reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, HISTORY_RECONCILE_DELAY_MS));
+}
+
 async function resolveActiveChatId(userId: string, candidate?: string | null): Promise<string | null> {
   const session = getSession(userId);
   if (typeof candidate === "string" && candidate.trim()) {
@@ -250,7 +249,13 @@ async function pushActiveChatState(userId: string, explicitChatId?: string | nul
     return;
   }
 
-  const state = await loadEffectiveWeatherState(chatId);
+  let state: WeatherState | null;
+  try {
+    state = await reconcileStoryWeatherState(userId, chatId, false);
+  } catch (error: unknown) {
+    spindle.log.warn(`LumiWeather could not verify chat history: ${error instanceof Error ? error.message : String(error)}`);
+    state = await loadEffectiveWeatherState(chatId);
+  }
   await publishWeatherState(chatId, state);
 
   send(userId, {
@@ -317,6 +322,28 @@ spindle.registerInterceptor(async (messages, context) => {
   const instruction = buildPromptInstruction(state);
   return injectWeatherInstruction(messages, instruction);
 }, 90);
+
+const onEvent = spindle.on as unknown as (
+  event: string,
+  handler: (payload: unknown, userId?: string) => void,
+) => () => void;
+
+for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWIPE_EDITED"] as const) {
+  onEvent(event, (payload, eventUserId) => {
+    const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+    const chatId = extractChatId(payload) ?? extractChatId(value.message);
+    if (!chatId) return;
+
+    const userIds = eventUserId
+      ? [eventUserId]
+      : [...sessions.entries()]
+          .filter(([, session]) => session.activeChatId === chatId)
+          .map(([userId]) => userId);
+    for (const userId of userIds) {
+      if (getSession(userId).activeChatId === chatId) scheduleStoryWeatherReconcile(userId, chatId);
+    }
+  });
+}
 
 spindle.onFrontendMessage(async (raw, userId) => {
   const message = raw as FrontendToBackend;
