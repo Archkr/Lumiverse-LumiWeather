@@ -2375,7 +2375,6 @@ var WEATHER_HUD_CSS = `
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 164px;
   align-content: start;
   justify-items: end;
   gap: 6px;
@@ -3387,8 +3386,8 @@ var LIGHTNING_BOLT_SVGS = [
 ];
 var LIGHTNING_BOLT_POSITIONS = [23, 51, 75];
 var CLOUD_IMAGES = [cloud_1_default, cloud_2_default, cloud_3_default, cloud_4_default, cloud_5_default, cloud_6_default];
-var HUD_COLLAPSED_SIZE = { width: 272, height: 148 };
-var HUD_EXPANDED_SIZE = { width: 312, height: 360 };
+var HUD_COLLAPSED_SIZE = { width: 320, height: 148 };
+var HUD_EXPANDED_SIZE = { width: 360, height: 360 };
 var DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 function conditionIcon(condition) {
   switch (condition) {

@@ -1142,7 +1142,6 @@ export const WEATHER_HUD_CSS = `
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 164px;
   align-content: start;
   justify-items: end;
   gap: 6px;

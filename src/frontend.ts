@@ -44,8 +44,8 @@ const LIGHTNING_BOLT_SVGS = [
 const LIGHTNING_BOLT_POSITIONS = [23, 51, 75] as const;
 const CLOUD_IMAGES = [cloud1, cloud2, cloud3, cloud4, cloud5, cloud6] as const;
 
-const HUD_COLLAPSED_SIZE = { width: 272, height: 148 };
-const HUD_EXPANDED_SIZE = { width: 312, height: 360 };
+const HUD_COLLAPSED_SIZE = { width: 320, height: 148 };
+const HUD_EXPANDED_SIZE = { width: 360, height: 360 };
 const DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 
 type FloatWidgetHandle = ReturnType<SpindleFrontendContext["ui"]["createFloatWidget"]>;
