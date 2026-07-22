@@ -819,6 +819,112 @@ export const WEATHER_HUD_CSS = `
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.weather-hud-widget[data-presentation="mobile-launcher"] {
+  width: 40px;
+  height: 40px;
+  display: block;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.weather-hud-widget[data-presentation="mobile-launcher"] > .weather-hud-header,
+.weather-hud-widget[data-presentation="mobile-launcher"] > .weather-hud-body {
+  display: none;
+}
+
+.weather-hud-launcher {
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--weather-hud-icon-color);
+  cursor: grab;
+  touch-action: none;
+}
+
+.weather-hud-launcher:active {
+  cursor: grabbing;
+}
+
+.weather-hud-launcher:focus-visible {
+  outline: 2px solid var(--lumiverse-primary, var(--weather-hud-accent));
+  outline-offset: -3px;
+}
+
+.weather-hud-launcher-icon,
+.weather-hud-launcher-icon svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.weather-hud-launcher-icon svg {
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 3px rgba(1, 8, 18, 0.48));
+}
+
+.weather-hud-launcher-icon .weather-hud-icon-solid {
+  fill: currentColor;
+  stroke: none;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+  gap: 14px;
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: calc(16px + max(env(safe-area-inset-bottom), var(--weather-keyboard-inset-bottom, 0px)));
+  padding-left: max(14px, env(safe-area-inset-left));
+  border-radius: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  user-select: auto;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] > .weather-hud-header,
+.weather-hud-widget[data-presentation="mobile-panel"] > .weather-hud-body,
+.weather-hud-widget[data-presentation="mobile-panel"] > .weather-hud-drawer {
+  width: min(100%, 560px);
+  margin-inline: auto;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-control,
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-chip,
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-preset,
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-select {
+  min-height: 44px;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-gear {
+  width: 44px;
+  height: 44px;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-range {
+  min-height: 44px;
+}
+
 .weather-hud-widget::before {
   content: "";
   position: absolute;
