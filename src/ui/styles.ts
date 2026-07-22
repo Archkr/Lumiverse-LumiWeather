@@ -1094,7 +1094,7 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-body {
   display: grid;
-  grid-template-columns: minmax(132px, 1fr) minmax(78px, 96px);
+  grid-template-columns: minmax(0, 1fr) 112px;
   gap: 10px;
   align-items: end;
 }
@@ -1140,6 +1140,10 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-weather {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 164px;
+  align-content: start;
   justify-items: end;
   gap: 6px;
   text-align: right;
@@ -1192,7 +1196,7 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-summary-viewport {
   position: relative;
-  width: 96px;
+  width: 100%;
   max-width: 100%;
   min-height: 15px;
   overflow: hidden;
@@ -1315,10 +1319,6 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-widget[data-expanded="false"] {
   gap: 10px;
-}
-
-.weather-hud-widget[data-expanded="false"] .weather-hud-summary-viewport {
-  width: 118px;
 }
 
 .weather-hud-widget[data-paused="true"]::after {
