@@ -529,6 +529,22 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     }
     root.appendChild(lightning);
   } else {
+    const sky = document.createElement("div");
+    sky.className = "weather-fx-sky weather-fx-sky-front";
+    root.appendChild(sky);
+
+    const clouds = document.createElement("div");
+    clouds.className = "weather-fx-clouds weather-fx-clouds-front";
+    root.appendChild(clouds);
+
+    const horizon = document.createElement("div");
+    horizon.className = "weather-fx-horizon weather-fx-horizon-front";
+    root.appendChild(horizon);
+
+    const mist = document.createElement("div");
+    mist.className = "weather-fx-mist weather-fx-mist-front";
+    root.appendChild(mist);
+
     root.appendChild(createProceduralFogLayer());
 
     const rain = document.createElement("div");
@@ -540,6 +556,25 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     root.appendChild(snow);
 
     const compact = window.matchMedia("(max-width: 768px)").matches;
+    const cloudCount = compact ? 12 : 16;
+    for (let index = 0; index < cloudCount; index += 1) {
+      clouds.appendChild(createCloudElement(index, cloudCount));
+    }
+
+    for (let index = 0; index < (compact ? 2 : 3); index += 1) {
+      mist.appendChild(
+        createSpan("weather-fx-mist-plume", {
+          "--mist-width": `${260 + Math.round(Math.random() * 280)}px`,
+          "--mist-height": `${80 + Math.round(Math.random() * 42)}px`,
+          "--mist-left": `${-12 + Math.round(Math.random() * 88)}%`,
+          "--mist-bottom": `${-3 + Math.round(Math.random() * 16)}%`,
+          "--mist-duration": `${16 + Math.round(Math.random() * 14)}s`,
+          "--mist-delay": `${Math.round(Math.random() * -16)}s`,
+          "--mist-opacity-scale": `${(0.6 + Math.random() * 0.55).toFixed(2)}`,
+        }),
+      );
+    }
+
     const frontRainCount = resolveRainParticlePool(compact).front;
     for (let index = 0; index < frontRainCount; index += 1) {
       const duration = 0.72 + Math.random() * 0.55;
@@ -1428,12 +1463,12 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.style.setProperty("--weather-cloud-edge", tokens.cloudEdge);
   root.root.style.setProperty("--weather-fog-color", tokens.fogColor);
   root.root.style.setProperty("--weather-mist-color", tokens.mistColor);
-  root.root.style.setProperty("--weather-sky-opacity", String(isFront ? 0 : tokens.skyOpacity));
+  root.root.style.setProperty("--weather-sky-opacity", String(tokens.skyOpacity));
   root.root.style.setProperty("--weather-glow-opacity", String(isFront ? 0 : tokens.glowOpacity));
   root.root.style.setProperty("--weather-beam-opacity", String(isFront ? 0 : tokens.beamOpacity));
-  root.root.style.setProperty("--weather-cloud-opacity", String(isFront ? 0 : tokens.cloudOpacity));
-  root.root.style.setProperty("--weather-horizon-opacity", String(isFront ? 0 : tokens.horizonOpacity));
-  root.root.style.setProperty("--weather-mist-opacity", String(isFront ? 0 : tokens.mistOpacity));
+  root.root.style.setProperty("--weather-cloud-opacity", String(tokens.cloudOpacity));
+  root.root.style.setProperty("--weather-horizon-opacity", String(tokens.horizonOpacity));
+  root.root.style.setProperty("--weather-mist-opacity", String(tokens.mistOpacity));
   root.root.style.setProperty("--weather-fog-opacity", String(isFront ? 0 : tokens.fogOpacity));
   root.root.style.setProperty(
     "--weather-procedural-fog-opacity",

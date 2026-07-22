@@ -1734,6 +1734,8 @@ export const WEATHER_HUD_CSS = `
   );
   border-radius: 999px;
   opacity: 0;
+  scale: var(--weather-rain-particle-scale, 1);
+  transform-origin: 50% 0;
   transform: rotate(var(--weather-rain-angle, 11deg));
   filter: drop-shadow(0 0 2px rgba(191, 221, 255, 0.24));
   animation: weather-rain-fall var(--drop-duration) linear infinite;
@@ -1778,6 +1780,7 @@ export const WEATHER_HUD_CSS = `
   width: var(--splash-size);
   height: var(--splash-height, var(--splash-size));
   transform-origin: 50% 100%;
+  scale: var(--weather-rain-particle-scale, 1);
   opacity: 0;
   filter: drop-shadow(0 0 3px rgba(194, 225, 255, 0.58));
   animation: weather-splash var(--impact-duration, 0.9s) ease-out infinite;
@@ -1822,6 +1825,7 @@ export const WEATHER_HUD_CSS = `
   height: calc(var(--ripple-size) * 0.4);
   border: 1.4px solid rgba(205, 231, 255, 0.62);
   border-radius: 50%;
+  scale: var(--weather-rain-particle-scale, 1);
   opacity: 0;
   filter: drop-shadow(0 0 2px rgba(191, 221, 255, 0.42));
   animation: weather-ripple var(--impact-duration, 0.9s) ease-out infinite;
@@ -2191,6 +2195,10 @@ export const WEATHER_HUD_CSS = `
 }
 
 @media (max-width: 768px) {
+  .weather-fx-root {
+    --weather-rain-particle-scale: 0.68;
+  }
+
   .weather-settings-card-header {
     align-items: start;
   }
