@@ -11,6 +11,7 @@ It is built for story-driven use, not live forecast data. The model controls the
 ## Features
 
 - Compact draggable HUD with dynamic styling based on story time, palette, and weather
+- Mobile weather launcher with a touch-friendly fullscreen HUD and controls
 - Animated ambience that can render behind the chat, in front of the chat, or both
 - Story sync mode driven by hidden inline weather tags
 - Manual lock mode for overriding the current scene per chat
@@ -144,6 +145,12 @@ To use story-driven weather generation:
 If you do not want the model driving the scene, you can skip prompt setup and use `Manual lock` from the HUD or settings panel instead.
 
 On the home screen, the HUD intentionally shows an empty waiting state and effects remain off until a chat is active and that chat has emitted a weather tag.
+
+## Mobile Use
+
+On phones, narrow windows, and coarse-pointer devices, LumiWeather appears as a draggable 40-pixel weather launcher so it does not cover the chat. Tap the launcher to open the existing HUD and scene controls in a fullscreen, scrollable view. Tap **Close** to return to the launcher.
+
+The mobile panel follows the device safe areas and Lumiverse's visual viewport, including the virtual-keyboard inset. Rotating the device or opening settings keeps the current scene and launcher position intact. Desktop continues to use the original compact and expanded floating HUD.
 
 ## LumiState interoperability
 

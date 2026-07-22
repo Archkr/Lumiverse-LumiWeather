@@ -695,6 +695,35 @@ function destroyProceduralFog(root) {
   root.classList.remove("weather-fog-webgl-ready");
 }
 
+// src/mobile-layout.ts
+var MOBILE_HUD_BREAKPOINT = 600;
+var MOBILE_HUD_LAUNCHER_SIZE = { width: 40, height: 40 };
+var DESKTOP_HUD_COLLAPSED_SIZE = { width: 320, height: 148 };
+var DESKTOP_HUD_EXPANDED_SIZE = { width: 360, height: 360 };
+function isMobileHudLayout(viewportWidth, coarsePointer) {
+  return coarsePointer || viewportWidth <= MOBILE_HUD_BREAKPOINT;
+}
+function resolveHudPresentation(mobile, expanded) {
+  if (mobile) {
+    return {
+      kind: expanded ? "mobile-panel" : "mobile-launcher",
+      ...MOBILE_HUD_LAUNCHER_SIZE,
+      fullscreen: expanded
+    };
+  }
+  return {
+    kind: "desktop",
+    ...expanded ? DESKTOP_HUD_EXPANDED_SIZE : DESKTOP_HUD_COLLAPSED_SIZE,
+    fullscreen: false
+  };
+}
+function clampMobileHudPosition(position, viewport, padding = 12) {
+  return {
+    x: Math.max(padding, Math.min(position.x, viewport.width - MOBILE_HUD_LAUNCHER_SIZE.width - padding)),
+    y: Math.max(padding, Math.min(position.y, viewport.height - MOBILE_HUD_LAUNCHER_SIZE.height - padding))
+  };
+}
+
 // src/state-utils.ts
 function shouldApplyChatState(currentChatId, responseChatId, responseRequestId, activeRequestId) {
   if (responseRequestId !== undefined)
@@ -2052,6 +2081,112 @@ var WEATHER_HUD_CSS = `
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.weather-hud-widget[data-presentation="mobile-launcher"] {
+  width: 40px;
+  height: 40px;
+  display: block;
+  padding: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.weather-hud-widget[data-presentation="mobile-launcher"] > .weather-hud-header,
+.weather-hud-widget[data-presentation="mobile-launcher"] > .weather-hud-body {
+  display: none;
+}
+
+.weather-hud-launcher {
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--weather-hud-icon-color);
+  cursor: grab;
+  touch-action: none;
+}
+
+.weather-hud-launcher:active {
+  cursor: grabbing;
+}
+
+.weather-hud-launcher:focus-visible {
+  outline: 2px solid var(--lumiverse-primary, var(--weather-hud-accent));
+  outline-offset: -3px;
+}
+
+.weather-hud-launcher-icon,
+.weather-hud-launcher-icon svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.weather-hud-launcher-icon svg {
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 3px rgba(1, 8, 18, 0.48));
+}
+
+.weather-hud-launcher-icon .weather-hud-icon-solid {
+  fill: currentColor;
+  stroke: none;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-content: start;
+  gap: 14px;
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: calc(16px + max(env(safe-area-inset-bottom), var(--weather-keyboard-inset-bottom, 0px)));
+  padding-left: max(14px, env(safe-area-inset-left));
+  border-radius: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  user-select: auto;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] > .weather-hud-header,
+.weather-hud-widget[data-presentation="mobile-panel"] > .weather-hud-body,
+.weather-hud-widget[data-presentation="mobile-panel"] > .weather-hud-drawer {
+  width: min(100%, 560px);
+  margin-inline: auto;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-control,
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-chip,
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-preset,
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-select {
+  min-height: 44px;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-gear {
+  width: 44px;
+  height: 44px;
+}
+
+.weather-hud-widget[data-presentation="mobile-panel"] .weather-hud-range {
+  min-height: 44px;
+}
+
 .weather-hud-widget::before {
   content: "";
   position: absolute;
@@ -3380,6 +3515,7 @@ function shouldProcessWeatherTag(payload) {
 var GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 12.98a7.79 7.79 0 000-1.96l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.88 7.88 0 00-1.69-.98l-.36-2.54a.5.5 0 00-.49-.42h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.6.24-1.16.56-1.69.98l-2.39-.96a.5.5 0 00-.6.22L2.43 8.8a.5.5 0 00.12.64l2.03 1.58a7.79 7.79 0 000 1.96L2.55 14.56a.5.5 0 00-.12.64l1.92 3.32a.5.5 0 00.6.22l2.39-.96c.53.42 1.09.74 1.69.98l.36 2.54a.5.5 0 00.49.42h3.84a.5.5 0 00.49-.42l.36-2.54c.6-.24 1.16-.56 1.69-.98l2.39.96a.5.5 0 00.6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8a3.5 3.5 0 010 7.5z"/></svg>`;
 var CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
 var CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
+var CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.05 5.64 4.95 4.95 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05z"/></svg>`;
 var LIGHTNING_BOLT_SVGS = [
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M55 0 L35 55 L52 55 L25 145 L48 100 L30 100 L52 230 L35 185 L58 300"/><path d="M52 55 L72 82 L62 88" stroke-width="1.8"/><path d="M48 100 L22 125 L32 130" stroke-width="1.8"/><path d="M52 230 L72 248 L62 253" stroke-width="1.5"/></g></svg>`,
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M45 0 L68 48 L45 48 L72 135 L50 88 L66 88 L42 215 L62 168 L38 300"/><path d="M45 48 L22 72 L32 77" stroke-width="1.8"/><path d="M50 88 L75 110 L65 115" stroke-width="1.8"/></g></svg>`,
@@ -3387,8 +3523,6 @@ var LIGHTNING_BOLT_SVGS = [
 ];
 var LIGHTNING_BOLT_POSITIONS = [23, 51, 75];
 var CLOUD_IMAGES = [cloud_1_default, cloud_2_default, cloud_3_default, cloud_4_default, cloud_5_default, cloud_6_default];
-var HUD_COLLAPSED_SIZE = { width: 320, height: 148 };
-var HUD_EXPANDED_SIZE = { width: 360, height: 360 };
 var DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 function conditionIcon(condition) {
   switch (condition) {
@@ -4102,19 +4236,71 @@ function resolveSceneTokens(state, intensity) {
     flashOpacity: values.flashOpacity
   };
 }
-function createHudWidget(ctx, initialPosition, expanded, callbacks) {
-  const size = expanded ? HUD_EXPANDED_SIZE : HUD_COLLAPSED_SIZE;
+function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, callbacks) {
+  const presentation = resolveHudPresentation(mobile, expanded);
   const widget = ctx.ui.createFloatWidget({
-    width: size.width,
-    height: size.height,
+    width: presentation.width,
+    height: presentation.height,
     initialPosition,
     snapToEdge: true,
-    tooltip: "LumiWeather HUD",
-    chromeless: true
+    tooltip: presentation.kind === "mobile-launcher" ? "Open LumiWeather" : "LumiWeather HUD",
+    chromeless: true,
+    fullscreen: presentation.fullscreen
   });
   const root = document.createElement("div");
   root.className = "weather-hud-widget";
   root.dataset.expanded = expanded ? "true" : "false";
+  root.dataset.mobile = mobile ? "true" : "false";
+  root.dataset.presentation = presentation.kind;
+  root.style.setProperty("--weather-keyboard-inset-bottom", `${keyboardState.insetBottom}px`);
+  root.style.setProperty("--weather-visual-viewport-height", `${keyboardState.viewportHeight}px`);
+  if (presentation.kind === "mobile-panel") {
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", "LumiWeather controls");
+  }
+  let launcherButton;
+  let launcherIcon;
+  if (presentation.kind === "mobile-launcher") {
+    launcherButton = document.createElement("button");
+    launcherButton.type = "button";
+    launcherButton.className = "weather-hud-launcher";
+    launcherButton.setAttribute("aria-label", "Open LumiWeather");
+    launcherButton.title = "Open LumiWeather";
+    launcherIcon = document.createElement("span");
+    launcherIcon.className = "weather-hud-launcher-icon";
+    launcherIcon.setAttribute("aria-hidden", "true");
+    launcherButton.appendChild(launcherIcon);
+    let pointerId = null;
+    let pointerStart = { x: 0, y: 0 };
+    let moved = false;
+    launcherButton.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0)
+        return;
+      pointerId = event.pointerId;
+      pointerStart = { x: event.clientX, y: event.clientY };
+      moved = false;
+    });
+    launcherButton.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== pointerId)
+        return;
+      if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 8)
+        moved = true;
+    });
+    launcherButton.addEventListener("pointercancel", () => {
+      pointerId = null;
+      moved = false;
+    });
+    launcherButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      pointerId = null;
+      if (moved) {
+        moved = false;
+        return;
+      }
+      callbacks.onToggleDrawer();
+    });
+    root.appendChild(launcherButton);
+  }
   const header = document.createElement("div");
   header.className = "weather-hud-header";
   const titleWrap = document.createElement("div");
@@ -4133,12 +4319,14 @@ function createHudWidget(ctx, initialPosition, expanded, callbacks) {
   drawerToggle.className = "weather-hud-control weather-hud-control-ghost";
   protectInteractive(drawerToggle);
   const drawerToggleLabel = document.createElement("span");
-  drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
+  drawerToggleLabel.textContent = presentation.kind === "mobile-panel" ? "Close" : expanded ? "Hide" : "Controls";
   const drawerToggleIcon = document.createElement("span");
   drawerToggleIcon.className = "weather-hud-control-icon";
-  drawerToggleIcon.innerHTML = expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  drawerToggleIcon.innerHTML = presentation.kind === "mobile-panel" ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
   drawerToggle.appendChild(drawerToggleLabel);
   drawerToggle.appendChild(drawerToggleIcon);
+  drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  drawerToggle.setAttribute("aria-label", presentation.kind === "mobile-panel" ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls");
   drawerToggle.addEventListener("click", (event) => {
     event.stopPropagation();
     callbacks.onToggleDrawer();
@@ -4349,8 +4537,11 @@ function createHudWidget(ctx, initialPosition, expanded, callbacks) {
     temp,
     summary,
     source,
+    drawerToggle,
     drawerToggleLabel,
     drawerToggleIcon,
+    launcherButton,
+    launcherIcon,
     storyButton,
     manualButton,
     presetButtons,
@@ -4392,8 +4583,17 @@ function syncHudState(hud, prefs, state, expanded) {
   hud.wind.textContent = state ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}` : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.source.textContent = state ? displayState.source === "manual" ? "Scene lock" : "Story sync" : "Waiting";
-  hud.drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
-  hud.drawerToggleIcon.innerHTML = expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
+  hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
+  hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  hud.drawerToggle.setAttribute("aria-label", mobilePanel ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls");
+  if (hud.launcherButton && hud.launcherIcon) {
+    hud.launcherIcon.innerHTML = conditionIcon(displayState.condition);
+    const launcherLabel = state ? `Open LumiWeather: ${displayState.location}, ${displayState.condition}, ${formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit)}` : "Open LumiWeather: waiting for a weather update";
+    hud.launcherButton.setAttribute("aria-label", launcherLabel);
+    hud.launcherButton.title = launcherLabel;
+  }
   if (liveDate) {
     hud.date.textContent = new Intl.DateTimeFormat(undefined, {
       weekday: "short",
@@ -4509,6 +4709,9 @@ function setup(ctx) {
   let hudExpanded = false;
   let permissionWarning = null;
   const processedWeatherTags = new Map;
+  let keyboardState = ctx.ui.events.getKeyboardState();
+  const coarsePointerMedia = window.matchMedia("(pointer: coarse)");
+  let mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointerMedia.matches);
   const motionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
   const getReducedMotion = () => currentPrefs.reducedMotion === "always" || currentPrefs.reducedMotion === "system" && motionMedia.matches;
   const sendManualState = (state) => {
@@ -4616,6 +4819,7 @@ function setup(ctx) {
   });
   let hud = null;
   let removeHudDragListener = null;
+  let windowedHudPosition = currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
   const destroyHud = () => {
     if (removeHudDragListener) {
       removeHudDragListener();
@@ -4627,11 +4831,20 @@ function setup(ctx) {
     }
   };
   const buildHud = (position) => {
-    const nextPosition = position ?? hud?.widget.getPosition() ?? currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
+    const mountedWindowedPosition = hud && !hud.widget.isFullscreen() ? hud.widget.getPosition() : null;
+    let nextPosition = position ?? mountedWindowedPosition ?? windowedHudPosition ?? currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
+    if (mobileHudLayout) {
+      nextPosition = clampMobileHudPosition(nextPosition, {
+        width: keyboardState.viewportWidth,
+        height: keyboardState.viewportHeight
+      });
+    }
+    windowedHudPosition = nextPosition;
     destroyHud();
-    hud = createHudWidget(ctx, nextPosition, hudExpanded, {
+    hud = createHudWidget(ctx, nextPosition, hudExpanded, mobileHudLayout, keyboardState, {
       onToggleDrawer: () => {
-        const currentPosition = hud?.widget.getPosition() ?? currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
+        const currentPosition = hud && !hud.widget.isFullscreen() ? hud.widget.getPosition() : windowedHudPosition;
+        windowedHudPosition = currentPosition;
         hudExpanded = !hudExpanded;
         buildHud(currentPosition);
         updateScene();
@@ -4659,12 +4872,52 @@ function setup(ctx) {
       }
     });
     removeHudDragListener = hud.widget.onDragEnd((nextPositionFromDrag) => {
+      windowedHudPosition = nextPositionFromDrag;
       sendToBackend(ctx, { type: "save_prefs", prefs: { widgetPosition: nextPositionFromDrag } });
     });
     syncHudState(hud, currentPrefs, currentState, hudExpanded);
   };
   buildHud(currentPrefs.widgetPosition);
   cleanups.push(() => destroyHud());
+  const syncHudViewportVariables = () => {
+    if (!hud)
+      return;
+    hud.root.style.setProperty("--weather-keyboard-inset-bottom", `${keyboardState.insetBottom}px`);
+    hud.root.style.setProperty("--weather-visual-viewport-height", `${keyboardState.viewportHeight}px`);
+  };
+  const refreshMobileHudLayout = (nextKeyboardState, coarsePointer) => {
+    const previousKeyboardState = keyboardState;
+    const previousMobileHudLayout = mobileHudLayout;
+    keyboardState = nextKeyboardState;
+    mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointer);
+    const layoutChanged = mobileHudLayout !== previousMobileHudLayout;
+    const widthChanged = keyboardState.viewportWidth !== previousKeyboardState.viewportWidth;
+    const heightChanged = keyboardState.viewportHeight !== previousKeyboardState.viewportHeight;
+    if (!layoutChanged && mobileHudLayout && !hudExpanded && (widthChanged || heightChanged)) {
+      windowedHudPosition = clampMobileHudPosition(windowedHudPosition, {
+        width: keyboardState.viewportWidth,
+        height: keyboardState.viewportHeight
+      });
+      if (hud && !hud.widget.isFullscreen()) {
+        hud.widget.moveTo(windowedHudPosition.x, windowedHudPosition.y);
+      }
+    }
+    const shouldRebuild = layoutChanged || mobileHudLayout && hudExpanded && widthChanged;
+    if (shouldRebuild) {
+      buildHud(windowedHudPosition);
+      return;
+    }
+    syncHudViewportVariables();
+  };
+  const keyboardUnsub = ctx.ui.events.onKeyboardChange((nextKeyboardState) => {
+    refreshMobileHudLayout(nextKeyboardState, coarsePointerMedia.matches);
+  });
+  cleanups.push(keyboardUnsub);
+  const onCoarsePointerChange = () => {
+    refreshMobileHudLayout(ctx.ui.events.getKeyboardState(), coarsePointerMedia.matches);
+  };
+  coarsePointerMedia.addEventListener("change", onCoarsePointerChange);
+  cleanups.push(() => coarsePointerMedia.removeEventListener("change", onCoarsePointerChange));
   let flashTimer = null;
   const resetFlashTimer = () => {
     if (flashTimer !== null) {
@@ -4789,10 +5042,15 @@ function setup(ctx) {
     switch (message.type) {
       case "prefs":
         currentPrefs = message.prefs;
-        if (hud && currentPrefs.widgetPosition) {
-          hud.widget.moveTo(currentPrefs.widgetPosition.x, currentPrefs.widgetPosition.y);
-        } else if (hud && !currentPrefs.widgetPosition) {
-          hud.widget.moveTo(DEFAULT_WIDGET_POSITION.x, DEFAULT_WIDGET_POSITION.y);
+        windowedHudPosition = currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
+        if (mobileHudLayout) {
+          windowedHudPosition = clampMobileHudPosition(windowedHudPosition, {
+            width: keyboardState.viewportWidth,
+            height: keyboardState.viewportHeight
+          });
+        }
+        if (hud && !hud.widget.isFullscreen()) {
+          hud.widget.moveTo(windowedHudPosition.x, windowedHudPosition.y);
         }
         updateScene();
         break;

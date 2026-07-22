@@ -1,4 +1,4 @@
-import type { SpindleFrontendContext } from "lumiverse-spindle-types";
+import type { SpindleFrontendContext, SpindleUIKeyboardState } from "lumiverse-spindle-types";
 import cloud1 from "./assets/cloud_1.png";
 import cloud2 from "./assets/cloud_2.png";
 import cloud3 from "./assets/cloud_3.png";
@@ -13,6 +13,7 @@ import {
   resolveRainVector,
 } from "./fx-utils";
 import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
+import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
 import {
   DEFAULT_PREFS,
   WEATHER_TAG_NAME,
@@ -36,6 +37,7 @@ import { shouldProcessWeatherTag } from "./tag-utils";
 const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 12.98a7.79 7.79 0 000-1.96l2.03-1.58a.5.5 0 00.12-.64l-1.92-3.32a.5.5 0 00-.6-.22l-2.39.96a7.88 7.88 0 00-1.69-.98l-.36-2.54a.5.5 0 00-.49-.42h-3.84a.5.5 0 00-.49.42l-.36 2.54c-.6.24-1.16.56-1.69.98l-2.39-.96a.5.5 0 00-.6.22L2.43 8.8a.5.5 0 00.12.64l2.03 1.58a7.79 7.79 0 000 1.96L2.55 14.56a.5.5 0 00-.12.64l1.92 3.32a.5.5 0 00.6.22l2.39-.96c.53.42 1.09.74 1.69.98l.36 2.54a.5.5 0 00.49.42h3.84a.5.5 0 00.49-.42l.36-2.54c.6-.24 1.16-.56 1.69-.98l2.39.96a.5.5 0 00.6-.22l1.92-3.32a.5.5 0 00-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8a3.5 3.5 0 010 7.5z"/></svg>`;
 const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
+const CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.05 5.64 4.95 4.95 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05z"/></svg>`;
 const LIGHTNING_BOLT_SVGS = [
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M55 0 L35 55 L52 55 L25 145 L48 100 L30 100 L52 230 L35 185 L58 300"/><path d="M52 55 L72 82 L62 88" stroke-width="1.8"/><path d="M48 100 L22 125 L32 130" stroke-width="1.8"/><path d="M52 230 L72 248 L62 253" stroke-width="1.5"/></g></svg>`,
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M45 0 L68 48 L45 48 L72 135 L50 88 L66 88 L42 215 L62 168 L38 300"/><path d="M45 48 L22 72 L32 77" stroke-width="1.8"/><path d="M50 88 L75 110 L65 115" stroke-width="1.8"/></g></svg>`,
@@ -44,8 +46,6 @@ const LIGHTNING_BOLT_SVGS = [
 const LIGHTNING_BOLT_POSITIONS = [23, 51, 75] as const;
 const CLOUD_IMAGES = [cloud1, cloud2, cloud3, cloud4, cloud5, cloud6] as const;
 
-const HUD_COLLAPSED_SIZE = { width: 320, height: 148 };
-const HUD_EXPANDED_SIZE = { width: 360, height: 360 };
 const DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 
 type FloatWidgetHandle = ReturnType<SpindleFrontendContext["ui"]["createFloatWidget"]>;
@@ -86,8 +86,11 @@ type HudElements = {
   temp: HTMLDivElement;
   summary: HTMLDivElement;
   source: HTMLSpanElement;
+  drawerToggle: HTMLButtonElement;
   drawerToggleLabel: HTMLSpanElement;
   drawerToggleIcon: HTMLSpanElement;
+  launcherButton?: HTMLButtonElement;
+  launcherIcon?: HTMLSpanElement;
   storyButton?: HTMLButtonElement;
   manualButton?: HTMLButtonElement;
   presetButtons: Map<string, HTMLButtonElement>;
@@ -938,21 +941,75 @@ function createHudWidget(
   ctx: SpindleFrontendContext,
   initialPosition: { x: number; y: number },
   expanded: boolean,
+  mobile: boolean,
+  keyboardState: SpindleUIKeyboardState,
   callbacks: HudCallbacks,
 ): HudElements {
-  const size = expanded ? HUD_EXPANDED_SIZE : HUD_COLLAPSED_SIZE;
+  const presentation = resolveHudPresentation(mobile, expanded);
   const widget = ctx.ui.createFloatWidget({
-    width: size.width,
-    height: size.height,
+    width: presentation.width,
+    height: presentation.height,
     initialPosition,
     snapToEdge: true,
-    tooltip: "LumiWeather HUD",
+    tooltip: presentation.kind === "mobile-launcher" ? "Open LumiWeather" : "LumiWeather HUD",
     chromeless: true,
+    fullscreen: presentation.fullscreen,
   });
 
   const root = document.createElement("div");
   root.className = "weather-hud-widget";
   root.dataset.expanded = expanded ? "true" : "false";
+  root.dataset.mobile = mobile ? "true" : "false";
+  root.dataset.presentation = presentation.kind;
+  root.style.setProperty("--weather-keyboard-inset-bottom", `${keyboardState.insetBottom}px`);
+  root.style.setProperty("--weather-visual-viewport-height", `${keyboardState.viewportHeight}px`);
+  if (presentation.kind === "mobile-panel") {
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", "LumiWeather controls");
+  }
+
+  let launcherButton: HTMLButtonElement | undefined;
+  let launcherIcon: HTMLSpanElement | undefined;
+  if (presentation.kind === "mobile-launcher") {
+    launcherButton = document.createElement("button");
+    launcherButton.type = "button";
+    launcherButton.className = "weather-hud-launcher";
+    launcherButton.setAttribute("aria-label", "Open LumiWeather");
+    launcherButton.title = "Open LumiWeather";
+
+    launcherIcon = document.createElement("span");
+    launcherIcon.className = "weather-hud-launcher-icon";
+    launcherIcon.setAttribute("aria-hidden", "true");
+    launcherButton.appendChild(launcherIcon);
+
+    let pointerId: number | null = null;
+    let pointerStart = { x: 0, y: 0 };
+    let moved = false;
+    launcherButton.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      pointerId = event.pointerId;
+      pointerStart = { x: event.clientX, y: event.clientY };
+      moved = false;
+    });
+    launcherButton.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== pointerId) return;
+      if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 8) moved = true;
+    });
+    launcherButton.addEventListener("pointercancel", () => {
+      pointerId = null;
+      moved = false;
+    });
+    launcherButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      pointerId = null;
+      if (moved) {
+        moved = false;
+        return;
+      }
+      callbacks.onToggleDrawer();
+    });
+    root.appendChild(launcherButton);
+  }
 
   const header = document.createElement("div");
   header.className = "weather-hud-header";
@@ -975,12 +1032,14 @@ function createHudWidget(
   drawerToggle.className = "weather-hud-control weather-hud-control-ghost";
   protectInteractive(drawerToggle);
   const drawerToggleLabel = document.createElement("span");
-  drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
+  drawerToggleLabel.textContent = presentation.kind === "mobile-panel" ? "Close" : expanded ? "Hide" : "Controls";
   const drawerToggleIcon = document.createElement("span");
   drawerToggleIcon.className = "weather-hud-control-icon";
-  drawerToggleIcon.innerHTML = expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  drawerToggleIcon.innerHTML = presentation.kind === "mobile-panel" ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
   drawerToggle.appendChild(drawerToggleLabel);
   drawerToggle.appendChild(drawerToggleIcon);
+  drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  drawerToggle.setAttribute("aria-label", presentation.kind === "mobile-panel" ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls");
   drawerToggle.addEventListener("click", (event) => {
     event.stopPropagation();
     callbacks.onToggleDrawer();
@@ -1222,8 +1281,11 @@ function createHudWidget(
     temp,
     summary,
     source,
+    drawerToggle,
     drawerToggleLabel,
     drawerToggleIcon,
+    launcherButton,
+    launcherIcon,
     storyButton,
     manualButton,
     presetButtons,
@@ -1269,8 +1331,23 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.source.textContent = state ? (displayState.source === "manual" ? "Scene lock" : "Story sync") : "Waiting";
-  hud.drawerToggleLabel.textContent = expanded ? "Hide" : "Controls";
-  hud.drawerToggleIcon.innerHTML = expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
+  hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
+  hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  hud.drawerToggle.setAttribute(
+    "aria-label",
+    mobilePanel ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls",
+  );
+
+  if (hud.launcherButton && hud.launcherIcon) {
+    hud.launcherIcon.innerHTML = conditionIcon(displayState.condition);
+    const launcherLabel = state
+      ? `Open LumiWeather: ${displayState.location}, ${displayState.condition}, ${formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit)}`
+      : "Open LumiWeather: waiting for a weather update";
+    hud.launcherButton.setAttribute("aria-label", launcherLabel);
+    hud.launcherButton.title = launcherLabel;
+  }
 
   if (liveDate) {
     hud.date.textContent = new Intl.DateTimeFormat(undefined, {
@@ -1417,6 +1494,9 @@ export function setup(ctx: SpindleFrontendContext) {
   let hudExpanded = false;
   let permissionWarning: string | null = null;
   const processedWeatherTags = new Map<string, string>();
+  let keyboardState = ctx.ui.events.getKeyboardState();
+  const coarsePointerMedia = window.matchMedia("(pointer: coarse)");
+  let mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointerMedia.matches);
 
   const motionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
   const getReducedMotion = () =>
@@ -1539,6 +1619,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   let hud: HudElements | null = null;
   let removeHudDragListener: (() => void) | null = null;
+  let windowedHudPosition = currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
 
   const destroyHud = () => {
     if (removeHudDragListener) {
@@ -1552,16 +1633,26 @@ export function setup(ctx: SpindleFrontendContext) {
   };
 
   const buildHud = (position?: { x: number; y: number } | null) => {
-    const nextPosition =
+    const mountedWindowedPosition = hud && !hud.widget.isFullscreen() ? hud.widget.getPosition() : null;
+    let nextPosition =
       position ??
-      hud?.widget.getPosition() ??
+      mountedWindowedPosition ??
+      windowedHudPosition ??
       currentPrefs.widgetPosition ??
       DEFAULT_WIDGET_POSITION;
+    if (mobileHudLayout) {
+      nextPosition = clampMobileHudPosition(nextPosition, {
+        width: keyboardState.viewportWidth,
+        height: keyboardState.viewportHeight,
+      });
+    }
+    windowedHudPosition = nextPosition;
 
     destroyHud();
-    hud = createHudWidget(ctx, nextPosition, hudExpanded, {
+    hud = createHudWidget(ctx, nextPosition, hudExpanded, mobileHudLayout, keyboardState, {
       onToggleDrawer: () => {
-        const currentPosition = hud?.widget.getPosition() ?? currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
+        const currentPosition = hud && !hud.widget.isFullscreen() ? hud.widget.getPosition() : windowedHudPosition;
+        windowedHudPosition = currentPosition;
         hudExpanded = !hudExpanded;
         buildHud(currentPosition);
         updateScene();
@@ -1589,6 +1680,7 @@ export function setup(ctx: SpindleFrontendContext) {
       },
     });
     removeHudDragListener = hud.widget.onDragEnd((nextPositionFromDrag) => {
+      windowedHudPosition = nextPositionFromDrag;
       sendToBackend(ctx, { type: "save_prefs", prefs: { widgetPosition: nextPositionFromDrag } });
     });
     syncHudState(hud, currentPrefs, currentState, hudExpanded);
@@ -1596,6 +1688,49 @@ export function setup(ctx: SpindleFrontendContext) {
 
   buildHud(currentPrefs.widgetPosition);
   cleanups.push(() => destroyHud());
+
+  const syncHudViewportVariables = () => {
+    if (!hud) return;
+    hud.root.style.setProperty("--weather-keyboard-inset-bottom", `${keyboardState.insetBottom}px`);
+    hud.root.style.setProperty("--weather-visual-viewport-height", `${keyboardState.viewportHeight}px`);
+  };
+
+  const refreshMobileHudLayout = (nextKeyboardState: SpindleUIKeyboardState, coarsePointer: boolean) => {
+    const previousKeyboardState = keyboardState;
+    const previousMobileHudLayout = mobileHudLayout;
+    keyboardState = nextKeyboardState;
+    mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointer);
+
+    const layoutChanged = mobileHudLayout !== previousMobileHudLayout;
+    const widthChanged = keyboardState.viewportWidth !== previousKeyboardState.viewportWidth;
+    const heightChanged = keyboardState.viewportHeight !== previousKeyboardState.viewportHeight;
+    if (!layoutChanged && mobileHudLayout && !hudExpanded && (widthChanged || heightChanged)) {
+      windowedHudPosition = clampMobileHudPosition(windowedHudPosition, {
+        width: keyboardState.viewportWidth,
+        height: keyboardState.viewportHeight,
+      });
+      if (hud && !hud.widget.isFullscreen()) {
+        hud.widget.moveTo(windowedHudPosition.x, windowedHudPosition.y);
+      }
+    }
+
+    const shouldRebuild = layoutChanged || (mobileHudLayout && hudExpanded && widthChanged);
+    if (shouldRebuild) {
+      buildHud(windowedHudPosition);
+      return;
+    }
+    syncHudViewportVariables();
+  };
+
+  const keyboardUnsub = ctx.ui.events.onKeyboardChange((nextKeyboardState) => {
+    refreshMobileHudLayout(nextKeyboardState, coarsePointerMedia.matches);
+  });
+  cleanups.push(keyboardUnsub);
+  const onCoarsePointerChange = () => {
+    refreshMobileHudLayout(ctx.ui.events.getKeyboardState(), coarsePointerMedia.matches);
+  };
+  coarsePointerMedia.addEventListener("change", onCoarsePointerChange);
+  cleanups.push(() => coarsePointerMedia.removeEventListener("change", onCoarsePointerChange));
 
   let flashTimer: number | null = null;
 
@@ -1742,10 +1877,15 @@ export function setup(ctx: SpindleFrontendContext) {
     switch (message.type) {
       case "prefs":
         currentPrefs = message.prefs;
-        if (hud && currentPrefs.widgetPosition) {
-          hud.widget.moveTo(currentPrefs.widgetPosition.x, currentPrefs.widgetPosition.y);
-        } else if (hud && !currentPrefs.widgetPosition) {
-          hud.widget.moveTo(DEFAULT_WIDGET_POSITION.x, DEFAULT_WIDGET_POSITION.y);
+        windowedHudPosition = currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
+        if (mobileHudLayout) {
+          windowedHudPosition = clampMobileHudPosition(windowedHudPosition, {
+            width: keyboardState.viewportWidth,
+            height: keyboardState.viewportHeight,
+          });
+        }
+        if (hud && !hud.widget.isFullscreen()) {
+          hud.widget.moveTo(windowedHudPosition.x, windowedHudPosition.y);
         }
         updateScene();
         break;
