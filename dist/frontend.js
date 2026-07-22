@@ -2379,6 +2379,7 @@ var WEATHER_HUD_CSS = `
   justify-items: end;
   gap: 6px;
   text-align: right;
+  transform: translateY(-9px);
 }
 
 .weather-hud-icon {
