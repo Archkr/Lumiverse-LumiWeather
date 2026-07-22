@@ -1630,6 +1630,7 @@ export const WEATHER_HUD_CSS = `
   left: var(--cloud-left);
   filter: blur(var(--cloud-blur)) drop-shadow(0 10px 18px rgba(7, 15, 28, 0.14));
   opacity: calc(var(--weather-cloud-opacity) * var(--cloud-opacity-scale));
+  scale: var(--weather-cloud-size-scale, 1);
   transform-origin: 50% 58%;
   animation: weather-cloud-drift var(--cloud-duration) linear infinite;
   animation-delay: var(--cloud-delay);
@@ -2121,7 +2122,7 @@ export const WEATHER_HUD_CSS = `
 @keyframes weather-rain-fall {
   0% { transform: translate3d(0, 0, 0) rotate(var(--weather-rain-angle, 11deg)); opacity: 0; }
   12% { opacity: calc(var(--weather-rain-opacity) * var(--drop-opacity-scale)); }
-  100% { transform: translate3d(var(--drop-drift), 118vh, 0) rotate(var(--weather-rain-angle, 11deg)); opacity: 0; }
+  100% { transform: translate3d(var(--drop-drift), var(--weather-rain-fall-distance, 118vh), 0) rotate(var(--weather-rain-angle, 11deg)); opacity: 0; }
 }
 
 @keyframes weather-snow-fall {
@@ -2196,7 +2197,13 @@ export const WEATHER_HUD_CSS = `
 
 @media (max-width: 768px) {
   .weather-fx-root {
+    --weather-cloud-size-scale: 0.62;
+    --weather-rain-fall-distance: 160vh;
     --weather-rain-particle-scale: 0.68;
+  }
+
+  .weather-fx-cloud {
+    transform-origin: 50% 0;
   }
 
   .weather-settings-card-header {
