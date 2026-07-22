@@ -1103,6 +1103,7 @@ export const WEATHER_HUD_CSS = `
   display: grid;
   min-width: 0;
   gap: 4px;
+  transform: translateY(-7px);
 }
 
 .weather-hud-location {
@@ -1189,11 +1190,59 @@ export const WEATHER_HUD_CSS = `
   line-height: 0.94;
 }
 
+.weather-hud-summary-viewport {
+  position: relative;
+  width: 96px;
+  max-width: 100%;
+  min-height: 15px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.weather-hud-summary-viewport::before,
+.weather-hud-summary-viewport::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset-block: -2px;
+  width: 11px;
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.weather-hud-summary-viewport::before {
+  left: 0;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--weather-hud-shell-bottom) 48%, transparent), transparent);
+}
+
+.weather-hud-summary-viewport::after {
+  right: 0;
+  background: linear-gradient(270deg, color-mix(in srgb, var(--weather-hud-shell-bottom) 48%, transparent), transparent);
+}
+
 .weather-hud-summary {
-  max-width: 96px;
+  --weather-hud-summary-gap: 28px;
+  display: flex;
+  width: max-content;
+  min-width: max-content;
+  align-items: center;
+  gap: var(--weather-hud-summary-gap);
   font-size: 11px;
   line-height: 1.35;
   color: var(--weather-hud-text-soft);
+  white-space: nowrap;
+  will-change: transform;
+  animation: weather-hud-summary-ticker 12s linear infinite;
+}
+
+.weather-hud-summary::after {
+  content: attr(data-ticker-text);
+  flex: 0 0 auto;
+}
+
+.weather-hud-summary-viewport:hover .weather-hud-summary {
+  animation-play-state: paused;
 }
 
 .weather-hud-drawer {
@@ -1289,8 +1338,8 @@ export const WEATHER_HUD_CSS = `
   gap: 10px;
 }
 
-.weather-hud-widget[data-expanded="false"] .weather-hud-summary {
-  max-width: 118px;
+.weather-hud-widget[data-expanded="false"] .weather-hud-summary-viewport {
+  width: 118px;
 }
 
 .weather-hud-widget[data-paused="true"]::after {
@@ -1304,6 +1353,15 @@ export const WEATHER_HUD_CSS = `
   }
   100% {
     transform: translate3d(6%, -4%, 0) scale(1.08);
+  }
+}
+
+@keyframes weather-hud-summary-ticker {
+  from {
+    transform: translate3d(calc(-50% - 14px), 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -2081,6 +2139,22 @@ export const WEATHER_HUD_CSS = `
 
   .weather-hud-time {
     font-size: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .weather-hud-summary {
+    display: block;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: none;
+  }
+
+  .weather-hud-summary::after {
+    content: none;
   }
 }
 `;

@@ -1027,11 +1027,14 @@ function createHudWidget(
   icon.className = "weather-hud-icon";
   const temp = document.createElement("div");
   temp.className = "weather-hud-temp";
+  const summaryViewport = document.createElement("div");
+  summaryViewport.className = "weather-hud-summary-viewport";
   const summary = document.createElement("div");
   summary.className = "weather-hud-summary";
+  summaryViewport.appendChild(summary);
   right.appendChild(icon);
   right.appendChild(temp);
-  right.appendChild(summary);
+  right.appendChild(summaryViewport);
 
   body.appendChild(left);
   body.appendChild(right);
@@ -1258,7 +1261,9 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
-  hud.summary.textContent = state ? displayState.summary : "Waiting for the first weather tag";
+  const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
+  hud.summary.textContent = summaryText;
+  hud.summary.dataset.tickerText = summaryText;
   hud.wind.textContent = state
     ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`
     : "Add {{weather_tracker}} to the prompt";
