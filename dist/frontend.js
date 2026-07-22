@@ -2429,29 +2429,8 @@ var WEATHER_HUD_CSS = `
   max-width: 100%;
   min-height: 15px;
   overflow: hidden;
-  isolation: isolate;
-}
-
-.weather-hud-summary-viewport::before,
-.weather-hud-summary-viewport::after {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  inset-block: -2px;
-  width: 11px;
-  pointer-events: none;
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
-}
-
-.weather-hud-summary-viewport::before {
-  left: 0;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--weather-hud-shell-bottom) 48%, transparent), transparent);
-}
-
-.weather-hud-summary-viewport::after {
-  right: 0;
-  background: linear-gradient(270deg, color-mix(in srgb, var(--weather-hud-shell-bottom) 48%, transparent), transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
 
 .weather-hud-summary {
@@ -2591,10 +2570,10 @@ var WEATHER_HUD_CSS = `
 
 @keyframes weather-hud-summary-ticker {
   from {
-    transform: translate3d(calc(-50% - 14px), 0, 0);
+    transform: translate3d(0, 0, 0);
   }
   to {
-    transform: translate3d(0, 0, 0);
+    transform: translate3d(calc(-50% - 14px), 0, 0);
   }
 }
 
