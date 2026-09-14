@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "testing"]
+  pull_request:
+    branches: ["main", "testing"]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      # `dist/` is committed and loaded directly by Lumiverse, so a source change
+      # without a rebuild would ship stale code. This step rebuilds into a
+      # temporary directory and byte-compares the result against what is tracked.
+      - name: Verify committed bundles match a fresh build
+        run: bun run check:dist

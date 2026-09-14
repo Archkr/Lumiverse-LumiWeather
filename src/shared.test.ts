@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  SUMMARY_MAX_LENGTH,
   formatTemperatureForUnit,
   makeDefaultWeatherState,
   normalizePrefs,
@@ -72,5 +73,34 @@ describe("story weather normalization", () => {
     expect(normalizeWindDirection("unknown", "east")).toBe("east");
     expect(normalizeWeatherTag({ windDirection: "west" }).windDirection).toBe("west");
     expect(normalizeWeatherTag({ wind_direction: "north-east" }).windDirection).toBe("northeast");
+  });
+
+  test("keeps a longer summary instead of silently clipping it", () => {
+    const long =
+      "Steady afternoon rain easing into a low mist that settles quietly across the whole valley floor " +
+      "before dusk, with the far ridge disappearing first and the lanterns along the eastern road " +
+      "beginning to blur into soft halos of warm light";
+    expect(long.length).toBeGreaterThan(SUMMARY_MAX_LENGTH);
+
+    const state = normalizeWeatherTag({ date: "2026-01-15", time: "3:00 PM", summary: long });
+    expect(state.summary.length).toBeLessThanOrEqual(SUMMARY_MAX_LENGTH);
+    expect(state.summary.endsWith("\u2026")).toBe(true);
+
+    const short = normalizeWeatherTag({ date: "2026-01-15", time: "3:00 PM", summary: "Steady rain" });
+    expect(short.summary).toBe("Steady rain");
+  });
+
+  test("normalizes the new preference fields and defaults them for old installs", () => {
+    const legacy = normalizePrefs({ effectsEnabled: false });
+    expect(legacy.clockMode).toBe("auto");
+    expect(legacy.showForecast).toBe(true);
+    expect(legacy.transitionsEnabled).toBe(true);
+
+    const custom = normalizePrefs({ clockMode: "live", showForecast: false, transitionsEnabled: false });
+    expect(custom.clockMode).toBe("live");
+    expect(custom.showForecast).toBe(false);
+    expect(custom.transitionsEnabled).toBe(false);
+
+    expect(normalizePrefs({ clockMode: "sideways" }).clockMode).toBe("auto");
   });
 });

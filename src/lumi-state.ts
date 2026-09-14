@@ -1,3 +1,4 @@
+import { serializeForecast } from "./forecast-utils";
 import type { WeatherState } from "./types";
 
 export const LUMI_STATE_PROTOCOL = "lumi_state.v1" as const;
@@ -168,6 +169,10 @@ export function makeWeatherLumiStateSnapshot(
         wind: state.wind,
         windDirection: state.windDirection,
         palette: state.palette,
+        season: state.season,
+        // Attribute values are primitives, so the projection is published in the
+        // same serialized form the hidden tag uses.
+        forecast: state.forecast.length > 0 ? serializeForecast(state.forecast) : null,
       },
       provenance,
     });

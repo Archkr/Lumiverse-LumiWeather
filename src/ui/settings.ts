@@ -1,4 +1,5 @@
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "../presets";
+import { formatForecastEntry } from "../forecast-utils";
 import { formatTemperatureForUnit, parseStoryDateTime, WEATHER_WIND_DIRECTIONS } from "../shared";
 import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherState, WeatherWindDirection } from "../types";
 
@@ -299,6 +300,46 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   });
   pauseLabel.appendChild(pauseToggle);
 
+  const clockLabel = document.createElement("label");
+  clockLabel.className = "weather-settings-label";
+  clockLabel.textContent = "HUD clock";
+
+  const clockSelect = document.createElement("select");
+  clockSelect.className = "weather-settings-select";
+  clockSelect.innerHTML = `
+    <option value="auto">Story time, live in manual lock</option>
+    <option value="live">Always follow real time</option>
+    <option value="story">Always follow story time</option>
+  `;
+  clockSelect.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { clockMode: clockSelect.value } });
+  });
+  clockLabel.appendChild(clockSelect);
+
+  const forecastLabel = document.createElement("label");
+  forecastLabel.className = "weather-settings-label";
+  forecastLabel.textContent = "Show forecast outlook";
+
+  const forecastToggle = document.createElement("input");
+  forecastToggle.type = "checkbox";
+  forecastToggle.className = "weather-settings-checkbox";
+  forecastToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { showForecast: forecastToggle.checked } });
+  });
+  forecastLabel.appendChild(forecastToggle);
+
+  const transitionsLabel = document.createElement("label");
+  transitionsLabel.className = "weather-settings-label";
+  transitionsLabel.textContent = "Blend scene changes";
+
+  const transitionsToggle = document.createElement("input");
+  transitionsToggle.type = "checkbox";
+  transitionsToggle.className = "weather-settings-checkbox";
+  transitionsToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { transitionsEnabled: transitionsToggle.checked } });
+  });
+  transitionsLabel.appendChild(transitionsToggle);
+
   effectsSection.body.appendChild(effectsLabel);
   effectsSection.body.appendChild(lightningLabel);
   placementSection.body.appendChild(layerLabel);
@@ -306,6 +347,9 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   motionSection.body.appendChild(intensityLabel);
   motionSection.body.appendChild(motionLabel);
   motionSection.body.appendChild(pauseLabel);
+  motionSection.body.appendChild(transitionsLabel);
+  motionSection.body.appendChild(clockLabel);
+  motionSection.body.appendChild(forecastLabel);
 
   const manualCard = document.createElement("section");
   manualCard.className = "weather-settings-manual-card weather-settings-glass-panel";
@@ -595,6 +639,9 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
       motionSelect.value = prefs.reducedMotion;
       pauseToggle.checked = prefs.pauseEffects;
+      transitionsToggle.checked = prefs.transitionsEnabled;
+      clockSelect.value = prefs.clockMode;
+      forecastToggle.checked = prefs.showForecast;
 
       const chatAvailable = statusOverride !== "No active chat";
       manualToggle.disabled = !chatAvailable;
@@ -614,7 +661,12 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         : "Waiting for LumiWeather");
 
       previewValue.textContent = state
-        ? `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}`
+        ? [
+            `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}`,
+            state.forecast.length > 0
+              ? `Outlook: ${state.forecast.map(formatForecastEntry).join(" | ")}`
+              : "",
+          ].filter(Boolean).join(" · ")
         : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
 
       manualModePill.textContent = state?.source === "manual" ? "Manual lock" : "Story sync";

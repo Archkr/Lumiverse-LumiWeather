@@ -5,10 +5,52 @@ export type WeatherWindDirection = "none" | "north" | "northeast" | "east" | "so
 export type ReducedMotionMode = "system" | "always" | "never";
 export type TemperatureUnit = "fahrenheit" | "celsius";
 export type WeatherSourceMode = "story" | "manual";
+export type WeatherSeason = "spring" | "summer" | "autumn" | "winter";
+export type WeatherClockMode = "auto" | "live" | "story";
+
+/** Which scene layer a resolved token set is being computed for. */
+export type WeatherLayerKind = "back" | "front";
+
+/**
+ * Every value a scene layer paints with, after intensity and layer adjustments.
+ * Field names describe the destination CSS custom property; the property mapping
+ * itself lives in `frontend.ts`.
+ */
+export interface SceneTokens {
+  bgStart: string;
+  bgMid: string;
+  bgEnd: string;
+  glow: string;
+  beamColor: string;
+  horizonColor: string;
+  cloudCore: string;
+  cloudEdge: string;
+  fogColor: string;
+  mistColor: string;
+  skyOpacity: number;
+  glowOpacity: number;
+  beamOpacity: number;
+  cloudOpacity: number;
+  horizonOpacity: number;
+  mistOpacity: number;
+  fogOpacity: number;
+  rainOpacity: number;
+  snowOpacity: number;
+  moteOpacity: number;
+  flashOpacity: number;
+}
 
 export interface WidgetPosition {
   x: number;
   y: number;
+}
+
+/** One projected day. `date` is always a real `YYYY-MM-DD` calendar value. */
+export interface ForecastEntry {
+  date: string;
+  condition: WeatherCondition;
+  summary: string;
+  temperature: string;
 }
 
 export interface WeatherState {
@@ -22,6 +64,8 @@ export interface WeatherState {
   wind: string;
   windDirection: WeatherWindDirection;
   palette: WeatherPalette;
+  season: WeatherSeason;
+  forecast: ForecastEntry[];
   updatedAt: number;
   source: WeatherSourceMode;
 }
@@ -35,6 +79,9 @@ export interface WeatherPrefs {
   temperatureUnit: TemperatureUnit;
   pauseEffects: boolean;
   widgetPosition: WidgetPosition | null;
+  clockMode: WeatherClockMode;
+  showForecast: boolean;
+  transitionsEnabled: boolean;
 }
 
 export type FrontendToBackend =

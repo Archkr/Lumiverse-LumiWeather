@@ -942,7 +942,8 @@ export const WEATHER_HUD_CSS = `
   inset: auto -10% -36% 26%;
   height: 66%;
   background: radial-gradient(circle at center, color-mix(in srgb, var(--weather-hud-aura-secondary) 90%, transparent) 0%, transparent 68%);
-  opacity: calc(0.9 * var(--weather-hud-scene-intensity));
+  /* Sun altitude (-90 midnight to +90 noon) softens the aura toward night. */
+  opacity: calc((0.35 + 0.55 * (var(--weather-sun-altitude, 0) + 90) / 180) * var(--weather-hud-scene-intensity));
   filter: blur(30px);
   transform: translate3d(0, 0, 0);
   animation: weather-hud-drift 12s ease-in-out infinite alternate;
@@ -1387,6 +1388,56 @@ export const WEATHER_HUD_CSS = `
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.weather-hud-forecast {
+  display: grid;
+  gap: 4px;
+}
+
+/* A missing interceptor permission is surfaced on the HUD badge, not only in settings. */
+.weather-hud-widget[data-permission="limited"] .weather-hud-source {
+  border-color: color-mix(in srgb, #ffb45e 55%, transparent);
+  color: rgba(255, 214, 160, 0.96);
+  background: color-mix(in srgb, #ffb45e 14%, var(--weather-hud-surface));
+}
+
+.weather-hud-forecast-row {
+  display: grid;
+  grid-template-columns: 34px 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--weather-hud-line) 26%, transparent);
+  font-size: 11px;
+  color: var(--weather-hud-text-soft);
+}
+
+.weather-hud-forecast-day {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgba(245, 248, 255, 0.78);
+}
+
+.weather-hud-forecast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--weather-hud-accent);
+}
+
+.weather-hud-forecast-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.weather-hud-forecast-copy {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
 .weather-hud-control-grid {
   display: grid;
   gap: 10px;
@@ -1757,6 +1808,12 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-rain-drop.weather-density-hidden {
   opacity: 0 !important;
   animation-play-state: paused !important;
+}
+
+/* Density is expressed as a per-particle opacity multiplier rather than a binary
+   hidden class, so intensity changes read as a swell instead of a flicker. */
+.weather-fx-rain-drop {
+  --drop-opacity-scale: var(--drop-density-scale, 1);
 }
 
 .weather-fx-rain-splashes,

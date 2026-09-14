@@ -14,6 +14,11 @@ import {
 } from "./fx-utils";
 import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
 import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
+import { resolveSceneTokens } from "./scene-tokens";
+import {
+  resolveHudTimePhase as sharedResolveHudTimePhase,
+  resolveSolarArc,
+} from "./time-utils";
 import {
   DEFAULT_PREFS,
   WEATHER_TAG_NAME,
@@ -24,8 +29,12 @@ import {
 } from "./shared";
 import type {
   BackendToFrontend,
+  ForecastEntry,
   FrontendToBackend,
+  TemperatureUnit,
+  WeatherClockMode,
   WeatherCondition,
+  SceneTokens,
   WeatherPrefs,
   WeatherState,
 } from "./types";
@@ -50,12 +59,27 @@ const DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 
 type FloatWidgetHandle = ReturnType<SpindleFrontendContext["ui"]["createFloatWidget"]>;
 
+/** Token values after the front/back layer adjustments are folded in. */
+type ResolvedSceneTokens = SceneTokens;
+
 type FxRoot = {
   root: HTMLDivElement;
   host: HTMLElement | null;
   kind: "back" | "front";
   poolCondition: WeatherCondition | null;
+  /** Tokens currently applied, used as the `from` side of the next blend. */
+  sceneTokens: ResolvedSceneTokens | null;
+  /** Identity of the applied scene, so an identical scene never re-blends. */
+  sceneKey: string | null;
+  /** Cancels the cleanup timer for an in-flight blend. */
+  blendTimer: number | null;
 };
+
+/**
+ * How long a scene blend lasts. Kept in sync with the longest `transition`
+ * duration on `.weather-fx-root` in `ui/styles.ts`.
+ */
+const SCENE_TRANSITION_MS = 1300;
 
 type SceneHostResolution = {
   backHost: HTMLElement | null;
@@ -99,33 +123,12 @@ type HudElements = {
   intensityValue?: HTMLSpanElement;
   pauseButton?: HTMLButtonElement;
   resumeButton?: HTMLButtonElement;
+  forecastSection?: HTMLDivElement;
+  forecastLabel?: HTMLSpanElement;
+  forecastList?: HTMLDivElement;
 };
 
 type HudTimePhase = "dawn" | "day" | "dusk" | "night";
-
-type SceneTokens = {
-  bgStart: string;
-  bgMid: string;
-  bgEnd: string;
-  glow: string;
-  beamColor: string;
-  horizonColor: string;
-  cloudCore: string;
-  cloudEdge: string;
-  fogColor: string;
-  mistColor: string;
-  skyOpacity: number;
-  glowOpacity: number;
-  beamOpacity: number;
-  cloudOpacity: number;
-  horizonOpacity: number;
-  mistOpacity: number;
-  fogOpacity: number;
-  rainOpacity: number;
-  snowOpacity: number;
-  moteOpacity: number;
-  flashOpacity: number;
-};
 
 function conditionIcon(condition: WeatherCondition): string {
   switch (condition) {
@@ -146,16 +149,8 @@ function conditionIcon(condition: WeatherCondition): string {
 }
 
 function resolveHudTimePhase(state: WeatherState, liveDate: Date | null): HudTimePhase {
-  if (state.palette === "dawn" || state.palette === "day" || state.palette === "dusk" || state.palette === "night") {
-    return state.palette;
-  }
-
   const hour = liveDate?.getHours() ?? parseHourFromTimeString(state.time);
-  if (hour === null) return "day";
-  if (hour >= 5 && hour < 8) return "dawn";
-  if (hour >= 8 && hour < 18) return "day";
-  if (hour >= 18 && hour < 21) return "dusk";
-  return "night";
+  return sharedResolveHudTimePhase(state.palette, hour);
 }
 
 function sendToBackend(ctx: SpindleFrontendContext, payload: FrontendToBackend): void {
@@ -653,7 +648,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
 
   root.appendChild(flash);
 
-  return { root, host: null, kind, poolCondition: null };
+  return { root, host: null, kind, poolCondition: null, sceneTokens: null, sceneKey: null, blendTimer: null };
 }
 
 function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): void {
@@ -744,232 +739,6 @@ function readChatIdFromChatSwitch(payload: unknown): string | null | undefined {
   const value = (payload as { chatId?: unknown }).chatId;
   if (typeof value === "string" && value.trim()) return value;
   return value === null ? null : undefined;
-}
-
-function resolveSceneTokens(state: WeatherState, intensity: number): SceneTokens {
-  const paletteMap: Record<
-    WeatherState["palette"],
-    {
-      start: string;
-      mid: string;
-      end: string;
-      glow: string;
-      beam: string;
-      horizon: string;
-    }
-  > = {
-    dawn: {
-      start: "#20385f",
-      mid: "#5a77a9",
-      end: "#f0a56e",
-      glow: "rgba(255, 203, 145, 0.82)",
-      beam: "rgba(255, 218, 165, 0.48)",
-      horizon: "rgba(255, 182, 125, 0.44)",
-    },
-    day: {
-      start: "#4d77ad",
-      mid: "#7fa8de",
-      end: "#d8ebff",
-      glow: "rgba(255, 243, 202, 0.78)",
-      beam: "rgba(255, 244, 212, 0.44)",
-      horizon: "rgba(185, 212, 244, 0.28)",
-    },
-    dusk: {
-      start: "#221f4c",
-      mid: "#68487a",
-      end: "#f09067",
-      glow: "rgba(255, 173, 128, 0.72)",
-      beam: "rgba(255, 189, 150, 0.38)",
-      horizon: "rgba(224, 149, 114, 0.34)",
-    },
-    night: {
-      start: "#05101d",
-      mid: "#10253c",
-      end: "#274768",
-      glow: "rgba(143, 180, 255, 0.48)",
-      beam: "rgba(130, 164, 234, 0.2)",
-      horizon: "rgba(74, 104, 154, 0.26)",
-    },
-    storm: {
-      start: "#04101a",
-      mid: "#13283a",
-      end: "#33475f",
-      glow: "rgba(188, 220, 255, 0.26)",
-      beam: "rgba(168, 203, 236, 0.16)",
-      horizon: "rgba(108, 139, 170, 0.26)",
-    },
-    mist: {
-      start: "#213141",
-      mid: "#586c7d",
-      end: "#a7bac2",
-      glow: "rgba(226, 240, 255, 0.32)",
-      beam: "rgba(228, 239, 248, 0.18)",
-      horizon: "rgba(206, 220, 228, 0.36)",
-    },
-    snow: {
-      start: "#415b76",
-      mid: "#7d93a8",
-      end: "#e0e9f1",
-      glow: "rgba(255, 252, 244, 0.66)",
-      beam: "rgba(242, 245, 255, 0.32)",
-      horizon: "rgba(229, 238, 248, 0.4)",
-    },
-  };
-
-  const basePalette = paletteMap[state.palette];
-  const palette =
-    state.condition === "storm"
-      ? paletteMap.storm
-      : state.condition === "rain"
-        ? {
-            start: state.palette === "night" ? "#07131f" : "#102032",
-            mid: state.palette === "night" ? "#1d3148" : "#324b67",
-            end: state.palette === "night" ? "#41566e" : "#61748b",
-            glow: "rgba(176, 206, 240, 0.22)",
-            beam: "rgba(135, 165, 198, 0.1)",
-            horizon: "rgba(120, 147, 174, 0.24)",
-          }
-        : state.condition === "cloudy" && (state.palette === "dawn" || state.palette === "dusk")
-          ? {
-              ...basePalette,
-              end: state.palette === "dawn" ? "#9baec3" : "#7f90a6",
-              glow: "rgba(214, 224, 238, 0.24)",
-              beam: "rgba(176, 191, 209, 0.12)",
-              horizon: "rgba(154, 169, 187, 0.24)",
-            }
-          : basePalette;
-  const baseIntensity = clamp(intensity, 0, 1.5);
-  let cloudCore = "rgba(237, 244, 255, 0.34)";
-  let cloudEdge = "rgba(255, 255, 255, 0.12)";
-  let fogColor = "rgba(236, 241, 255, 0.18)";
-  let mistColor = "rgba(228, 238, 248, 0.24)";
-
-  const values = {
-    skyOpacity: 0.08,
-    glowOpacity: 0.13,
-    beamOpacity: 0.14,
-    cloudOpacity: 0.1,
-    horizonOpacity: 0.06,
-    mistOpacity: 0.03,
-    fogOpacity: 0,
-    rainOpacity: 0,
-    snowOpacity: 0,
-    moteOpacity: 0.06,
-    flashOpacity: 0.26,
-  };
-
-  switch (state.condition) {
-    case "cloudy":
-      values.skyOpacity = 0.14;
-      values.glowOpacity = 0.09;
-      values.beamOpacity = 0.04;
-      values.cloudOpacity = 0.5;
-      values.horizonOpacity = 0.1;
-      values.mistOpacity = 0.06;
-      values.moteOpacity = 0.02;
-      cloudCore = "rgba(205, 216, 231, 0.34)";
-      cloudEdge = "rgba(238, 244, 255, 0.12)";
-      fogColor = "rgba(210, 223, 239, 0.18)";
-      mistColor = "rgba(217, 227, 239, 0.2)";
-      break;
-    case "rain":
-      values.skyOpacity = 0.2;
-      values.glowOpacity = 0.06;
-      values.beamOpacity = 0;
-      values.cloudOpacity = 0.7;
-      values.horizonOpacity = 0.16;
-      values.mistOpacity = 0.22;
-      values.fogOpacity = 0.12;
-      values.rainOpacity = 0.82;
-      values.moteOpacity = 0;
-      cloudCore = "rgba(87, 106, 128, 0.48)";
-      cloudEdge = "rgba(158, 178, 201, 0.12)";
-      fogColor = "rgba(162, 180, 198, 0.2)";
-      mistColor = "rgba(174, 188, 204, 0.22)";
-      break;
-    case "storm":
-      values.skyOpacity = 0.24;
-      values.glowOpacity = 0.05;
-      values.beamOpacity = 0;
-      values.cloudOpacity = 0.86;
-      values.horizonOpacity = 0.24;
-      values.mistOpacity = 0.28;
-      values.fogOpacity = 0.18;
-      values.rainOpacity = 1.04;
-      values.flashOpacity = 0.64;
-      values.moteOpacity = 0;
-      cloudCore = "rgba(56, 73, 93, 0.62)";
-      cloudEdge = "rgba(118, 138, 163, 0.12)";
-      fogColor = "rgba(130, 149, 171, 0.22)";
-      mistColor = "rgba(151, 167, 186, 0.24)";
-      break;
-    case "snow":
-      values.skyOpacity = 0.15;
-      values.glowOpacity = 0.2;
-      values.beamOpacity = 0.08;
-      values.cloudOpacity = 0.34;
-      values.horizonOpacity = 0.2;
-      values.mistOpacity = 0.12;
-      values.fogOpacity = 0.08;
-      values.snowOpacity = 0.84;
-      values.moteOpacity = 0.02;
-      cloudCore = "rgba(232, 238, 247, 0.34)";
-      cloudEdge = "rgba(255, 255, 255, 0.14)";
-      fogColor = "rgba(230, 236, 245, 0.22)";
-      mistColor = "rgba(225, 233, 242, 0.22)";
-      break;
-    case "fog":
-      values.skyOpacity = 0.12;
-      values.glowOpacity = 0.08;
-      values.beamOpacity = 0.02;
-      values.cloudOpacity = 0.18;
-      values.horizonOpacity = 0.22;
-      values.mistOpacity = 0.38;
-      values.fogOpacity = 0.68;
-      values.moteOpacity = 0.01;
-      cloudCore = "rgba(186, 198, 207, 0.28)";
-      cloudEdge = "rgba(232, 239, 244, 0.1)";
-      fogColor = "rgba(223, 230, 236, 0.26)";
-      mistColor = "rgba(217, 224, 231, 0.28)";
-      break;
-    case "clear":
-    default:
-      if (state.palette === "night") {
-        values.skyOpacity = 0.06;
-        values.glowOpacity = 0.08;
-        values.beamOpacity = 0.03;
-        values.cloudOpacity = 0.02;
-        values.moteOpacity = 0.02;
-      }
-      break;
-  }
-
-  const detailScale = clamp(0.82 + baseIntensity * 0.28, 0.75, 1.18);
-  const atmosphereScale = clamp(0.92 + baseIntensity * 0.24, 0.84, 1.2);
-
-  return {
-    bgStart: palette.start,
-    bgMid: palette.mid,
-    bgEnd: palette.end,
-    glow: palette.glow,
-    beamColor: palette.beam,
-    horizonColor: palette.horizon,
-    cloudCore,
-    cloudEdge,
-    fogColor,
-    mistColor,
-    skyOpacity: values.skyOpacity * atmosphereScale,
-    glowOpacity: values.glowOpacity * atmosphereScale,
-    beamOpacity: values.beamOpacity * atmosphereScale,
-    cloudOpacity: values.cloudOpacity * detailScale,
-    horizonOpacity: values.horizonOpacity * atmosphereScale,
-    mistOpacity: values.mistOpacity * detailScale,
-    fogOpacity: values.fogOpacity * detailScale,
-    rainOpacity: values.rainOpacity * detailScale,
-    snowOpacity: values.snowOpacity * detailScale,
-    moteOpacity: state.condition === "clear" && baseIntensity > 0.48 ? values.moteOpacity * detailScale : values.moteOpacity * 0.4,
-    flashOpacity: values.flashOpacity,
-  };
 }
 
 function createHudWidget(
@@ -1144,6 +913,9 @@ function createHudWidget(
   let intensityValue: HTMLSpanElement | undefined;
   let pauseButton: HTMLButtonElement | undefined;
   let resumeButton: HTMLButtonElement | undefined;
+  let forecastSection: HTMLDivElement | undefined;
+  let forecastLabel: HTMLSpanElement | undefined;
+  let forecastList: HTMLDivElement | undefined;
 
   if (expanded) {
     const drawer = document.createElement("div");
@@ -1207,6 +979,17 @@ function createHudWidget(
 
     presetsSection.appendChild(presetsLabel);
     presetsSection.appendChild(presetGrid);
+
+    const forecastSection = document.createElement("div");
+    forecastSection.className = "weather-hud-drawer-section";
+    forecastSection.hidden = true;
+    forecastLabel = document.createElement("span");
+    forecastLabel.className = "weather-hud-section-label";
+    forecastLabel.textContent = "Outlook";
+    forecastList = document.createElement("div");
+    forecastList.className = "weather-hud-forecast";
+    forecastSection.appendChild(forecastLabel);
+    forecastSection.appendChild(forecastList);
 
     const controlsSection = document.createElement("div");
     controlsSection.className = "weather-hud-drawer-section";
@@ -1297,6 +1080,7 @@ function createHudWidget(
 
     drawer.appendChild(modeSection);
     drawer.appendChild(presetsSection);
+    drawer.appendChild(forecastSection);
     drawer.appendChild(controlsSection);
     drawer.appendChild(actionsSection);
 
@@ -1329,17 +1113,114 @@ function createHudWidget(
     intensityValue,
     pauseButton,
     resumeButton,
+    forecastSection,
+    forecastLabel,
+    forecastList,
   };
 }
 
-function getLiveDate(state: WeatherState): Date | null {
-  if (state.source !== "manual") return null;
-  return new Date();
+/**
+ * Compact multi-day strip inside the HUD drawer. Rebuilt only when the
+ * projection itself changes, since `syncHudState` runs on a one-second clock.
+ */
+function renderForecastStrip(list: HTMLDivElement, entries: ForecastEntry[], unit: TemperatureUnit): void {
+  list.replaceChildren();
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "weather-hud-forecast-row";
+    row.dataset.forecastDate = entry.date;
+
+    const day = document.createElement("span");
+    day.className = "weather-hud-forecast-day";
+    day.textContent = formatForecastDayLabel(entry.date);
+
+    const icon = document.createElement("span");
+    icon.className = "weather-hud-forecast-icon";
+    icon.innerHTML = conditionIcon(entry.condition);
+    icon.setAttribute("aria-hidden", "true");
+
+    const text = document.createElement("span");
+    text.className = "weather-hud-forecast-copy";
+    text.textContent = entry.temperature
+      ? `${entry.condition} · ${formatTemperatureForUnit(entry.temperature, unit)}`
+      : entry.condition;
+    text.title = entry.summary;
+
+    row.appendChild(day);
+    row.appendChild(icon);
+    row.appendChild(text);
+    list.appendChild(row);
+  }
+}
+
+/** `Fri` for the next day, falling back to the raw date when it cannot be parsed. */
+function formatForecastDayLabel(dateValue: string): string {
+  const match = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return dateValue;
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (Number.isNaN(parsed.getTime())) return dateValue;
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(parsed);
+}
+
+/**
+ * `auto` keeps the historical behavior: story time normally, live wall-clock time
+ * only while a manual lock is active. `live` and `story` force one source.
+ */
+function resolveClockDate(state: WeatherState, clockMode: WeatherClockMode): Date | null {
+  if (clockMode === "story") return null;
+  if (clockMode === "live") return new Date();
+  return state.source === "manual" ? new Date() : null;
+}
+
+/**
+ * `Intl.DateTimeFormat` construction is comparatively expensive and this runs on
+ * a one-second tick, so instances are cached per locale rather than rebuilt.
+ */
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getDateFormatter(locale: string): Intl.DateTimeFormat {
+  const existing = dateFormatters.get(locale);
+  if (existing) return existing;
+  const formatter = new Intl.DateTimeFormat(locale, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  dateFormatters.set(locale, formatter);
+  return formatter;
+}
+
+function getTimeFormatter(locale: string): Intl.DateTimeFormat {
+  const existing = timeFormatters.get(locale);
+  if (existing) return existing;
+  const formatter = new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" });
+  timeFormatters.set(locale, formatter);
+  return formatter;
+}
+
+function syncHudClock(hud: HudElements, displayState: WeatherState, hasState: boolean, liveDate: Date | null): void {
+  const locale = document.documentElement.lang || navigator.language || "en-US";
+  const nextDate = liveDate ? getDateFormatter(locale).format(liveDate) : hasState ? displayState.date : "No tag yet";
+  const nextTime = liveDate ? getTimeFormatter(locale).format(liveDate) : hasState ? displayState.time : "\u2014";
+
+  // The one-second tick only needs to touch these two nodes when a displayed
+  // minute actually rolls over, so the cache is keyed on the rendered text.
+  if (hud.root.dataset.clockDate !== nextDate) {
+    hud.root.dataset.clockDate = nextDate;
+    hud.date.textContent = nextDate;
+  }
+  if (hud.root.dataset.clockTime !== nextTime) {
+    hud.root.dataset.clockTime = nextTime;
+    hud.time.textContent = nextTime;
+  }
+  hud.root.dataset.clockSource = liveDate ? "live" : "story";
 }
 
 function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState | null, expanded: boolean): void {
   const displayState = state ?? makeDefaultWeatherState();
-  const liveDate = getLiveDate(displayState);
+  const liveDate = resolveClockDate(displayState, prefs.clockMode);
   const phase = resolveHudTimePhase(displayState, liveDate);
   const sceneIntensity = clamp(displayState.intensity * prefs.intensity, 0.25, 1.5);
   hud.root.dataset.expanded = expanded ? "true" : "false";
@@ -1351,6 +1232,13 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.root.dataset.layer = prefs.layerMode;
   hud.root.dataset.paused = prefs.pauseEffects ? "true" : "false";
   hud.root.style.setProperty("--weather-hud-scene-intensity", sceneIntensity.toFixed(2));
+
+  // Solar altitude is published for stylesheet use: -90 is solar midnight and
+  // +90 is solar noon, so gradient stops can key off real light rather than the
+  // coarse phase label alone. An unparseable story date leaves it at 0.
+  const solar = resolveSolarArc(displayState.date, displayState.time);
+  hud.root.style.setProperty("--weather-sun-altitude", solar.sunAltitude.toFixed(1));
+  hud.root.dataset.season = state ? displayState.season : "unknown";
 
   hud.icon.innerHTML = conditionIcon(displayState.condition);
   const iconLabel = `${displayState.condition.charAt(0).toUpperCase()}${displayState.condition.slice(1)} weather`;
@@ -1365,7 +1253,14 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`
     : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
-  hud.source.textContent = state ? (displayState.source === "manual" ? "Scene lock" : "Story sync") : "Waiting";
+  // A missing interceptor permission used to be visible only inside the settings
+  // panel; surface it on the HUD itself, where the user is already looking.
+  const permissionLimited = hud.root.dataset.permission === "limited";
+  hud.source.textContent = permissionLimited
+    ? "Permission needed"
+    : state
+      ? displayState.source === "manual" ? "Scene lock" : "Story sync"
+      : "Waiting";
   const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
   hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
   hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
@@ -1384,21 +1279,7 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     hud.launcherButton.title = launcherLabel;
   }
 
-  if (liveDate) {
-    hud.date.textContent = new Intl.DateTimeFormat(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(liveDate);
-    hud.time.textContent = new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(liveDate);
-  } else {
-    hud.date.textContent = state ? displayState.date : "No tag yet";
-    hud.time.textContent = state ? displayState.time : "—";
-  }
+  syncHudClock(hud, displayState, state !== null, liveDate);
 
   if (hud.storyButton && hud.manualButton) {
     hud.storyButton.classList.toggle("weather-hud-chip-active", state?.source === "story");
@@ -1429,11 +1310,133 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   if (hud.resumeButton) {
     hud.resumeButton.disabled = !state || state.source === "story";
   }
+
+  // The outlook strip is expensive to rebuild, so it is keyed on the projection
+  // itself and the unit preference rather than on the one-second clock.
+  if (hud.forecastSection && hud.forecastList) {
+    const entries = prefs.showForecast && state ? state.forecast : [];
+    const show = entries.length > 0 && expanded;
+    hud.forecastSection.hidden = !show;
+    if (show) {
+      const forecastKey = `${prefs.temperatureUnit}|${entries
+        .map((entry) => `${entry.date}:${entry.condition}:${entry.temperature}:${entry.summary}`)
+        .join("|")}`;
+      if (hud.forecastList.dataset.forecastKey !== forecastKey) {
+        hud.forecastList.dataset.forecastKey = forecastKey;
+        renderForecastStrip(hud.forecastList, entries, prefs.temperatureUnit);
+      }
+    } else if (hud.forecastList.dataset.forecastKey) {
+      hud.forecastList.dataset.forecastKey = "";
+    }
+  }
 }
 
 function setFxVisibility(root: FxRoot, visible: boolean): void {
   root.root.classList.toggle("weather-hidden", !visible);
   root.root.classList.toggle("weather-visible", visible);
+}
+
+/** Maps each blended custom property to the resolved token that feeds it. */
+const TRANSITIONED_TOKENS: ReadonlyArray<readonly [string, keyof ResolvedSceneTokens]> = [
+  ["--weather-bg-start", "bgStart"],
+  ["--weather-bg-mid", "bgMid"],
+  ["--weather-bg-end", "bgEnd"],
+  ["--weather-glow", "glow"],
+  ["--weather-beam-color", "beamColor"],
+  ["--weather-horizon-color", "horizonColor"],
+  ["--weather-cloud-core", "cloudCore"],
+  ["--weather-cloud-edge", "cloudEdge"],
+  ["--weather-fog-color", "fogColor"],
+  ["--weather-mist-color", "mistColor"],
+  ["--weather-sky-opacity", "skyOpacity"],
+  ["--weather-glow-opacity", "glowOpacity"],
+  ["--weather-beam-opacity", "beamOpacity"],
+  ["--weather-cloud-opacity", "cloudOpacity"],
+  ["--weather-horizon-opacity", "horizonOpacity"],
+  ["--weather-mist-opacity", "mistOpacity"],
+  ["--weather-fog-opacity", "fogOpacity"],
+  ["--weather-rain-opacity", "rainOpacity"],
+  ["--weather-snow-opacity", "snowOpacity"],
+  ["--weather-mote-opacity", "moteOpacity"],
+  ["--weather-flash-opacity", "flashOpacity"],
+];
+
+function tokenCssValue(value: string | number): string {
+  return typeof value === "number" ? String(value) : value;
+}
+
+function sceneKeyFor(state: WeatherState, effectiveIntensity: number, prefs: WeatherPrefs): string {
+  return [
+    state.condition,
+    state.palette,
+    Math.round(effectiveIntensity * 1000),
+    Math.round(state.intensity * 1000),
+    prefs.layerMode,
+  ].join(":");
+}
+
+/**
+ * Registers the transition properties with `@property` so the browser can
+ * interpolate them. Without registration a custom property flips discretely at
+ * the midpoint of a transition, so the capability is detected and the scene is
+ * snapped instead of producing a jarring half-swap on older engines.
+ */
+const sceneTransitionsSupported = (() => {
+  try {
+    return (
+      typeof CSS !== "undefined" &&
+      typeof CSS.registerProperty === "function" &&
+      typeof CSS.supports === "function" &&
+      CSS.supports("background-color", "color-mix(in srgb, red 50%, blue)")
+    );
+  } catch {
+    return false;
+  }
+})();
+
+/** Writes every blended token custom property onto the layer. */
+function writeSceneTokens(root: FxRoot, tokens: ResolvedSceneTokens): void {
+  for (const [property, key] of TRANSITIONED_TOKENS) {
+    root.root.style.setProperty(property, tokenCssValue(tokens[key]));
+  }
+}
+
+/**
+ * Seeds the layer with the previous scene's values, then commits the new ones.
+ *
+ * `@property`-registered custom properties already carry CSS transitions, but an
+ * inline value only animates when it actually changes. Each property is therefore
+ * pinned to its previous value and the layer is flushed, which makes the
+ * subsequent write a genuine change that the existing transitions can
+ * interpolate. Without this the scene swapped instantly.
+ */
+function applySceneBlend(root: FxRoot, from: ResolvedSceneTokens, to: ResolvedSceneTokens): void {
+  if (root.blendTimer !== null) {
+    window.clearTimeout(root.blendTimer);
+    root.blendTimer = null;
+  }
+
+  for (const [property, key] of TRANSITIONED_TOKENS) {
+    root.root.style.setProperty(property, tokenCssValue(from[key]));
+  }
+  void root.root.offsetWidth;
+  writeSceneTokens(root, to);
+
+  // Release the pinned start values once the transitions have finished so the
+  // stylesheet's current values are what remain authoritative.
+  root.blendTimer = window.setTimeout(() => {
+    root.blendTimer = null;
+    for (const [property, key] of TRANSITIONED_TOKENS) {
+      root.root.style.setProperty(property, tokenCssValue(to[key]));
+    }
+  }, SCENE_TRANSITION_MS);
+}
+
+function clearSceneBlend(root: FxRoot): void {
+  if (root.blendTimer !== null) {
+    window.clearTimeout(root.blendTimer);
+    root.blendTimer = null;
+  }
 }
 
 function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs, reducedMotion: boolean): void {
@@ -1453,33 +1456,45 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.classList.toggle("weather-rain-active", state.condition === "rain" || state.condition === "storm");
   root.root.classList.toggle("weather-snow-active", state.condition === "snow");
 
-  root.root.style.setProperty("--weather-bg-start", tokens.bgStart);
-  root.root.style.setProperty("--weather-bg-mid", tokens.bgMid);
-  root.root.style.setProperty("--weather-bg-end", tokens.bgEnd);
-  root.root.style.setProperty("--weather-glow", tokens.glow);
-  root.root.style.setProperty("--weather-beam-color", tokens.beamColor);
-  root.root.style.setProperty("--weather-horizon-color", tokens.horizonColor);
-  root.root.style.setProperty("--weather-cloud-core", tokens.cloudCore);
-  root.root.style.setProperty("--weather-cloud-edge", tokens.cloudEdge);
-  root.root.style.setProperty("--weather-fog-color", tokens.fogColor);
-  root.root.style.setProperty("--weather-mist-color", tokens.mistColor);
-  root.root.style.setProperty("--weather-sky-opacity", String(tokens.skyOpacity));
-  root.root.style.setProperty("--weather-glow-opacity", String(isFront ? 0 : tokens.glowOpacity));
-  root.root.style.setProperty("--weather-beam-opacity", String(isFront ? 0 : tokens.beamOpacity));
-  root.root.style.setProperty("--weather-cloud-opacity", String(tokens.cloudOpacity));
-  root.root.style.setProperty("--weather-horizon-opacity", String(tokens.horizonOpacity));
-  root.root.style.setProperty("--weather-mist-opacity", String(tokens.mistOpacity));
-  root.root.style.setProperty("--weather-fog-opacity", String(isFront ? 0 : tokens.fogOpacity));
+  // The front layer zeroes several atmosphere opacities, so the resolved values
+  // are what must be recorded and blended.
+  const resolvedTokens: ResolvedSceneTokens = {
+    ...tokens,
+    glowOpacity: isFront ? 0 : tokens.glowOpacity,
+    beamOpacity: isFront ? 0 : tokens.beamOpacity,
+    fogOpacity: isFront ? 0 : tokens.fogOpacity,
+    rainOpacity: rainLayerOpacity,
+    snowOpacity: tokens.snowOpacity * (isFront ? 0.96 : 0.82),
+  };
+
+  const nextKey = sceneKeyFor(state, effectiveIntensity, prefs);
+  const canBlend =
+    prefs.transitionsEnabled &&
+    sceneTransitionsSupported &&
+    !reducedMotion &&
+    !prefs.pauseEffects &&
+    document.visibilityState !== "hidden" &&
+    root.sceneTokens !== null &&
+    root.sceneKey !== nextKey &&
+    // A layer being revealed has its own opacity fade; blending would double up.
+    root.root.classList.contains("weather-visible");
+
+  if (canBlend && root.sceneTokens) {
+    applySceneBlend(root, root.sceneTokens, resolvedTokens);
+  } else {
+    clearSceneBlend(root);
+    writeSceneTokens(root, resolvedTokens);
+  }
+
+  root.sceneTokens = resolvedTokens;
+  root.sceneKey = nextKey;
+
   root.root.style.setProperty(
     "--weather-procedural-fog-opacity",
     String(clamp(0.42 + state.intensity * prefs.intensity * 0.18, 0.42, 0.72)),
   );
-  root.root.style.setProperty("--weather-rain-opacity", String(rainLayerOpacity));
   root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
   root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
-  root.root.style.setProperty("--weather-snow-opacity", String(tokens.snowOpacity * (isFront ? 0.96 : 0.82)));
-  root.root.style.setProperty("--weather-mote-opacity", String(isFront ? 0 : tokens.moteOpacity));
-  root.root.style.setProperty("--weather-flash-opacity", String(tokens.flashOpacity));
   root.root.style.setProperty("--weather-rain-angle", `${rainVector.angle}deg`);
   root.root.style.setProperty(
     "--weather-rain-color",
@@ -1495,12 +1510,25 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
       ? String(clamp(tokens.snowOpacity * 0.2, 0.04, 0.22))
       : String(clamp(rainLayerOpacity * 0.13, 0.025, 0.12)),
   );
+  root.root.style.setProperty(
+    "--weather-particle-opacity-static",
+    state.condition === "snow"
+      ? String(clamp(tokens.snowOpacity * 0.2, 0.04, 0.22))
+      : String(clamp(rainLayerOpacity * 0.13, 0.025, 0.12)),
+  );
 
   root.root.querySelectorAll<HTMLElement>(".weather-fx-rain-drop").forEach((drop) => {
     const threshold = Number.parseFloat(drop.dataset.densityThreshold ?? "1");
     const baseDuration = Number.parseFloat(drop.dataset.baseDuration ?? "1");
     const baseDrift = Number.parseFloat(drop.dataset.baseDrift ?? "0");
-    drop.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
+    // Density is a per-particle opacity multiplier rather than a binary hidden
+    // class, so drops feather in and out instead of vanishing mid-fall. The fade
+    // band is narrow so the number of fully visible drops still tracks density
+    // monotonically, which is what the FX tests pin down.
+    const densityScale = visibleRainDensity <= 0 ? 0 : clamp((visibleRainDensity - threshold) / 0.08, 0, 1);
+    drop.style.setProperty("--drop-density-scale", densityScale.toFixed(3));
+    // A fully faded drop stops animating; it is already at zero opacity.
+    drop.classList.toggle("weather-density-hidden", densityScale === 0);
     drop.style.animationDuration = `${baseDuration * rainProfile.speedScale}s`;
     drop.style.setProperty("--drop-drift", `${baseDrift * rainVector.driftDirection}vw`);
   });
@@ -1778,6 +1806,20 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const scheduleStormFlash = () => {
     resetFlashTimer();
+
+    // A strike landing mid-blend competes with the transition, so the cadence
+    // simply stops rescheduling while a blend is in flight and picks up on the
+    // next scene update, leaving any in-progress bolt animation to finish.
+    const sceneBlending =
+      backFx.blendTimer !== null &&
+      currentState?.condition === "storm" &&
+      !getReducedMotion() &&
+      !currentPrefs.pauseEffects &&
+      currentPrefs.effectsEnabled &&
+      document.visibilityState !== "hidden" &&
+      !!activeChatId;
+    if (sceneBlending) return;
+
     if (
       currentState?.condition !== "storm" ||
       getReducedMotion() ||
@@ -1842,6 +1884,7 @@ export function setup(ctx: SpindleFrontendContext) {
     syncFxCondition(frontFx, currentState?.condition ?? null);
 
     if (hud) {
+      hud.root.dataset.permission = permissionWarning ? "limited" : "ok";
       syncHudState(hud, currentPrefs, currentState, hudExpanded);
     }
     settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : permissionWarning ?? undefined);
@@ -1865,10 +1908,15 @@ export function setup(ctx: SpindleFrontendContext) {
     scheduleStormFlash();
   };
 
+  // The one-second tick only exists to advance a live clock. All other HUD fields
+  // are pushed by scene changes, so a tick skips the full sync whenever both clock
+  // sources are frozen and nothing the timer affects depends on the wall clock.
   const clockTimer = window.setInterval(() => {
-    if (hud) {
-      syncHudState(hud, currentPrefs, currentState, hudExpanded);
-    }
+    if (!hud) return;
+    const clockMode = currentPrefs.clockMode;
+    if (clockMode === "story") return;
+    if (clockMode === "auto" && currentState?.source !== "manual") return;
+    syncHudState(hud, currentPrefs, currentState, hudExpanded);
   }, 1000);
   cleanups.push(() => window.clearInterval(clockTimer));
 

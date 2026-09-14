@@ -13,6 +13,8 @@ It is built for story-driven use, not live forecast data. The model controls the
 - Animated ambience that can render behind the chat, in front of the chat, or both
 - Story sync mode driven by hidden inline weather tags
 - Manual lock mode for overriding the current scene per chat
+- Optional multi-day forecast strip projected from the hidden weather tag
+- Scene changes blend between palettes and effects instead of swapping instantly
 - Per-chat persistence for story state and manual overrides
 - Prompt macros for reliable prompt-side weather tag generation
 - Clear waiting status when a chat has not emitted its first weather tag
@@ -51,7 +53,7 @@ The legacy `story_weather_*` aliases and technical extension ID remain in place 
 The assistant should keep all visible prose natural, then end the message with exactly one hidden weather tag:
 
 ```html
-<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>
+<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: snow, 30F, heavy flurries | 2026-01-17: cloudy, 34F"></weather-state>
 ```
 
 Supported conditions:
@@ -64,6 +66,14 @@ Supported conditions:
 - `fog`
 
 Condition names are case-insensitive and common aliases such as `sunny`, `overcast`, `rainy`, `thunderstorm`, `snowy`, and `mist` are normalized to these six values. Dates must be real calendar dates, and times must be valid 12-hour or 24-hour values.
+
+### Optional attributes
+
+`season` and `forecast` are optional and were added in v1.4. Tags written before v1.4 keep working unchanged.
+
+- `season` is one of `spring`, `summer`, `autumn`, or `winter`. When it is omitted, the season is derived from the story date.
+- `forecast` projects at most five later days. Separate entries with a pipe and format each as `date: condition, temperature, summary`. Condition, temperature, and summary are each optional, so `2026-01-17` alone is a valid entry. Unparseable entries are dropped rather than failing the whole tag, and the projection is sorted by date.
+- When `forecast` is omitted, the projection already in play is kept. Send `forecast=""` to clear it deliberately.
 
 Effect placement is user-controlled in settings:
 
@@ -80,6 +90,20 @@ Supported palettes:
 - `storm`
 - `mist`
 - `snow`
+
+### Scene transitions
+
+Scene changes blend rather than swap. Palette colors and layer opacities are registered CSS custom properties, so they interpolate, and rain density is expressed as a per-particle opacity multiplier so intensity changes read as a swell instead of particles popping in and out.
+
+Blending is skipped when it would fight something else: reduced motion, paused effects, a hidden tab, or an FX layer still fading in. It can also be turned off entirely with **Blend scene changes** in settings.
+
+### HUD clock
+
+The HUD clock follows story time by default. **HUD clock** in settings chooses between:
+
+- **Story time, live in manual lock** — the default; a manual lock shows real time until you resume story sync
+- **Always follow real time**
+- **Always follow story time**
 
 ## How It Works
 
@@ -154,28 +178,40 @@ The mobile panel follows the device safe areas and Lumiverse's visual viewport, 
 
 LumiWeather publishes its normalized visible scene through the public, read-only `lumi_weather.state.current` endpoint. Compatible extensions receive the active chat ID, source-local revision, freshness, scene location, calendar date and time, and weather conditions with provenance.
 
+As of v1.4 the weather condition also carries `season` and a serialized `forecast` in its `attributes` map, and `lumi_weather.contract.v1` advertises the additional `forecast` and `solar_time` capabilities. The protocol stays `lumi_state.v1` at `schemaVersion: 1`; every addition is of the same shape, so existing readers are unaffected.
+
+Story history is rebuilt with each tag stamped by the timestamp of the message that carried it, so `updatedAt` and `freshness` reflect when the scene was actually written rather than when the history happened to be replayed.
+
 Manual-lock and story-sync transitions both increase the per-chat revision. Returning to story sync also creates a new revision, even when the restored story state is older than the removed manual override.
 
-`lumi_weather.contract.v1` describes the endpoint and LumiState v1 capability metadata. Publishing is an in-memory state update and never makes an additional generation call.
+Publishing is an in-memory state update and never makes an additional generation call.
 
 ## Project Layout
 
 ```text
 src/
-  backend.ts      Backend state, macros, prompt interception, chat persistence
-  frontend.ts     HUD, message interception, FX mounting, scene updates
-  shared.ts       Normalization, defaults, parsing helpers
-  lumi-state.ts   Public LumiState v1 snapshot mapping
-  presets.ts      Quick scene presets
-  types.ts        Shared types
+  backend.ts        Backend state, macros, prompt interception, chat persistence
+  frontend.ts       HUD, message interception, FX mounting, scene updates
+  shared.ts         Normalization, defaults, preference bounds
+  time-utils.ts     Story date/time parsing, solar arc, palette derivation
+  forecast-utils.ts Multi-day projection parsing and serialization
+  scene-tokens.ts   Pure palette/opacity token math for the FX layers
+  lumi-state.ts     Public LumiState v1 snapshot mapping
+  story-history.ts  Story state rebuild and message-timestamp handling
+  tag-dedupe.ts     Stable identity for intercepted weather tags
+  version.ts        Release metadata and advertised capabilities
+  presets.ts        Quick scene presets
+  types.ts          Shared types
   ui/
-    settings.ts   Extension settings panel
-    styles.ts     HUD, settings, and FX styles
+    settings.ts     Extension settings panel
+    styles.ts       HUD, settings, and FX styles
 
 dist/
   backend.js
   frontend.js
 ```
+
+`dist/` is committed because Lumiverse loads those bundles directly. Run `bun run build`, then `bun run check:dist` to confirm the committed bundles match a fresh build. CI runs the typecheck, the test suite, and that drift check.
 
 ## Notes
 

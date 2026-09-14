@@ -28,6 +28,8 @@ import { selectEffectiveWeatherState } from "./state-utils";
 import { makeWeatherLumiStateSnapshot } from "./lumi-state";
 import { injectWeatherInstruction } from "./prompt-injection";
 import { hasSameStoryScene, rebuildStoryWeatherState } from "./story-history";
+import { buildTagDedupeKey } from "./tag-dedupe";
+import { EXTENSION_VERSION, LUMI_STATE_CAPABILITIES } from "./version";
 import {
   buildPromptInstruction,
   buildStaticStateMacro,
@@ -36,7 +38,6 @@ import {
 } from "./weather-prompt";
 
 const PREFS_FILE = "weather_prefs.json";
-const EXTENSION_VERSION = "1.3.2";
 const WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
 const WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"] as const;
 const WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"] as const;
@@ -271,7 +272,7 @@ spindle.rpcPool.sync("contract.v1", {
   protocol: "lumi_state.v1",
   extension: "lumi_weather",
   extensionVersion: EXTENSION_VERSION,
-  capabilities: ["scene_location", "calendar_time", "weather_conditions", "manual_override"],
+  capabilities: [...LUMI_STATE_CAPABILITIES],
   endpoints: { public: "lumi_weather.state.current" },
   channels: [{
     endpoint: "lumi_weather.state.current",
@@ -367,11 +368,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
             : await resolveActiveChatId(userId);
         if (!chatId) {
           send(userId, { type: "error", message: "Weather tag ignored because no active chat could be resolved." });
+          spindle.toast.warning("A weather tag was ignored because no active chat could be resolved.", {
+            title: "LumiWeather",
+            userId,
+          });
           break;
         }
 
         pruneProcessedTags();
-        const tagKey = `${userId}:${chatId}:${message.messageId ?? ""}:${JSON.stringify(message.attrs)}`;
+        const tagKey = `${userId}:${chatId}:${message.messageId ?? ""}:${buildTagDedupeKey(message.attrs)}`;
         if (processedTags.has(tagKey)) break;
         processedTags.set(tagKey, Date.now());
 
@@ -389,6 +394,10 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const chatId = await resolveActiveChatId(userId, message.chatId ?? undefined);
         if (!chatId) {
           send(userId, { type: "error", message: "Manual weather override could not resolve an active chat." });
+          spindle.toast.warning("Open a chat before locking a weather scene.", {
+            title: "LumiWeather",
+            userId,
+          });
           break;
         }
 

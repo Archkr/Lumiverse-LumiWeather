@@ -1,13 +1,14 @@
-import { WEATHER_CONDITIONS, WEATHER_PALETTES } from "./shared";
+import { WEATHER_CONDITIONS, WEATHER_PALETTES, WEATHER_SEASONS } from "./shared";
+import { formatForecastEntry } from "./forecast-utils";
 import type { WeatherState } from "./types";
 
 export function buildWeatherTagExample(): string {
-  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>';
+  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: snow, 30F, heavy flurries | 2026-01-17: cloudy, 34F"></weather-state>';
 }
 
 export function summarizeWeatherState(state: WeatherState | null): string {
   if (!state) return "No saved weather state yet.";
-  return [
+  const lines = [
     `Location: ${state.location}`,
     `Date: ${state.date}`,
     `Time: ${state.time}`,
@@ -18,7 +19,12 @@ export function summarizeWeatherState(state: WeatherState | null): string {
     `Wind: ${state.wind}`,
     `Wind direction: ${state.windDirection}`,
     `Palette: ${state.palette}`,
-  ].join(" | ");
+    `Season: ${state.season}`,
+  ];
+  if (state.forecast.length > 0) {
+    lines.push(`Forecast: ${state.forecast.map(formatForecastEntry).join(" | ")}`);
+  }
+  return lines.join(" | ");
 }
 
 export function buildTrackerMacro(): string {
@@ -38,8 +44,13 @@ export function buildTrackerMacro(): string {
     "Emit the tag as the very last text in the assistant message.",
     `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
     `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
+    `Allowed seasons: ${WEATHER_SEASONS.join(", ")}`,
     "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, and palette.",
     "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
+    "season is optional and, when present, is one of: spring, summer, autumn, winter.",
+    "forecast is optional and projects at most five later days. Separate entries with a pipe and format each as date: condition, temperature, summary.",
+    "Only include forecast entries the narrative meaningfully establishes; do not invent a daily outlook merely to fill the field.",
+    "When forecast is omitted, the previous projection stays in place.",
     "Exact wrapper example:",
     buildWeatherTagExample(),
   ].join("\n");

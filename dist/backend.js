@@ -1,108 +1,6 @@
 // @bun
-// src/shared.ts
-var WEATHER_STATE_VAR = "weather_state_json";
-var WEATHER_MANUAL_STATE_VAR = "weather_manual_state_json";
-var WEATHER_CONDITIONS = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
-var WEATHER_LAYERS = ["back", "front", "both"];
-var WEATHER_PALETTES = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
-var REDUCED_MOTION_VALUES = ["system", "always", "never"];
-var TEMPERATURE_UNITS = ["fahrenheit", "celsius"];
-var DEFAULT_PREFS = {
-  effectsEnabled: true,
-  lightningFlashEnabled: true,
-  layerMode: "both",
-  intensity: 1,
-  reducedMotion: "system",
-  temperatureUnit: "fahrenheit",
-  pauseEffects: false,
-  widgetPosition: null
-};
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-function isRecord(value) {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-function normalizeText(value, fallback, maxLength) {
-  if (typeof value !== "string")
-    return fallback;
-  const trimmed = value.trim().replace(/\s+/g, " ");
-  return trimmed ? trimmed.slice(0, maxLength) : fallback;
-}
-var CONDITION_ALIASES = {
-  clear: "clear",
-  sunny: "clear",
-  bright: "clear",
-  cloudy: "cloudy",
-  overcast: "cloudy",
-  "partly cloudy": "cloudy",
-  rain: "rain",
-  rainy: "rain",
-  drizzle: "rain",
-  storm: "storm",
-  stormy: "storm",
-  thunderstorm: "storm",
-  snow: "snow",
-  snowy: "snow",
-  flurries: "snow",
-  fog: "fog",
-  mist: "fog",
-  hazy: "fog"
-};
-function normalizeCondition(value, fallback) {
-  if (typeof value !== "string")
-    return fallback;
-  return CONDITION_ALIASES[value.trim().toLowerCase()] ?? fallback;
-}
-function normalizePalette(value, fallback) {
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return WEATHER_PALETTES.includes(normalized) ? normalized : fallback;
-}
-function normalizeWindDirection(value, fallback) {
-  if (typeof value !== "string")
-    return fallback;
-  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
-  const aliases = {
-    none: "none",
-    calm: "none",
-    n: "north",
-    north: "north",
-    ne: "northeast",
-    northeast: "northeast",
-    e: "east",
-    east: "east",
-    se: "southeast",
-    southeast: "southeast",
-    s: "south",
-    south: "south",
-    sw: "southwest",
-    southwest: "southwest",
-    w: "west",
-    west: "west",
-    nw: "northwest",
-    northwest: "northwest"
-  };
-  return aliases[normalized] ?? fallback;
-}
-function normalizeReducedMotion(value, fallback) {
-  return typeof value === "string" && REDUCED_MOTION_VALUES.includes(value) ? value : fallback;
-}
-function normalizeTemperatureUnit(value, fallback) {
-  return typeof value === "string" && TEMPERATURE_UNITS.includes(value) ? value : fallback;
-}
-function normalizeSource(value, fallback) {
-  return value === "manual" || value === "story" ? value : fallback;
-}
-function parseNumeric(value) {
-  if (typeof value === "number" && Number.isFinite(value))
-    return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value.trim());
-    if (Number.isFinite(parsed))
-      return parsed;
-  }
-  return null;
-}
+// src/time-utils.ts
+var DAY_MS = 86400000;
 function pad2(value) {
   return String(value).padStart(2, "0");
 }
@@ -184,29 +82,30 @@ function parseStoryDateTime(dateValue, timeValue) {
   }
   return parsed.getTime();
 }
-function derivePalette(condition, dateValue, timeValue) {
-  if (condition === "storm")
-    return "storm";
-  if (condition === "fog")
-    return "mist";
-  if (condition === "snow")
-    return "snow";
-  const timestamp = parseStoryDateTime(dateValue, timeValue);
-  if (timestamp !== null) {
-    const hour2 = new Date(timestamp).getHours();
-    if (hour2 < 6)
-      return "night";
-    if (hour2 < 10)
-      return "dawn";
-    if (hour2 < 18)
-      return "day";
-    if (hour2 < 21)
-      return "dusk";
-    return "night";
-  }
-  const hour = parseHourFromTimeString(timeValue);
+function resolveDayOfYear(timestamp) {
+  if (!Number.isFinite(timestamp))
+    return null;
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  if (!Number.isFinite(year))
+    return null;
+  const startOfYear = Date.UTC(year, 0, 1);
+  const current = Date.UTC(year, date.getMonth(), date.getDate());
+  const day = Math.round((current - startOfYear) / DAY_MS) + 1;
+  return Number.isFinite(day) ? day : null;
+}
+function resolveSeasonFromDayOfYear(dayOfYear) {
+  if (dayOfYear < 80 || dayOfYear >= 355)
+    return "winter";
+  if (dayOfYear < 172)
+    return "spring";
+  if (dayOfYear < 266)
+    return "summer";
+  return "autumn";
+}
+function phaseFromHour(hour) {
   if (hour === null)
-    return condition === "cloudy" || condition === "rain" ? "dusk" : "day";
+    return "day";
   if (hour < 6)
     return "night";
   if (hour < 10)
@@ -216,6 +115,312 @@ function derivePalette(condition, dateValue, timeValue) {
   if (hour < 21)
     return "dusk";
   return "night";
+}
+function phaseToPalette(phase) {
+  return phase;
+}
+function derivePalette(condition, dateValue, timeValue) {
+  if (condition === "storm")
+    return "storm";
+  if (condition === "fog")
+    return "mist";
+  if (condition === "snow")
+    return "snow";
+  const hour = parseHourFromTimeString(timeValue);
+  if (parseStoryDateTime(dateValue, timeValue) === null && hour === null) {
+    return condition === "cloudy" || condition === "rain" ? "dusk" : "day";
+  }
+  return phaseToPalette(phaseFromHour(hour));
+}
+function seasonFromStoryDate(dateValue, timeValue) {
+  const timestamp = parseStoryDateTime(dateValue, timeValue);
+  if (timestamp === null)
+    return null;
+  const dayOfYear = resolveDayOfYear(timestamp);
+  return dayOfYear === null ? null : resolveSeasonFromDayOfYear(dayOfYear);
+}
+
+// src/forecast-utils.ts
+var MAX_FORECAST_DAYS = 5;
+var MAX_FORECAST_SUMMARY_LENGTH = 48;
+var CONDITION_ALIASES = {
+  clear: "clear",
+  sunny: "clear",
+  bright: "clear",
+  cloudy: "cloudy",
+  overcast: "cloudy",
+  "partly cloudy": "cloudy",
+  rain: "rain",
+  rainy: "rain",
+  drizzle: "rain",
+  storm: "storm",
+  stormy: "storm",
+  thunderstorm: "storm",
+  thunder: "storm",
+  snow: "snow",
+  snowy: "snow",
+  flurries: "snow",
+  fog: "fog",
+  mist: "fog",
+  hazy: "fog"
+};
+var DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+function isRealCalendarDate(value) {
+  const match = value.match(DATE_PATTERN);
+  if (!match)
+    return false;
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31)
+    return false;
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+}
+function normalizeConditionToken(token) {
+  const normalized = token.trim().toLowerCase().replace(/\s+/g, " ");
+  return CONDITION_ALIASES[normalized] ?? null;
+}
+function normalizeTemperatureToken(token) {
+  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F|C)(?:ahrenheit|elsius)?$/i);
+  if (!match)
+    return "";
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount))
+    return "";
+  return `${Math.round(amount)}${match[2].toUpperCase() === "C" ? "C" : "F"}`;
+}
+function truncateForecastSummary(value) {
+  const collapsed = value.trim().replace(/\s+/g, " ");
+  if (collapsed.length <= MAX_FORECAST_SUMMARY_LENGTH)
+    return collapsed;
+  return `${collapsed.slice(0, MAX_FORECAST_SUMMARY_LENGTH - 1).trimEnd()}\u2026`;
+}
+function splitForecastEntries(raw) {
+  return raw.split(/[|\n;]+/).map((entry) => entry.trim()).filter(Boolean);
+}
+function parseForecastEntry(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed)
+    return null;
+  const separatorIndex = trimmed.indexOf(":");
+  if (separatorIndex === -1) {
+    if (!isRealCalendarDate(trimmed))
+      return null;
+    return { date: trimmed, condition: "clear", summary: defaultForecastSummary("clear"), temperature: "" };
+  }
+  const date = trimmed.slice(0, separatorIndex).trim();
+  if (!isRealCalendarDate(date))
+    return null;
+  let condition = null;
+  let temperature = "";
+  const summaryParts = [];
+  for (const part of trimmed.slice(separatorIndex + 1).split(",")) {
+    const token = part.trim();
+    if (!token)
+      continue;
+    if (summaryParts.length > 0) {
+      summaryParts.push(token);
+      continue;
+    }
+    const candidateCondition = normalizeConditionToken(token);
+    if (candidateCondition !== null && condition === null) {
+      condition = candidateCondition;
+      continue;
+    }
+    const candidateTemperature = normalizeTemperatureToken(token);
+    if (candidateTemperature && !temperature) {
+      temperature = candidateTemperature;
+      continue;
+    }
+    summaryParts.push(token);
+  }
+  return {
+    date,
+    condition: condition ?? "clear",
+    summary: truncateForecastSummary(summaryParts.join(", ")) || defaultForecastSummary(condition ?? "clear"),
+    temperature
+  };
+}
+function defaultForecastSummary(condition) {
+  switch (condition) {
+    case "rain":
+      return "Rain expected";
+    case "storm":
+      return "Storms expected";
+    case "snow":
+      return "Snow expected";
+    case "fog":
+      return "Low visibility";
+    case "cloudy":
+      return "Overcast";
+    default:
+      return "Clear skies";
+  }
+}
+function normalizeForecast(input, maxDays = MAX_FORECAST_DAYS) {
+  const rawEntries = [];
+  if (typeof input === "string") {
+    rawEntries.push(...splitForecastEntries(input));
+  } else if (Array.isArray(input)) {
+    for (const item of input) {
+      if (typeof item === "string")
+        rawEntries.push(...splitForecastEntries(item));
+      else if (item && typeof item === "object")
+        rawEntries.push(serializeForecastObject(item));
+    }
+  } else if (input && typeof input === "object") {
+    rawEntries.push(serializeForecastObject(input));
+  }
+  const byDate = new Map;
+  for (const raw of rawEntries) {
+    const entry = parseForecastEntry(raw);
+    if (entry)
+      byDate.set(entry.date, entry);
+  }
+  const limit = Math.max(0, Math.round(clamp(maxDays, 0, MAX_FORECAST_DAYS)));
+  return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(0, limit);
+}
+function serializeForecastObject(candidate) {
+  const read = (key) => typeof candidate[key] === "string" ? candidate[key].trim() : "";
+  const date = read("date");
+  if (!date)
+    return "";
+  const details = [read("condition"), read("temperature"), read("summary")].filter(Boolean).join(", ");
+  return details ? `${date}: ${details}` : date;
+}
+function formatForecastEntry(entry) {
+  const details = [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
+  return details ? `${entry.date}: ${details}` : entry.date;
+}
+function serializeForecast(entries) {
+  return entries.map(formatForecastEntry).join(" | ");
+}
+
+// src/shared.ts
+var WEATHER_STATE_VAR = "weather_state_json";
+var WEATHER_MANUAL_STATE_VAR = "weather_manual_state_json";
+var WEATHER_CONDITIONS = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
+var WEATHER_LAYERS = ["back", "front", "both"];
+var WEATHER_PALETTES = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
+var REDUCED_MOTION_VALUES = ["system", "always", "never"];
+var TEMPERATURE_UNITS = ["fahrenheit", "celsius"];
+var WEATHER_SEASONS = ["spring", "summer", "autumn", "winter"];
+var WEATHER_CLOCK_MODES = ["auto", "live", "story"];
+var DEFAULT_PREFS = {
+  effectsEnabled: true,
+  lightningFlashEnabled: true,
+  layerMode: "both",
+  intensity: 1,
+  reducedMotion: "system",
+  temperatureUnit: "fahrenheit",
+  pauseEffects: false,
+  widgetPosition: null,
+  clockMode: "auto",
+  showForecast: true,
+  transitionsEnabled: true
+};
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+function isRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function normalizeText(value, fallback, maxLength) {
+  if (typeof value !== "string")
+    return fallback;
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  return trimmed ? trimmed.slice(0, maxLength) : fallback;
+}
+function normalizeTextWithTruncation(value, fallback, maxLength) {
+  if (typeof value !== "string")
+    return { text: fallback, truncated: false };
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (!trimmed)
+    return { text: fallback, truncated: false };
+  return { text: trimmed.slice(0, maxLength), truncated: trimmed.length > maxLength };
+}
+var SUMMARY_MAX_LENGTH = 96;
+var CONDITION_ALIASES2 = {
+  clear: "clear",
+  sunny: "clear",
+  bright: "clear",
+  cloudy: "cloudy",
+  overcast: "cloudy",
+  "partly cloudy": "cloudy",
+  rain: "rain",
+  rainy: "rain",
+  drizzle: "rain",
+  storm: "storm",
+  stormy: "storm",
+  thunderstorm: "storm",
+  snow: "snow",
+  snowy: "snow",
+  flurries: "snow",
+  fog: "fog",
+  mist: "fog",
+  hazy: "fog"
+};
+function normalizeCondition(value, fallback) {
+  if (typeof value !== "string")
+    return fallback;
+  return CONDITION_ALIASES2[value.trim().toLowerCase()] ?? fallback;
+}
+function normalizePalette(value, fallback) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return WEATHER_PALETTES.includes(normalized) ? normalized : fallback;
+}
+function normalizeWindDirection(value, fallback) {
+  if (typeof value !== "string")
+    return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const aliases = {
+    none: "none",
+    calm: "none",
+    n: "north",
+    north: "north",
+    ne: "northeast",
+    northeast: "northeast",
+    e: "east",
+    east: "east",
+    se: "southeast",
+    southeast: "southeast",
+    s: "south",
+    south: "south",
+    sw: "southwest",
+    southwest: "southwest",
+    w: "west",
+    west: "west",
+    nw: "northwest",
+    northwest: "northwest"
+  };
+  return aliases[normalized] ?? fallback;
+}
+function normalizeReducedMotion(value, fallback) {
+  return typeof value === "string" && REDUCED_MOTION_VALUES.includes(value) ? value : fallback;
+}
+function normalizeTemperatureUnit(value, fallback) {
+  return typeof value === "string" && TEMPERATURE_UNITS.includes(value) ? value : fallback;
+}
+function normalizeSource(value, fallback) {
+  return value === "manual" || value === "story" ? value : fallback;
+}
+function normalizeSeason(value, fallback) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return WEATHER_SEASONS.includes(normalized) ? normalized : fallback;
+}
+function normalizeClockMode(value, fallback) {
+  return typeof value === "string" && WEATHER_CLOCK_MODES.includes(value) ? value : fallback;
+}
+function parseNumeric(value) {
+  if (typeof value === "number" && Number.isFinite(value))
+    return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed))
+      return parsed;
+  }
+  return null;
 }
 function makeDefaultWeatherState(now = Date.now()) {
   const date = new Date(now);
@@ -232,6 +437,8 @@ function makeDefaultWeatherState(now = Date.now()) {
     wind: "still",
     windDirection: "none",
     palette: derivePalette("clear", dateValue, timeValue),
+    season: seasonFromStoryDate(dateValue, timeValue) ?? "spring",
+    forecast: [],
     updatedAt: now,
     source: "story"
   };
@@ -249,17 +456,23 @@ function normalizeWeatherState(input, previous) {
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
   const windDirectionValue = source.windDirection ?? source.wind_direction ?? source["wind-direction"];
+  const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays;
+  const forecast = forecastValue === undefined ? fallback.forecast : normalizeForecast(forecastValue);
+  const derivedSeason = seasonFromStoryDate(date, time);
+  const summary = normalizeTextWithTruncation(source.summary, fallback.summary, SUMMARY_MAX_LENGTH);
   return {
     location: normalizeText(source.location, fallback.location, 72),
     date,
     time,
     condition,
-    summary: normalizeText(source.summary, fallback.summary, 72),
+    summary: summary.truncated ? `${summary.text.trimEnd()}\u2026` : summary.text,
     temperature: normalizeText(source.temperature, fallback.temperature, 16),
     intensity,
     wind: normalizeText(source.wind, fallback.wind, 32),
     windDirection: normalizeWindDirection(windDirectionValue, fallback.windDirection),
     palette,
+    season: normalizeSeason(source.season, derivedSeason ?? fallback.season),
+    forecast,
     updatedAt,
     source: normalizeSource(source.source, fallback.source)
   };
@@ -282,7 +495,10 @@ function normalizePrefs(input) {
     reducedMotion: normalizeReducedMotion(source.reducedMotion, DEFAULT_PREFS.reducedMotion),
     temperatureUnit: normalizeTemperatureUnit(source.temperatureUnit, DEFAULT_PREFS.temperatureUnit),
     pauseEffects: typeof source.pauseEffects === "boolean" ? source.pauseEffects : DEFAULT_PREFS.pauseEffects,
-    widgetPosition: position
+    widgetPosition: position,
+    clockMode: normalizeClockMode(source.clockMode, DEFAULT_PREFS.clockMode),
+    showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
+    transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled
   };
 }
 
@@ -337,7 +553,9 @@ function makeWeatherLumiStateSnapshot(chatId, state, revision, extensionVersion,
         intensity: state.intensity,
         wind: state.wind,
         windDirection: state.windDirection,
-        palette: state.palette
+        palette: state.palette,
+        season: state.season,
+        forecast: state.forecast.length > 0 ? serializeForecast(state.forecast) : null
       },
       provenance
     });
@@ -419,7 +637,24 @@ function injectWeatherInstruction(messages, instruction) {
 }
 
 // src/story-history.ts
-function rebuildStoryWeatherState(messages, updatedAt = Date.now()) {
+var MILLISECOND_THRESHOLD = 1000000000000;
+function normalizeMessageTimestamp(value) {
+  const numeric = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(numeric) || numeric <= 0)
+    return null;
+  const milliseconds = numeric >= MILLISECOND_THRESHOLD ? numeric : numeric * 1000;
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+function resolveMessageTimestamp(message) {
+  const swipeId = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : null;
+  if (swipeId !== null && Array.isArray(message.swipe_dates)) {
+    const swipeTimestamp = normalizeMessageTimestamp(message.swipe_dates[swipeId]);
+    if (swipeTimestamp !== null)
+      return swipeTimestamp;
+  }
+  return normalizeMessageTimestamp(message.send_date);
+}
+function rebuildStoryWeatherState(messages, fallbackUpdatedAt = Date.now()) {
   const ordered = messages.map((message, originalIndex) => ({ message, originalIndex })).sort((left, right) => {
     const leftIndex = Number.isFinite(left.message.index_in_chat) ? left.message.index_in_chat : left.originalIndex;
     const rightIndex = Number.isFinite(right.message.index_in_chat) ? right.message.index_in_chat : right.originalIndex;
@@ -433,24 +668,57 @@ function rebuildStoryWeatherState(messages, updatedAt = Date.now()) {
     const tag = extractLastWeatherTag(message.content);
     if (!tag)
       continue;
+    const updatedAt = resolveMessageTimestamp(message) ?? fallbackUpdatedAt;
     state = normalizeWeatherState({ ...tag.attrs, updatedAt, source: "story" }, state);
   }
   return state;
 }
+function hasSameForecast(left, right) {
+  if (left.length !== right.length)
+    return false;
+  return left.every((entry, index) => {
+    const other = right[index];
+    return entry.date === other.date && entry.condition === other.condition && entry.summary === other.summary && entry.temperature === other.temperature;
+  });
+}
 function hasSameStoryScene(left, right) {
   if (!left || !right)
     return left === right;
-  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.source === right.source;
+  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.season === right.season && left.source === right.source && hasSameForecast(left.forecast, right.forecast);
 }
+
+// src/tag-dedupe.ts
+function buildTagDedupeKey(attrs) {
+  const normalized = [];
+  for (const key of Object.keys(attrs).sort()) {
+    const namespacedKey = key.trim().toLowerCase();
+    if (!namespacedKey)
+      continue;
+    const value = typeof attrs[key] === "string" ? attrs[key].trim() : String(attrs[key] ?? "");
+    normalized.push(`${namespacedKey}=${value}`);
+  }
+  return normalized.join("\x01");
+}
+
+// src/version.ts
+var EXTENSION_VERSION = "1.4.0";
+var LUMI_STATE_CAPABILITIES = [
+  "scene_location",
+  "calendar_time",
+  "weather_conditions",
+  "manual_override",
+  "forecast",
+  "solar_time"
+];
 
 // src/weather-prompt.ts
 function buildWeatherTagExample() {
-  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm"></weather-state>';
+  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: snow, 30F, heavy flurries | 2026-01-17: cloudy, 34F"></weather-state>';
 }
 function summarizeWeatherState(state) {
   if (!state)
     return "No saved weather state yet.";
-  return [
+  const lines = [
     `Location: ${state.location}`,
     `Date: ${state.date}`,
     `Time: ${state.time}`,
@@ -460,8 +728,13 @@ function summarizeWeatherState(state) {
     `Intensity: ${state.intensity.toFixed(2)}`,
     `Wind: ${state.wind}`,
     `Wind direction: ${state.windDirection}`,
-    `Palette: ${state.palette}`
-  ].join(" | ");
+    `Palette: ${state.palette}`,
+    `Season: ${state.season}`
+  ];
+  if (state.forecast.length > 0) {
+    lines.push(`Forecast: ${state.forecast.map(formatForecastEntry).join(" | ")}`);
+  }
+  return lines.join(" | ");
 }
 function buildTrackerMacro() {
   return [
@@ -480,8 +753,13 @@ function buildTrackerMacro() {
     "Emit the tag as the very last text in the assistant message.",
     `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
     `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
+    `Allowed seasons: ${WEATHER_SEASONS.join(", ")}`,
     "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, and palette.",
     "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
+    "season is optional and, when present, is one of: spring, summer, autumn, winter.",
+    "forecast is optional and projects at most five later days. Separate entries with a pipe and format each as date: condition, temperature, summary.",
+    "Only include forecast entries the narrative meaningfully establishes; do not invent a daily outlook merely to fill the field.",
+    "When forecast is omitted, the previous projection stays in place.",
     "Exact wrapper example:",
     buildWeatherTagExample()
   ].join(`
@@ -502,7 +780,6 @@ function buildPromptInstruction(state) {
 
 // src/backend.ts
 var PREFS_FILE = "weather_prefs.json";
-var EXTENSION_VERSION = "1.3.2";
 var WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
 var WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"];
 var WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"];
@@ -706,7 +983,7 @@ spindle.rpcPool.sync("contract.v1", {
   protocol: "lumi_state.v1",
   extension: "lumi_weather",
   extensionVersion: EXTENSION_VERSION,
-  capabilities: ["scene_location", "calendar_time", "weather_conditions", "manual_override"],
+  capabilities: [...LUMI_STATE_CAPABILITIES],
   endpoints: { public: "lumi_weather.state.current" },
   channels: [{
     endpoint: "lumi_weather.state.current",
@@ -782,10 +1059,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const chatId = typeof message.chatId === "string" && message.chatId.trim() ? message.chatId : await resolveActiveChatId(userId);
         if (!chatId) {
           send(userId, { type: "error", message: "Weather tag ignored because no active chat could be resolved." });
+          spindle.toast.warning("A weather tag was ignored because no active chat could be resolved.", {
+            title: "LumiWeather",
+            userId
+          });
           break;
         }
         pruneProcessedTags();
-        const tagKey = `${userId}:${chatId}:${message.messageId ?? ""}:${JSON.stringify(message.attrs)}`;
+        const tagKey = `${userId}:${chatId}:${message.messageId ?? ""}:${buildTagDedupeKey(message.attrs)}`;
         if (processedTags.has(tagKey))
           break;
         processedTags.set(tagKey, Date.now());
@@ -802,6 +1083,10 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const chatId = await resolveActiveChatId(userId, message.chatId ?? undefined);
         if (!chatId) {
           send(userId, { type: "error", message: "Manual weather override could not resolve an active chat." });
+          spindle.toast.warning("Open a chat before locking a weather scene.", {
+            title: "LumiWeather",
+            userId
+          });
           break;
         }
         const previous = await loadManualWeatherState(chatId) ?? await loadStoryWeatherState(chatId) ?? makeDefaultWeatherState();
