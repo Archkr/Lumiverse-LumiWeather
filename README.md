@@ -130,6 +130,12 @@ Only completed assistant tags are accepted. Streaming tags and user-authored tag
 - Keeps the override saved until you resume story sync
 - The HUD clock can display live real time while manual mode is active
 
+The manual scene editor covers every field a weather tag can carry, including the v1.4 additions:
+
+- **Season** offers `Derived from date` by default, so editing the story date updates the season instead of pinning whatever the old date implied. Pick a season explicitly to override it.
+- **Outlook** takes one day per line using the same format as the tag attribute, for example `2026-01-16: snow, 30F, heavy flurries`. Leave it empty to clear the projection. A line that cannot be parsed is reported instead of being silently dropped.
+- All seven scene presets match the tagged form exactly, so a preset you apply by hand shows as active and produces the same scene as a tag would.
+
 ## Installation
 
 1. Copy the repository URL:

@@ -85,7 +85,7 @@ export function parseForecastEntry(raw: string): ForecastEntry | null {
   // A bare date is a valid entry: it asserts the day exists with no detail yet.
   if (separatorIndex === -1) {
     if (!isRealCalendarDate(trimmed)) return null;
-    return { date: trimmed, condition: "clear", summary: defaultForecastSummary("clear"), temperature: "" };
+    return { date: trimmed, condition: "clear", summary: "", temperature: "" };
   }
 
   const date = trimmed.slice(0, separatorIndex).trim();
@@ -124,11 +124,19 @@ export function parseForecastEntry(raw: string): ForecastEntry | null {
   return {
     date,
     condition: condition ?? "clear",
-    summary: truncateForecastSummary(summaryParts.join(", ")) || defaultForecastSummary(condition ?? "clear"),
+    // Left empty when the input carries no summary. Filling in a default here
+    // would store prose the source never wrote, and would make the serialized
+    // form grow every time it was parsed and written back.
+    summary: truncateForecastSummary(summaryParts.join(", ")),
     temperature,
   };
 }
 
+/**
+ * Presentation-only fallback used where an entry is shown without a summary.
+ * This is deliberately not applied during parsing so the stored model stays
+ * faithful to the input.
+ */
 export function defaultForecastSummary(condition: WeatherCondition): string {
   switch (condition) {
     case "rain":
@@ -185,9 +193,22 @@ function serializeForecastObject(candidate: Record<string, unknown>): string {
   return details ? `${date}: ${details}` : date;
 }
 
-/** Renders one entry in the canonical `date: condition, temperature, summary` form. */
+/**
+ * Renders one entry in the canonical `date: condition, temperature, summary`
+ * form. Faithful to the stored model, so parse and serialize round-trip exactly.
+ */
 export function formatForecastEntry(entry: ForecastEntry): string {
   const details = [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
+  return details ? `${entry.date}: ${details}` : entry.date;
+}
+
+/**
+ * Presentation form for surfaces that show an entry to a reader. Falls back to a
+ * condition-derived summary so a sparse entry still reads as a sentence.
+ */
+export function describeForecastEntry(entry: ForecastEntry): string {
+  const summary = entry.summary || defaultForecastSummary(entry.condition);
+  const details = [entry.condition, entry.temperature, summary].filter(Boolean).join(", ");
   return details ? `${entry.date}: ${details}` : entry.date;
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   MAX_FORECAST_DAYS,
+  describeForecastEntry,
   formatForecastEntry,
   isRealCalendarDate,
   normalizeForecast,
@@ -53,10 +54,18 @@ describe("weather forecast parsing", () => {
     );
   });
 
-  test("fills a default summary when only a condition is given", () => {
-    expect(parseForecastEntry("2026-01-16: rain")?.summary).toBe("Rain expected");
-    expect(parseForecastEntry("2026-01-16")?.summary).toBe("Clear skies");
+  test("leaves the summary empty when the input has none", () => {
+    // Filling in a default here would store prose nobody wrote and make the
+    // serialized form grow on every round trip.
+    expect(parseForecastEntry("2026-01-16: rain")?.summary).toBe("");
+    expect(parseForecastEntry("2026-01-16")?.summary).toBe("");
     expect(parseForecastEntry("2026-01-16")?.condition).toBe("clear");
+    expect(parseForecastEntry("2026-01-16: rain")?.temperature).toBe("");
+
+    // A reader-facing description may still name the condition.
+    expect(describeForecastEntry({ date: "2026-01-16", condition: "rain", summary: "", temperature: "" })).toBe(
+      "2026-01-16: rain, Rain expected",
+    );
   });
 
   test("drops malformed entries without failing the whole projection", () => {
@@ -97,7 +106,7 @@ describe("weather forecast parsing", () => {
     ]);
     expect(forecast.map((entry) => entry.date)).toEqual(["2026-01-18", "2026-01-19"]);
     expect(forecast[0].summary).toBe("Showers");
-    expect(forecast[1]).toMatchObject({ condition: "clear", summary: "Clear skies" });
+    expect(forecast[1]).toMatchObject({ condition: "clear", summary: "" });
 
     // A summary with no condition or temperature must survive a round trip.
     const summaryOnly = normalizeForecast([{ date: "2026-01-20", summary: "Hazy heat" }]);

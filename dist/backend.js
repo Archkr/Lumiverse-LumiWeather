@@ -207,7 +207,7 @@ function parseForecastEntry(raw) {
   if (separatorIndex === -1) {
     if (!isRealCalendarDate(trimmed))
       return null;
-    return { date: trimmed, condition: "clear", summary: defaultForecastSummary("clear"), temperature: "" };
+    return { date: trimmed, condition: "clear", summary: "", temperature: "" };
   }
   const date = trimmed.slice(0, separatorIndex).trim();
   if (!isRealCalendarDate(date))
@@ -238,25 +238,9 @@ function parseForecastEntry(raw) {
   return {
     date,
     condition: condition ?? "clear",
-    summary: truncateForecastSummary(summaryParts.join(", ")) || defaultForecastSummary(condition ?? "clear"),
+    summary: truncateForecastSummary(summaryParts.join(", ")),
     temperature
   };
-}
-function defaultForecastSummary(condition) {
-  switch (condition) {
-    case "rain":
-      return "Rain expected";
-    case "storm":
-      return "Storms expected";
-    case "snow":
-      return "Snow expected";
-    case "fog":
-      return "Low visibility";
-    case "cloudy":
-      return "Overcast";
-    default:
-      return "Clear skies";
-  }
 }
 function normalizeForecast(input, maxDays = MAX_FORECAST_DAYS) {
   const rawEntries = [];

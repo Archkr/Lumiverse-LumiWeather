@@ -394,6 +394,26 @@ export const WEATHER_HUD_CSS = `
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* The outlook editor spans both columns and sits outside the grid, so it always
+   gets the full panel width regardless of the grid's column count. */
+.weather-settings-manual-field-wide {
+  grid-column: 1 / -1;
+}
+
+.weather-settings-textarea {
+  min-height: 68px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.weather-settings-forecast-field {
+  display: grid;
+  gap: 6px;
+}
+
 .weather-settings-wind-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(104px, 0.5fr);

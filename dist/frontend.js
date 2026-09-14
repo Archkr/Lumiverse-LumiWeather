@@ -223,6 +223,103 @@ function seasonFromStoryDate(dateValue, timeValue) {
 }
 
 // src/forecast-utils.ts
+var MAX_FORECAST_SUMMARY_LENGTH = 48;
+var CONDITION_ALIASES = {
+  clear: "clear",
+  sunny: "clear",
+  bright: "clear",
+  cloudy: "cloudy",
+  overcast: "cloudy",
+  "partly cloudy": "cloudy",
+  rain: "rain",
+  rainy: "rain",
+  drizzle: "rain",
+  storm: "storm",
+  stormy: "storm",
+  thunderstorm: "storm",
+  thunder: "storm",
+  snow: "snow",
+  snowy: "snow",
+  flurries: "snow",
+  fog: "fog",
+  mist: "fog",
+  hazy: "fog"
+};
+var DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+function isRealCalendarDate(value) {
+  const match = value.match(DATE_PATTERN);
+  if (!match)
+    return false;
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31)
+    return false;
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+}
+function normalizeConditionToken(token) {
+  const normalized = token.trim().toLowerCase().replace(/\s+/g, " ");
+  return CONDITION_ALIASES[normalized] ?? null;
+}
+function normalizeTemperatureToken(token) {
+  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F|C)(?:ahrenheit|elsius)?$/i);
+  if (!match)
+    return "";
+  const amount = Number.parseFloat(match[1]);
+  if (!Number.isFinite(amount))
+    return "";
+  return `${Math.round(amount)}${match[2].toUpperCase() === "C" ? "C" : "F"}`;
+}
+function truncateForecastSummary(value) {
+  const collapsed = value.trim().replace(/\s+/g, " ");
+  if (collapsed.length <= MAX_FORECAST_SUMMARY_LENGTH)
+    return collapsed;
+  return `${collapsed.slice(0, MAX_FORECAST_SUMMARY_LENGTH - 1).trimEnd()}…`;
+}
+function parseForecastEntry(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed)
+    return null;
+  const separatorIndex = trimmed.indexOf(":");
+  if (separatorIndex === -1) {
+    if (!isRealCalendarDate(trimmed))
+      return null;
+    return { date: trimmed, condition: "clear", summary: "", temperature: "" };
+  }
+  const date = trimmed.slice(0, separatorIndex).trim();
+  if (!isRealCalendarDate(date))
+    return null;
+  let condition = null;
+  let temperature = "";
+  const summaryParts = [];
+  for (const part of trimmed.slice(separatorIndex + 1).split(",")) {
+    const token = part.trim();
+    if (!token)
+      continue;
+    if (summaryParts.length > 0) {
+      summaryParts.push(token);
+      continue;
+    }
+    const candidateCondition = normalizeConditionToken(token);
+    if (candidateCondition !== null && condition === null) {
+      condition = candidateCondition;
+      continue;
+    }
+    const candidateTemperature = normalizeTemperatureToken(token);
+    if (candidateTemperature && !temperature) {
+      temperature = candidateTemperature;
+      continue;
+    }
+    summaryParts.push(token);
+  }
+  return {
+    date,
+    condition: condition ?? "clear",
+    summary: truncateForecastSummary(summaryParts.join(", ")),
+    temperature
+  };
+}
 function formatForecastEntry(entry) {
   const details = [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
   return details ? `${entry.date}: ${details}` : entry.date;
@@ -240,6 +337,7 @@ var WEATHER_WIND_DIRECTIONS = [
   "west",
   "northwest"
 ];
+var WEATHER_SEASONS = ["spring", "summer", "autumn", "winter"];
 var DEFAULT_PREFS = {
   effectsEnabled: true,
   lightningFlashEnabled: true,
@@ -1038,6 +1136,31 @@ function shouldApplyChatState(currentChatId, responseChatId, responseRequestId, 
   return activeRequestId === 0 || responseChatId === currentChatId;
 }
 
+// src/forecast-text.ts
+function encodeForecastText(entries) {
+  return entries.map(formatForecastEntry).join(`
+`);
+}
+function decodeForecastText(text) {
+  const entries = [];
+  const invalidLines = [];
+  for (const rawLine of text.split(`
+`)) {
+    const line = rawLine.trim();
+    if (!line)
+      continue;
+    const entry = parseForecastEntry(line);
+    if (entry)
+      entries.push(entry);
+    else
+      invalidLines.push(line);
+  }
+  return { entries, invalidLines };
+}
+function forecastTextHint() {
+  return "One day per line, such as 2026-01-16: snow, 30F, heavy flurries. Leave empty to clear the outlook.";
+}
+
 // src/ui/settings.ts
 var CONDITIONS = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 var PALETTES = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
@@ -1105,6 +1228,9 @@ function applyStateToInputs(state, fields) {
     fields.windDirectionSelect.value = state.windDirection;
   if (state.summary)
     fields.summaryInput.value = state.summary;
+  fields.seasonSelect.value = state.season ?? "";
+  if (state.forecast !== undefined)
+    fields.forecastInput.value = encodeForecastText(state.forecast);
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
     fields.sceneIntensity.value = state.intensity.toFixed(2);
     fields.sceneIntensityValue.textContent = `${Math.round(state.intensity * 100)}%`;
@@ -1377,6 +1503,12 @@ function createSettingsUI(sendToBackend) {
   const windDirectionSelect = document.createElement("select");
   windDirectionSelect.className = "weather-settings-select";
   windDirectionSelect.innerHTML = WEATHER_WIND_DIRECTIONS.map((direction) => `<option value="${direction}">${direction.charAt(0).toUpperCase()}${direction.slice(1)}</option>`).join("");
+  const seasonSelect = document.createElement("select");
+  seasonSelect.className = "weather-settings-select";
+  seasonSelect.innerHTML = [
+    `<option value="">Derived from date</option>`,
+    ...WEATHER_SEASONS.map((season) => `<option value="${season}">${season.charAt(0).toUpperCase()}${season.slice(1)}</option>`)
+  ].join("");
   const windControls = document.createElement("div");
   windControls.className = "weather-settings-wind-controls";
   windControls.appendChild(windInput);
@@ -1385,6 +1517,18 @@ function createSettingsUI(sendToBackend) {
   summaryInput.type = "text";
   summaryInput.className = "weather-settings-input";
   summaryInput.placeholder = "Steady afternoon rain";
+  const forecastInput = document.createElement("textarea");
+  forecastInput.className = "weather-settings-input weather-settings-textarea";
+  forecastInput.rows = 3;
+  forecastInput.placeholder = "2026-01-16: snow, 30F, heavy flurries";
+  forecastInput.spellcheck = false;
+  const forecastHint = document.createElement("p");
+  forecastHint.className = "weather-settings-section-copy";
+  forecastHint.textContent = forecastTextHint();
+  const forecastField = document.createElement("div");
+  forecastField.className = "weather-settings-forecast-field";
+  forecastField.appendChild(forecastInput);
+  forecastField.appendChild(forecastHint);
   const sceneIntensityRow = document.createElement("div");
   sceneIntensityRow.className = "weather-settings-row";
   const sceneIntensity = document.createElement("input");
@@ -1405,6 +1549,7 @@ function createSettingsUI(sendToBackend) {
   const fields = {
     conditionSelect,
     paletteSelect,
+    seasonSelect,
     locationInput,
     dateInput,
     timeInput,
@@ -1412,6 +1557,7 @@ function createSettingsUI(sendToBackend) {
     windInput,
     windDirectionSelect,
     summaryInput,
+    forecastInput,
     sceneIntensity,
     sceneIntensityValue
   };
@@ -1422,7 +1568,7 @@ function createSettingsUI(sendToBackend) {
     manualDraftDirty = true;
     manualError.hidden = true;
   };
-  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput]) {
+  for (const field of [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
@@ -1436,6 +1582,8 @@ function createSettingsUI(sendToBackend) {
     wind: windInput.value.trim() || currentState?.wind,
     windDirection: windDirectionSelect.value,
     palette: paletteSelect.value,
+    season: seasonSelect.value || undefined,
+    forecast: decodeForecastText(forecastInput.value).entries,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual"
   });
@@ -1458,6 +1606,14 @@ function createSettingsUI(sendToBackend) {
       manualError.textContent = "Temperature must include a numeric value and F or C, such as 61F or 16C.";
       manualError.hidden = false;
       return;
+    }
+    if (state === undefined) {
+      const forecast = decodeForecastText(forecastInput.value);
+      if (forecast.invalidLines.length > 0) {
+        manualError.textContent = `Fix the outlook line "${forecast.invalidLines[0].slice(0, 40)}". Use one day per line, such as 2026-01-16: snow, 30F, heavy flurries.`;
+        manualError.hidden = false;
+        return;
+      }
     }
     manualDraftDirty = false;
     manualError.hidden = true;
@@ -1495,12 +1651,15 @@ function createSettingsUI(sendToBackend) {
   manualGrid.className = "weather-settings-manual-grid";
   manualGrid.appendChild(createLabeledInput("Condition", conditionSelect));
   manualGrid.appendChild(createLabeledInput("Palette", paletteSelect));
+  manualGrid.appendChild(createLabeledInput("Season", seasonSelect));
   manualGrid.appendChild(createLabeledInput("Location", locationInput));
   manualGrid.appendChild(createLabeledInput("Story date", dateInput));
   manualGrid.appendChild(createLabeledInput("Story time", timeInput));
   manualGrid.appendChild(createLabeledInput("Temperature", temperatureInput));
   manualGrid.appendChild(createLabeledInput("Wind", windControls));
   manualGrid.appendChild(createLabeledInput("Summary", summaryInput));
+  const forecastFieldLabel = createLabeledInput("Outlook", forecastField);
+  forecastFieldLabel.classList.add("weather-settings-manual-field", "weather-settings-manual-field-wide");
   const sceneIntensityLabel = createLabeledInput("Scene intensity", sceneIntensityRow);
   const manualActions = document.createElement("div");
   manualActions.className = "weather-settings-actions";
@@ -1529,6 +1688,7 @@ function createSettingsUI(sendToBackend) {
   manualCard.appendChild(manualToggleLabel);
   manualCard.appendChild(presetGrid);
   manualCard.appendChild(manualGrid);
+  manualCard.appendChild(forecastFieldLabel);
   manualCard.appendChild(sceneIntensityLabel);
   manualCard.appendChild(manualActions);
   const resetButton = document.createElement("button");
@@ -1589,6 +1749,7 @@ function createSettingsUI(sendToBackend) {
       } else if (!state && !manualDraftDirty) {
         conditionSelect.value = "clear";
         paletteSelect.value = "day";
+        seasonSelect.value = "";
         locationInput.value = "";
         dateInput.value = "";
         timeInput.value = "";
@@ -1596,6 +1757,7 @@ function createSettingsUI(sendToBackend) {
         windInput.value = "";
         windDirectionSelect.value = "none";
         summaryInput.value = "";
+        forecastInput.value = "";
         sceneIntensity.value = "0.30";
         sceneIntensityValue.textContent = "30%";
       }
@@ -2004,6 +2166,26 @@ var WEATHER_HUD_CSS = `
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* The outlook editor spans both columns and sits outside the grid, so it always
+   gets the full panel width regardless of the grid's column count. */
+.weather-settings-manual-field-wide {
+  grid-column: 1 / -1;
+}
+
+.weather-settings-textarea {
+  min-height: 68px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.weather-settings-forecast-field {
+  display: grid;
+  gap: 6px;
 }
 
 .weather-settings-wind-controls {

@@ -1,7 +1,13 @@
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "../presets";
+import { decodeForecastText, encodeForecastText, forecastTextHint } from "../forecast-text";
 import { formatForecastEntry } from "../forecast-utils";
-import { formatTemperatureForUnit, parseStoryDateTime, WEATHER_WIND_DIRECTIONS } from "../shared";
-import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherState, WeatherWindDirection } from "../types";
+import {
+  WEATHER_SEASONS,
+  WEATHER_WIND_DIRECTIONS,
+  formatTemperatureForUnit,
+  parseStoryDateTime,
+} from "../shared";
+import type { ForecastEntry, WeatherCondition, WeatherPalette, WeatherPrefs, WeatherSeason, WeatherState, WeatherWindDirection } from "../types";
 
 const CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 const PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
@@ -69,6 +75,7 @@ function applyStateToInputs(
   fields: {
     conditionSelect: HTMLSelectElement;
     paletteSelect: HTMLSelectElement;
+    seasonSelect: HTMLSelectElement;
     locationInput: HTMLInputElement;
     dateInput: HTMLInputElement;
     timeInput: HTMLInputElement;
@@ -76,6 +83,7 @@ function applyStateToInputs(
     windInput: HTMLInputElement;
     windDirectionSelect: HTMLSelectElement;
     summaryInput: HTMLInputElement;
+    forecastInput: HTMLTextAreaElement;
     sceneIntensity: HTMLInputElement;
     sceneIntensityValue: HTMLSpanElement;
   },
@@ -89,6 +97,12 @@ function applyStateToInputs(
   if (state.wind) fields.windInput.value = state.wind;
   if (state.windDirection) fields.windDirectionSelect.value = state.windDirection;
   if (state.summary) fields.summaryInput.value = state.summary;
+  // An absent season means "no override", which the select represents as its
+  // empty derived option rather than leaving a stale explicit choice on screen.
+  fields.seasonSelect.value = state.season ?? "";
+  // Only an omitted forecast leaves the draft alone; an explicit empty list is a
+  // real change and must clear the field.
+  if (state.forecast !== undefined) fields.forecastInput.value = encodeForecastText(state.forecast);
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
     fields.sceneIntensity.value = state.intensity.toFixed(2);
     fields.sceneIntensityValue.textContent = `${Math.round(state.intensity * 100)}%`;
@@ -432,6 +446,15 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     `<option value="${direction}">${direction.charAt(0).toUpperCase()}${direction.slice(1)}</option>`,
   ).join("");
 
+  // An empty value means "no override", so the season keeps being derived from
+  // the story date instead of being frozen to whatever the date implied before.
+  const seasonSelect = document.createElement("select");
+  seasonSelect.className = "weather-settings-select";
+  seasonSelect.innerHTML = [
+    `<option value="">Derived from date</option>`,
+    ...WEATHER_SEASONS.map((season) => `<option value="${season}">${season.charAt(0).toUpperCase()}${season.slice(1)}</option>`),
+  ].join("");
+
   const windControls = document.createElement("div");
   windControls.className = "weather-settings-wind-controls";
   windControls.appendChild(windInput);
@@ -441,6 +464,21 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   summaryInput.type = "text";
   summaryInput.className = "weather-settings-input";
   summaryInput.placeholder = "Steady afternoon rain";
+
+  const forecastInput = document.createElement("textarea");
+  forecastInput.className = "weather-settings-input weather-settings-textarea";
+  forecastInput.rows = 3;
+  forecastInput.placeholder = "2026-01-16: snow, 30F, heavy flurries";
+  forecastInput.spellcheck = false;
+
+  const forecastHint = document.createElement("p");
+  forecastHint.className = "weather-settings-section-copy";
+  forecastHint.textContent = forecastTextHint();
+
+  const forecastField = document.createElement("div");
+  forecastField.className = "weather-settings-forecast-field";
+  forecastField.appendChild(forecastInput);
+  forecastField.appendChild(forecastHint);
 
   const sceneIntensityRow = document.createElement("div");
   sceneIntensityRow.className = "weather-settings-row";
@@ -463,6 +501,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const fields = {
     conditionSelect,
     paletteSelect,
+    seasonSelect,
     locationInput,
     dateInput,
     timeInput,
@@ -470,6 +509,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     windInput,
     windDirectionSelect,
     summaryInput,
+    forecastInput,
     sceneIntensity,
     sceneIntensityValue,
   };
@@ -483,7 +523,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     manualError.hidden = true;
   };
 
-  for (const field of [conditionSelect, paletteSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput]) {
+  for (const field of [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
@@ -498,6 +538,11 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     wind: windInput.value.trim() || currentState?.wind,
     windDirection: windDirectionSelect.value as WeatherWindDirection,
     palette: paletteSelect.value as WeatherPalette,
+    // An empty selection deliberately omits the override, so the season is
+    // re-derived from whatever date the user entered rather than being pinned to
+    // the season of the previous date.
+    season: (seasonSelect.value || undefined) as WeatherSeason | undefined,
+    forecast: decodeForecastText(forecastInput.value).entries,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual",
   });
@@ -522,6 +567,19 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       manualError.textContent = "Temperature must include a numeric value and F or C, such as 61F or 16C.";
       manualError.hidden = false;
       return;
+    }
+    // Forecast lines are validated from the editor text rather than from the
+    // decoded entries, because decoding drops unparseable lines and would
+    // otherwise apply a silently incomplete outlook.
+    if (state === undefined) {
+      const forecast = decodeForecastText(forecastInput.value);
+      if (forecast.invalidLines.length > 0) {
+        manualError.textContent = `Fix the outlook line "${
+          forecast.invalidLines[0].slice(0, 40)
+        }". Use one day per line, such as 2026-01-16: snow, 30F, heavy flurries.`;
+        manualError.hidden = false;
+        return;
+      }
     }
     manualDraftDirty = false;
     manualError.hidden = true;
@@ -561,12 +619,16 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualGrid.className = "weather-settings-manual-grid";
   manualGrid.appendChild(createLabeledInput("Condition", conditionSelect));
   manualGrid.appendChild(createLabeledInput("Palette", paletteSelect));
+  manualGrid.appendChild(createLabeledInput("Season", seasonSelect));
   manualGrid.appendChild(createLabeledInput("Location", locationInput));
   manualGrid.appendChild(createLabeledInput("Story date", dateInput));
   manualGrid.appendChild(createLabeledInput("Story time", timeInput));
   manualGrid.appendChild(createLabeledInput("Temperature", temperatureInput));
   manualGrid.appendChild(createLabeledInput("Wind", windControls));
   manualGrid.appendChild(createLabeledInput("Summary", summaryInput));
+
+  const forecastFieldLabel = createLabeledInput("Outlook", forecastField);
+  forecastFieldLabel.classList.add("weather-settings-manual-field", "weather-settings-manual-field-wide");
 
   const sceneIntensityLabel = createLabeledInput("Scene intensity", sceneIntensityRow);
 
@@ -601,6 +663,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualCard.appendChild(manualToggleLabel);
   manualCard.appendChild(presetGrid);
   manualCard.appendChild(manualGrid);
+  manualCard.appendChild(forecastFieldLabel);
   manualCard.appendChild(sceneIntensityLabel);
   manualCard.appendChild(manualActions);
 
@@ -678,6 +741,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       } else if (!state && !manualDraftDirty) {
         conditionSelect.value = "clear";
         paletteSelect.value = "day";
+        seasonSelect.value = "";
         locationInput.value = "";
         dateInput.value = "";
         timeInput.value = "";
@@ -685,6 +749,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         windInput.value = "";
         windDirectionSelect.value = "none";
         summaryInput.value = "";
+        forecastInput.value = "";
         sceneIntensity.value = "0.30";
         sceneIntensityValue.textContent = "30%";
       }
