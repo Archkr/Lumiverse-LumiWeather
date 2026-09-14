@@ -389,9 +389,9 @@ function normalizeTemperatureUnit(value, fallback) {
 function normalizeSource(value, fallback) {
   return value === "manual" || value === "story" ? value : fallback;
 }
-function normalizeSeason(value, fallback) {
+function normalizeSeason(value) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return WEATHER_SEASONS.includes(normalized) ? normalized : fallback;
+  return WEATHER_SEASONS.includes(normalized) ? normalized : null;
 }
 function normalizeClockMode(value, fallback) {
   return typeof value === "string" && WEATHER_CLOCK_MODES.includes(value) ? value : fallback;
@@ -422,6 +422,7 @@ function makeDefaultWeatherState(now = Date.now()) {
     windDirection: "none",
     palette: derivePalette("clear", dateValue, timeValue),
     season: seasonFromStoryDate(dateValue, timeValue) ?? "spring",
+    seasonOverride: null,
     forecast: [],
     updatedAt: now,
     source: "story"
@@ -443,6 +444,7 @@ function normalizeWeatherState(input, previous) {
   const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays;
   const forecast = forecastValue === undefined ? fallback.forecast : normalizeForecast(forecastValue);
   const derivedSeason = seasonFromStoryDate(date, time);
+  const seasonOverride = normalizeSeason(source.seasonOverride === undefined ? source.season : source.seasonOverride);
   const summary = normalizeTextWithTruncation(source.summary, fallback.summary, SUMMARY_MAX_LENGTH);
   return {
     location: normalizeText(source.location, fallback.location, 72),
@@ -455,7 +457,8 @@ function normalizeWeatherState(input, previous) {
     wind: normalizeText(source.wind, fallback.wind, 32),
     windDirection: normalizeWindDirection(windDirectionValue, fallback.windDirection),
     palette,
-    season: normalizeSeason(source.season, derivedSeason ?? fallback.season),
+    season: seasonOverride ?? derivedSeason ?? fallback.season,
+    seasonOverride,
     forecast,
     updatedAt,
     source: normalizeSource(source.source, fallback.source)
@@ -463,6 +466,21 @@ function normalizeWeatherState(input, previous) {
 }
 function normalizeWeatherTag(attrs, previous) {
   return normalizeWeatherState({ ...attrs, updatedAt: Date.now(), source: "story" }, previous);
+}
+function normalizeStoredWeatherState(input) {
+  const state = normalizeWeatherState(input);
+  if (isRecord(input) && input.seasonOverride === undefined) {
+    const derived = seasonFromStoryDate(state.date, state.time);
+    state.seasonOverride = state.season === derived ? null : state.season;
+  }
+  return state;
+}
+function applyManualWeatherState(previous, patch, now = Date.now()) {
+  const merged = { ...previous, ...patch, updatedAt: now, source: "manual" };
+  if (patch.seasonOverride === undefined && patch.season !== undefined) {
+    merged.seasonOverride = patch.season;
+  }
+  return normalizeWeatherState(merged, previous);
 }
 function normalizePrefs(input) {
   const source = isRecord(input) ? input : {};
@@ -668,20 +686,21 @@ function hasSameForecast(left, right) {
 function hasSameStoryScene(left, right) {
   if (!left || !right)
     return left === right;
-  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.season === right.season && left.source === right.source && hasSameForecast(left.forecast, right.forecast);
+  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.season === right.season && left.seasonOverride === right.seasonOverride && left.source === right.source && hasSameForecast(left.forecast, right.forecast);
 }
 
 // src/tag-dedupe.ts
 function buildTagDedupeKey(attrs) {
   const normalized = [];
-  for (const key of Object.keys(attrs).sort()) {
+  for (const key of Object.keys(attrs)) {
     const namespacedKey = key.trim().toLowerCase();
     if (!namespacedKey)
       continue;
     const value = typeof attrs[key] === "string" ? attrs[key].trim() : String(attrs[key] ?? "");
-    normalized.push(`${namespacedKey}=${value}`);
+    normalized.push([namespacedKey, value]);
   }
-  return normalized.join("\x01");
+  normalized.sort(([a, av], [b, bv]) => a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0);
+  return JSON.stringify(normalized);
 }
 
 // src/version.ts
@@ -829,7 +848,7 @@ async function loadStoryWeatherState(chatId) {
     const raw = await spindle.variables.local.get(chatId, WEATHER_STATE_VAR);
     if (!raw)
       return null;
-    return normalizeWeatherState(JSON.parse(raw));
+    return normalizeStoredWeatherState(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -847,7 +866,7 @@ async function loadManualWeatherState(chatId) {
     const raw = await spindle.variables.local.get(chatId, WEATHER_MANUAL_STATE_VAR);
     if (!raw)
       return null;
-    return normalizeWeatherState(JSON.parse(raw));
+    return normalizeStoredWeatherState(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -892,8 +911,9 @@ async function publishWeatherState(chatId, state, revision) {
 async function reconcileStoryWeatherState(userId, chatId, notifyFrontend = true) {
   const previousStory = await loadStoryWeatherState(chatId);
   const messages = await spindle.chat.getMessages(chatId);
-  const rebuiltStory = rebuildStoryWeatherState(messages);
-  const nextStory = hasSameStoryScene(previousStory, rebuiltStory) ? previousStory : rebuiltStory;
+  const rebuiltStory = rebuildStoryWeatherState(messages, previousStory?.updatedAt);
+  const unchanged = hasSameStoryScene(previousStory, rebuiltStory) && previousStory?.updatedAt === rebuiltStory?.updatedAt;
+  const nextStory = unchanged ? previousStory : rebuiltStory;
   const changed = nextStory !== previousStory;
   if (changed) {
     if (nextStory)
@@ -1074,7 +1094,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         const previous = await loadManualWeatherState(chatId) ?? await loadStoryWeatherState(chatId) ?? makeDefaultWeatherState();
-        const nextState = normalizeWeatherState({ ...previous, ...message.state, updatedAt: Date.now(), source: "manual" }, previous);
+        const nextState = applyManualWeatherState(previous, message.state);
         await saveManualWeatherState(chatId, nextState);
         const revision = await bumpWeatherRevision(chatId);
         await publishWeatherState(chatId, nextState, revision);

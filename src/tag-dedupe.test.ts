@@ -28,7 +28,14 @@ describe("weather tag dedupe key", () => {
   });
 
   test("ignores empty attribute names and handles no attributes", () => {
-    expect(buildTagDedupeKey({})).toBe("");
-    expect(buildTagDedupeKey({ "  ": "x" })).toBe("");
+    expect(buildTagDedupeKey({})).toBe("[]");
+    expect(buildTagDedupeKey({ "  ": "x" })).toBe("[]");
   });
+});
+
+test("normalizes names before ordering mixed-case attributes", () => {
+  expect(buildTagDedupeKey({ condition: "rain", Location: "Porch" }))
+    .toBe(buildTagDedupeKey({ condition: "rain", location: "Porch" }));
+  expect(buildTagDedupeKey({ a: "x\u0001b=y" }))
+    .not.toBe(buildTagDedupeKey({ a: "x", b: "y" }));
 });

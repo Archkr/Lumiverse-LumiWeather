@@ -99,6 +99,7 @@ export function hasSameStoryScene(left: WeatherState | null, right: WeatherState
     left.windDirection === right.windDirection &&
     left.palette === right.palette &&
     left.season === right.season &&
+    left.seasonOverride === right.seasonOverride &&
     left.source === right.source &&
     hasSameForecast(left.forecast, right.forecast)
   );

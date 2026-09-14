@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { decodeForecastText, encodeForecastText, forecastTextHint } from "./forecast-text";
 import { formatForecastEntry, normalizeForecast, serializeForecast } from "./forecast-utils";
-import { normalizeWeatherState, normalizeWeatherTag } from "./shared";
+import { applyManualWeatherState, normalizeWeatherState, normalizeWeatherTag } from "./shared";
 import type { ForecastEntry } from "./types";
 
 const sample: ForecastEntry[] = [
@@ -62,13 +62,11 @@ describe("manual scene edits carry the v1.4 state", () => {
     expect(applied.season).toBe("winter");
   });
 
-  test("re-derives the season when the editor omits it", () => {
-    // The editor sends `season: undefined` for "Derived from date", which must
-    // re-derive from the new date rather than keeping the previous season.
+  test("re-derives the season when the editor clears the override", () => {
     const previous = normalizeWeatherTag({ date: "2026-01-15", time: "3:00 PM", season: "winter" });
-    const applied = normalizeWeatherState(
-      { date: "2026-07-15", time: "3:00 PM", season: undefined, source: "manual" },
+    const applied = applyManualWeatherState(
       previous,
+      JSON.parse(JSON.stringify({ date: "2026-07-15", time: "3:00 PM", seasonOverride: null })),
     );
     expect(applied.season).toBe("summer");
   });

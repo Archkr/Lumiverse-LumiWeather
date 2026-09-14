@@ -172,9 +172,9 @@ function normalizeSource(value: unknown, fallback: WeatherSourceMode): WeatherSo
   return value === "manual" || value === "story" ? value : fallback;
 }
 
-function normalizeSeason(value: unknown, fallback: WeatherSeason): WeatherSeason {
+function normalizeSeason(value: unknown): WeatherSeason | null {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return WEATHER_SEASONS.includes(normalized as WeatherSeason) ? (normalized as WeatherSeason) : fallback;
+  return WEATHER_SEASONS.includes(normalized as WeatherSeason) ? (normalized as WeatherSeason) : null;
 }
 
 function normalizeClockMode(value: unknown, fallback: WeatherClockMode): WeatherClockMode {
@@ -208,6 +208,7 @@ export function makeDefaultWeatherState(now = Date.now()): WeatherState {
     windDirection: "none",
     palette: derivePalette("clear", dateValue, timeValue),
     season: seasonFromStoryDate(dateValue, timeValue) ?? "spring",
+    seasonOverride: null,
     forecast: [],
     updatedAt: now,
     source: "story",
@@ -233,6 +234,9 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
   const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays;
   const forecast = forecastValue === undefined ? fallback.forecast : normalizeForecast(forecastValue);
   const derivedSeason = seasonFromStoryDate(date, time);
+  const seasonOverride = normalizeSeason(
+    source.seasonOverride === undefined ? source.season : source.seasonOverride,
+  );
   const summary = normalizeTextWithTruncation(source.summary, fallback.summary, SUMMARY_MAX_LENGTH);
 
   return {
@@ -246,7 +250,8 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
     wind: normalizeText(source.wind, fallback.wind, 32),
     windDirection: normalizeWindDirection(windDirectionValue, fallback.windDirection),
     palette,
-    season: normalizeSeason(source.season, derivedSeason ?? fallback.season),
+    season: seasonOverride ?? derivedSeason ?? fallback.season,
+    seasonOverride,
     forecast,
     updatedAt,
     source: normalizeSource(source.source, fallback.source),
@@ -255,6 +260,26 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
 
 export function normalizeWeatherTag(attrs: Record<string, string>, previous?: WeatherState | null): WeatherState {
   return normalizeWeatherState({ ...attrs, updatedAt: Date.now(), source: "story" }, previous);
+}
+
+/** Upgrade persisted scenes without mistaking their resolved season for intent. */
+export function normalizeStoredWeatherState(input: unknown): WeatherState {
+  const state = normalizeWeatherState(input);
+  if (isRecord(input) && input.seasonOverride === undefined) {
+    const derived = seasonFromStoryDate(state.date, state.time);
+    state.seasonOverride = state.season === derived ? null : state.season;
+  }
+  return state;
+}
+
+/** Apply a transport-safe manual patch while preserving untouched fields. */
+export function applyManualWeatherState(previous: WeatherState, patch: Partial<WeatherState>, now = Date.now()): WeatherState {
+  const merged = { ...previous, ...patch, updatedAt: now, source: "manual" };
+  // Older callers can still set an explicit season without the new metadata.
+  if (patch.seasonOverride === undefined && patch.season !== undefined) {
+    merged.seasonOverride = patch.season;
+  }
+  return normalizeWeatherState(merged, previous);
 }
 
 export function formatTemperatureForUnit(value: string, unit: TemperatureUnit): string {

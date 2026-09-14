@@ -65,6 +65,8 @@ export interface WeatherState {
   windDirection: WeatherWindDirection;
   palette: WeatherPalette;
   season: WeatherSeason;
+  /** Null derives from the date; absent on pre-fix persisted states. */
+  seasonOverride?: WeatherSeason | null;
   forecast: ForecastEntry[];
   updatedAt: number;
   source: WeatherSourceMode;

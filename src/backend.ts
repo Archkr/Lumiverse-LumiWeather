@@ -21,7 +21,8 @@ import {
   WEATHER_STATE_VAR,
   makeDefaultWeatherState,
   normalizePrefs,
-  normalizeWeatherState,
+  normalizeStoredWeatherState,
+  applyManualWeatherState,
   normalizeWeatherTag,
 } from "./shared";
 import { selectEffectiveWeatherState } from "./state-utils";
@@ -110,7 +111,7 @@ async function loadStoryWeatherState(chatId: string): Promise<WeatherState | nul
   try {
     const raw = await spindle.variables.local.get(chatId, WEATHER_STATE_VAR);
     if (!raw) return null;
-    return normalizeWeatherState(JSON.parse(raw));
+    return normalizeStoredWeatherState(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -132,7 +133,7 @@ async function loadManualWeatherState(chatId: string): Promise<WeatherState | nu
   try {
     const raw = await spindle.variables.local.get(chatId, WEATHER_MANUAL_STATE_VAR);
     if (!raw) return null;
-    return normalizeWeatherState(JSON.parse(raw));
+    return normalizeStoredWeatherState(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -193,8 +194,11 @@ async function reconcileStoryWeatherState(
 ): Promise<WeatherState | null> {
   const previousStory = await loadStoryWeatherState(chatId);
   const messages = await spindle.chat.getMessages(chatId);
-  const rebuiltStory = rebuildStoryWeatherState(messages);
-  const nextStory = hasSameStoryScene(previousStory, rebuiltStory) ? previousStory : rebuiltStory;
+  // Missing timestamps have no new observation time; avoid revision churn on replay.
+  const rebuiltStory = rebuildStoryWeatherState(messages, previousStory?.updatedAt);
+  const unchanged = hasSameStoryScene(previousStory, rebuiltStory)
+    && previousStory?.updatedAt === rebuiltStory?.updatedAt;
+  const nextStory = unchanged ? previousStory : rebuiltStory;
   const changed = nextStory !== previousStory;
 
   if (changed) {
@@ -405,10 +409,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           (await loadManualWeatherState(chatId)) ??
           (await loadStoryWeatherState(chatId)) ??
           makeDefaultWeatherState();
-        const nextState = normalizeWeatherState(
-          { ...previous, ...message.state, updatedAt: Date.now(), source: "manual" },
-          previous,
-        );
+        const nextState = applyManualWeatherState(previous, message.state);
         await saveManualWeatherState(chatId, nextState);
         const revision = await bumpWeatherRevision(chatId);
         await publishWeatherState(chatId, nextState, revision);

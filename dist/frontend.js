@@ -370,6 +370,7 @@ function makeDefaultWeatherState(now = Date.now()) {
     windDirection: "none",
     palette: derivePalette("clear", dateValue, timeValue),
     season: seasonFromStoryDate(dateValue, timeValue) ?? "spring",
+    seasonOverride: null,
     forecast: [],
     updatedAt: now,
     source: "story"
@@ -1228,7 +1229,7 @@ function applyStateToInputs(state, fields) {
     fields.windDirectionSelect.value = state.windDirection;
   if (state.summary)
     fields.summaryInput.value = state.summary;
-  fields.seasonSelect.value = state.season ?? "";
+  fields.seasonSelect.value = state.seasonOverride ?? "";
   if (state.forecast !== undefined)
     fields.forecastInput.value = encodeForecastText(state.forecast);
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
@@ -1582,7 +1583,7 @@ function createSettingsUI(sendToBackend) {
     wind: windInput.value.trim() || currentState?.wind,
     windDirection: windDirectionSelect.value,
     palette: paletteSelect.value,
-    season: seasonSelect.value || undefined,
+    seasonOverride: seasonSelect.value || null,
     forecast: decodeForecastText(forecastInput.value).entries,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual"
@@ -3182,6 +3183,10 @@ var WEATHER_HUD_CSS = `
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.weather-hud-drawer-section[hidden] {
+  display: none;
+}
+
 .weather-hud-forecast {
   display: grid;
   gap: 4px;
@@ -3303,6 +3308,10 @@ var WEATHER_HUD_CSS = `
   opacity: 0;
   isolation: isolate;
   contain: paint;
+  transition: opacity 320ms ease;
+}
+
+.weather-fx-root.weather-scene-blending {
   transition:
     opacity 320ms ease,
     --weather-bg-start 1200ms ease,
@@ -3311,6 +3320,10 @@ var WEATHER_HUD_CSS = `
     --weather-glow 900ms ease,
     --weather-beam-color 900ms ease,
     --weather-horizon-color 900ms ease,
+    --weather-cloud-core 900ms ease,
+    --weather-cloud-edge 900ms ease,
+    --weather-fog-color 900ms ease,
+    --weather-mist-color 900ms ease,
     --weather-sky-opacity 800ms ease,
     --weather-glow-opacity 800ms ease,
     --weather-beam-opacity 800ms ease,
@@ -4864,16 +4877,16 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     }
     presetsSection.appendChild(presetsLabel);
     presetsSection.appendChild(presetGrid);
-    const forecastSection2 = document.createElement("div");
-    forecastSection2.className = "weather-hud-drawer-section";
-    forecastSection2.hidden = true;
+    forecastSection = document.createElement("div");
+    forecastSection.className = "weather-hud-drawer-section";
+    forecastSection.hidden = true;
     forecastLabel = document.createElement("span");
     forecastLabel.className = "weather-hud-section-label";
     forecastLabel.textContent = "Outlook";
     forecastList = document.createElement("div");
     forecastList.className = "weather-hud-forecast";
-    forecastSection2.appendChild(forecastLabel);
-    forecastSection2.appendChild(forecastList);
+    forecastSection.appendChild(forecastLabel);
+    forecastSection.appendChild(forecastList);
     const controlsSection = document.createElement("div");
     controlsSection.className = "weather-hud-drawer-section";
     const controlsLabel = document.createElement("span");
@@ -4952,7 +4965,7 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     actionsSection.appendChild(actionRow);
     drawer.appendChild(modeSection);
     drawer.appendChild(presetsSection);
-    drawer.appendChild(forecastSection2);
+    drawer.appendChild(forecastSection);
     drawer.appendChild(controlsSection);
     drawer.appendChild(actionsSection);
     root.appendChild(drawer);
@@ -5141,6 +5154,7 @@ function syncHudState(hud, prefs, state, expanded) {
       }
     } else if (hud.forecastList.dataset.forecastKey) {
       hud.forecastList.dataset.forecastKey = "";
+      hud.forecastList.replaceChildren();
     }
   }
 }
@@ -5195,30 +5209,26 @@ function writeSceneTokens(root, tokens) {
     root.root.style.setProperty(property, tokenCssValue(tokens[key]));
   }
 }
-function applySceneBlend(root, from, to) {
-  if (root.blendTimer !== null) {
+function applySceneBlend(root, to, onComplete) {
+  if (root.blendTimer !== null)
     window.clearTimeout(root.blendTimer);
-    root.blendTimer = null;
-  }
-  for (const [property, key] of TRANSITIONED_TOKENS) {
-    root.root.style.setProperty(property, tokenCssValue(from[key]));
-  }
+  root.root.classList.add("weather-scene-blending");
   root.root.offsetWidth;
   writeSceneTokens(root, to);
   root.blendTimer = window.setTimeout(() => {
     root.blendTimer = null;
-    for (const [property, key] of TRANSITIONED_TOKENS) {
-      root.root.style.setProperty(property, tokenCssValue(to[key]));
-    }
+    root.root.classList.remove("weather-scene-blending");
+    onComplete();
   }, SCENE_TRANSITION_MS);
 }
 function clearSceneBlend(root) {
+  root.root.classList.remove("weather-scene-blending");
   if (root.blendTimer !== null) {
     window.clearTimeout(root.blendTimer);
     root.blendTimer = null;
   }
 }
-function applySceneState(root, state, prefs, reducedMotion) {
+function applySceneState(root, state, prefs, reducedMotion, onBlendComplete) {
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const tokens = resolveSceneTokens(state, effectiveIntensity);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
@@ -5242,10 +5252,10 @@ function applySceneState(root, state, prefs, reducedMotion) {
     snowOpacity: tokens.snowOpacity * (isFront ? 0.96 : 0.82)
   };
   const nextKey = sceneKeyFor(state, effectiveIntensity, prefs);
-  const canBlend = prefs.transitionsEnabled && sceneTransitionsSupported && !reducedMotion && !prefs.pauseEffects && document.visibilityState !== "hidden" && root.sceneTokens !== null && root.sceneKey !== nextKey && root.root.classList.contains("weather-visible");
-  if (canBlend && root.sceneTokens) {
-    applySceneBlend(root, root.sceneTokens, resolvedTokens);
-  } else {
+  const canBlend = prefs.effectsEnabled && (prefs.layerMode === "both" || prefs.layerMode === root.kind) && prefs.transitionsEnabled && sceneTransitionsSupported && !reducedMotion && !prefs.pauseEffects && document.visibilityState !== "hidden" && root.sceneTokens !== null && root.root.classList.contains("weather-visible");
+  if (canBlend && root.sceneKey !== nextKey) {
+    applySceneBlend(root, resolvedTokens, onBlendComplete);
+  } else if (!canBlend || root.blendTimer === null) {
     clearSceneBlend(root);
     writeSceneTokens(root, resolvedTokens);
   }
@@ -5392,6 +5402,8 @@ function setup(ctx) {
       hostSyncFrame = null;
     }
     stopHostObserver();
+    clearSceneBlend(backFx);
+    clearSceneBlend(frontFx);
     destroyProceduralFog(backFx.root);
     destroyProceduralFog(frontFx.root);
     detachFxRoot(backFx);
@@ -5499,18 +5511,28 @@ function setup(ctx) {
   coarsePointerMedia.addEventListener("change", onCoarsePointerChange);
   cleanups.push(() => coarsePointerMedia.removeEventListener("change", onCoarsePointerChange));
   let flashTimer = null;
+  const flashCleanupTimers = new Set;
+  const scheduleFlashCleanup = (callback, delay) => {
+    const timer = window.setTimeout(() => {
+      flashCleanupTimers.delete(timer);
+      callback();
+    }, delay);
+    flashCleanupTimers.add(timer);
+  };
   const resetFlashTimer = () => {
     if (flashTimer !== null) {
       window.clearTimeout(flashTimer);
       flashTimer = null;
     }
   };
+  let disposed = false;
+  const canRunLightning = () => !disposed && currentState?.condition === "storm" && !getReducedMotion() && !currentPrefs.pauseEffects && currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId;
   const scheduleStormFlash = () => {
     resetFlashTimer();
-    const sceneBlending = backFx.blendTimer !== null && currentState?.condition === "storm" && !getReducedMotion() && !currentPrefs.pauseEffects && currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId;
-    if (sceneBlending)
-      return;
-    if (currentState?.condition !== "storm" || getReducedMotion() || currentPrefs.pauseEffects || !currentPrefs.effectsEnabled || document.visibilityState === "hidden" || !activeChatId) {
+    if (!canRunLightning()) {
+      for (const timer of flashCleanupTimers)
+        window.clearTimeout(timer);
+      flashCleanupTimers.clear();
       backFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-lightning-glow-flash");
@@ -5519,7 +5541,14 @@ function setup(ctx) {
       });
       return;
     }
+    if (backFx.blendTimer !== null || frontFx.blendTimer !== null)
+      return;
     const trigger = () => {
+      flashTimer = null;
+      if (!canRunLightning() || backFx.blendTimer !== null || frontFx.blendTimer !== null) {
+        scheduleStormFlash();
+        return;
+      }
       if (currentPrefs.lightningFlashEnabled) {
         backFx.root.classList.add("weather-storm-flash");
         frontFx.root.classList.add("weather-storm-flash");
@@ -5536,11 +5565,11 @@ function setup(ctx) {
         frontFx.root.classList.remove("weather-lightning-glow-flash");
         frontFx.root.offsetWidth;
         frontFx.root.classList.add("weather-lightning-glow-flash");
-        window.setTimeout(() => {
+        scheduleFlashCleanup(() => {
           bolt.classList.remove("weather-lightning-strike");
         }, 700);
       }
-      window.setTimeout(() => {
+      scheduleFlashCleanup(() => {
         backFx.root.classList.remove("weather-storm-flash");
         frontFx.root.classList.remove("weather-storm-flash");
         frontFx.root.classList.remove("weather-lightning-glow-flash");
@@ -5561,8 +5590,8 @@ function setup(ctx) {
       syncHudState(hud, currentPrefs, currentState, hudExpanded);
     }
     settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : permissionWarning ?? undefined);
-    applySceneState(backFx, sceneState, currentPrefs, reducedMotion);
-    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion);
+    applySceneState(backFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
+    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
     const showBack = showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both");
     const showFront = showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both");
     setFxVisibility(backFx, showBack);
@@ -5695,7 +5724,8 @@ function setup(ctx) {
     }
   }).catch(() => {});
   return () => {
-    resetFlashTimer();
+    disposed = true;
+    scheduleStormFlash();
     for (const cleanup of cleanups.reverse())
       cleanup();
   };

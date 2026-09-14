@@ -99,7 +99,7 @@ function applyStateToInputs(
   if (state.summary) fields.summaryInput.value = state.summary;
   // An absent season means "no override", which the select represents as its
   // empty derived option rather than leaving a stale explicit choice on screen.
-  fields.seasonSelect.value = state.season ?? "";
+  fields.seasonSelect.value = state.seasonOverride ?? "";
   // Only an omitted forecast leaves the draft alone; an explicit empty list is a
   // real change and must clear the field.
   if (state.forecast !== undefined) fields.forecastInput.value = encodeForecastText(state.forecast);
@@ -538,10 +538,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     wind: windInput.value.trim() || currentState?.wind,
     windDirection: windDirectionSelect.value as WeatherWindDirection,
     palette: paletteSelect.value as WeatherPalette,
-    // An empty selection deliberately omits the override, so the season is
-    // re-derived from whatever date the user entered rather than being pinned to
-    // the season of the previous date.
-    season: (seasonSelect.value || undefined) as WeatherSeason | undefined,
+    // Null survives JSON transport and explicitly clears the previous override.
+    seasonOverride: (seasonSelect.value || null) as WeatherSeason | null,
     forecast: decodeForecastText(forecastInput.value).entries,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual",

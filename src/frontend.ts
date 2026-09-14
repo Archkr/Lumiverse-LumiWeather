@@ -980,7 +980,7 @@ function createHudWidget(
     presetsSection.appendChild(presetsLabel);
     presetsSection.appendChild(presetGrid);
 
-    const forecastSection = document.createElement("div");
+    forecastSection = document.createElement("div");
     forecastSection.className = "weather-hud-drawer-section";
     forecastSection.hidden = true;
     forecastLabel = document.createElement("span");
@@ -1327,6 +1327,7 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
       }
     } else if (hud.forecastList.dataset.forecastKey) {
       hud.forecastList.dataset.forecastKey = "";
+      hud.forecastList.replaceChildren();
     }
   }
 }
@@ -1401,45 +1402,28 @@ function writeSceneTokens(root: FxRoot, tokens: ResolvedSceneTokens): void {
   }
 }
 
-/**
- * Seeds the layer with the previous scene's values, then commits the new ones.
- *
- * `@property`-registered custom properties already carry CSS transitions, but an
- * inline value only animates when it actually changes. Each property is therefore
- * pinned to its previous value and the layer is flushed, which makes the
- * subsequent write a genuine change that the existing transitions can
- * interpolate. Without this the scene swapped instantly.
- */
-function applySceneBlend(root: FxRoot, from: ResolvedSceneTokens, to: ResolvedSceneTokens): void {
-  if (root.blendTimer !== null) {
-    window.clearTimeout(root.blendTimer);
-    root.blendTimer = null;
-  }
-
-  for (const [property, key] of TRANSITIONED_TOKENS) {
-    root.root.style.setProperty(property, tokenCssValue(from[key]));
-  }
+/** Animate from the currently painted values, including an interrupted blend. */
+function applySceneBlend(root: FxRoot, to: ResolvedSceneTokens, onComplete: () => void): void {
+  if (root.blendTimer !== null) window.clearTimeout(root.blendTimer);
+  root.root.classList.add("weather-scene-blending");
   void root.root.offsetWidth;
   writeSceneTokens(root, to);
-
-  // Release the pinned start values once the transitions have finished so the
-  // stylesheet's current values are what remain authoritative.
   root.blendTimer = window.setTimeout(() => {
     root.blendTimer = null;
-    for (const [property, key] of TRANSITIONED_TOKENS) {
-      root.root.style.setProperty(property, tokenCssValue(to[key]));
-    }
+    root.root.classList.remove("weather-scene-blending");
+    onComplete();
   }, SCENE_TRANSITION_MS);
 }
 
 function clearSceneBlend(root: FxRoot): void {
+  root.root.classList.remove("weather-scene-blending");
   if (root.blendTimer !== null) {
     window.clearTimeout(root.blendTimer);
     root.blendTimer = null;
   }
 }
 
-function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs, reducedMotion: boolean): void {
+function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs, reducedMotion: boolean, onBlendComplete: () => void): void {
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const tokens = resolveSceneTokens(state, effectiveIntensity);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
@@ -1469,19 +1453,20 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
 
   const nextKey = sceneKeyFor(state, effectiveIntensity, prefs);
   const canBlend =
+    prefs.effectsEnabled &&
+    (prefs.layerMode === "both" || prefs.layerMode === root.kind) &&
     prefs.transitionsEnabled &&
     sceneTransitionsSupported &&
     !reducedMotion &&
     !prefs.pauseEffects &&
     document.visibilityState !== "hidden" &&
     root.sceneTokens !== null &&
-    root.sceneKey !== nextKey &&
     // A layer being revealed has its own opacity fade; blending would double up.
     root.root.classList.contains("weather-visible");
 
-  if (canBlend && root.sceneTokens) {
-    applySceneBlend(root, root.sceneTokens, resolvedTokens);
-  } else {
+  if (canBlend && root.sceneKey !== nextKey) {
+    applySceneBlend(root, resolvedTokens, onBlendComplete);
+  } else if (!canBlend || root.blendTimer === null) {
     clearSceneBlend(root);
     writeSceneTokens(root, resolvedTokens);
   }
@@ -1674,6 +1659,8 @@ export function setup(ctx: SpindleFrontendContext) {
       hostSyncFrame = null;
     }
     stopHostObserver();
+    clearSceneBlend(backFx);
+    clearSceneBlend(frontFx);
     destroyProceduralFog(backFx.root);
     destroyProceduralFog(frontFx.root);
     detachFxRoot(backFx);
@@ -1796,6 +1783,14 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(() => coarsePointerMedia.removeEventListener("change", onCoarsePointerChange));
 
   let flashTimer: number | null = null;
+  const flashCleanupTimers = new Set<number>();
+  const scheduleFlashCleanup = (callback: () => void, delay: number) => {
+    const timer = window.setTimeout(() => {
+      flashCleanupTimers.delete(timer);
+      callback();
+    }, delay);
+    flashCleanupTimers.add(timer);
+  };
 
   const resetFlashTimer = () => {
     if (flashTimer !== null) {
@@ -1804,30 +1799,18 @@ export function setup(ctx: SpindleFrontendContext) {
     }
   };
 
+  let disposed = false;
+  const canRunLightning = () => !disposed &&
+    currentState?.condition === "storm" && !getReducedMotion() &&
+    !currentPrefs.pauseEffects && currentPrefs.effectsEnabled &&
+    document.visibilityState !== "hidden" && !!activeChatId;
+
   const scheduleStormFlash = () => {
     resetFlashTimer();
 
-    // A strike landing mid-blend competes with the transition, so the cadence
-    // simply stops rescheduling while a blend is in flight and picks up on the
-    // next scene update, leaving any in-progress bolt animation to finish.
-    const sceneBlending =
-      backFx.blendTimer !== null &&
-      currentState?.condition === "storm" &&
-      !getReducedMotion() &&
-      !currentPrefs.pauseEffects &&
-      currentPrefs.effectsEnabled &&
-      document.visibilityState !== "hidden" &&
-      !!activeChatId;
-    if (sceneBlending) return;
-
-    if (
-      currentState?.condition !== "storm" ||
-      getReducedMotion() ||
-      currentPrefs.pauseEffects ||
-      !currentPrefs.effectsEnabled ||
-      document.visibilityState === "hidden" ||
-      !activeChatId
-    ) {
+    if (!canRunLightning()) {
+      for (const timer of flashCleanupTimers) window.clearTimeout(timer);
+      flashCleanupTimers.clear();
       backFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-lightning-glow-flash");
@@ -1837,7 +1820,14 @@ export function setup(ctx: SpindleFrontendContext) {
       return;
     }
 
+    if (backFx.blendTimer !== null || frontFx.blendTimer !== null) return;
+
     const trigger = () => {
+      flashTimer = null;
+      if (!canRunLightning() || backFx.blendTimer !== null || frontFx.blendTimer !== null) {
+        scheduleStormFlash();
+        return;
+      }
       if (currentPrefs.lightningFlashEnabled) {
         backFx.root.classList.add("weather-storm-flash");
         frontFx.root.classList.add("weather-storm-flash");
@@ -1858,12 +1848,12 @@ export function setup(ctx: SpindleFrontendContext) {
         void frontFx.root.offsetWidth;
         frontFx.root.classList.add("weather-lightning-glow-flash");
 
-        window.setTimeout(() => {
+        scheduleFlashCleanup(() => {
           bolt.classList.remove("weather-lightning-strike");
         }, 700);
       }
 
-      window.setTimeout(() => {
+      scheduleFlashCleanup(() => {
         backFx.root.classList.remove("weather-storm-flash");
         frontFx.root.classList.remove("weather-storm-flash");
         frontFx.root.classList.remove("weather-lightning-glow-flash");
@@ -1888,8 +1878,8 @@ export function setup(ctx: SpindleFrontendContext) {
       syncHudState(hud, currentPrefs, currentState, hudExpanded);
     }
     settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : permissionWarning ?? undefined);
-    applySceneState(backFx, sceneState, currentPrefs, reducedMotion);
-    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion);
+    applySceneState(backFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
+    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
     const showBack = showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both");
     const showFront = showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both");
     setFxVisibility(backFx, showBack);
@@ -2029,7 +2019,8 @@ export function setup(ctx: SpindleFrontendContext) {
   });
 
   return () => {
-    resetFlashTimer();
+    disposed = true;
+    scheduleStormFlash();
     for (const cleanup of cleanups.reverse()) cleanup();
   };
 }

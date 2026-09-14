@@ -1408,6 +1408,10 @@ export const WEATHER_HUD_CSS = `
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.weather-hud-drawer-section[hidden] {
+  display: none;
+}
+
 .weather-hud-forecast {
   display: grid;
   gap: 4px;
@@ -1529,6 +1533,10 @@ export const WEATHER_HUD_CSS = `
   opacity: 0;
   isolation: isolate;
   contain: paint;
+  transition: opacity 320ms ease;
+}
+
+.weather-fx-root.weather-scene-blending {
   transition:
     opacity 320ms ease,
     --weather-bg-start 1200ms ease,
@@ -1537,6 +1545,10 @@ export const WEATHER_HUD_CSS = `
     --weather-glow 900ms ease,
     --weather-beam-color 900ms ease,
     --weather-horizon-color 900ms ease,
+    --weather-cloud-core 900ms ease,
+    --weather-cloud-edge 900ms ease,
+    --weather-fog-color 900ms ease,
+    --weather-mist-color 900ms ease,
     --weather-sky-opacity 800ms ease,
     --weather-glow-opacity 800ms ease,
     --weather-beam-opacity 800ms ease,
