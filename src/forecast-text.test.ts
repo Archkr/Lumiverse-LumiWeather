@@ -33,7 +33,7 @@ describe("manual outlook editor text", () => {
     expect(decoded.invalidLines).toEqual(["not a date", "tomorrow: rain"]);
   });
 
-  test("accepts exactly the same text the tag attribute accepts", () => {
+  test("accepts the same daily entry format as the tag attribute", () => {
     // The editor and the hidden tag share one parser, so anything the model may
     // emit is also expressible by hand.
     const tagValue = "2026-01-16: snow, 30F, heavy flurries | 2026-01-17: cloudy, 34F";
@@ -48,8 +48,30 @@ describe("manual outlook editor text", () => {
     expect(decodeForecastText("   \n  ").entries).toEqual([]);
   });
 
+  test("reports extra days before backend normalization can drop them", () => {
+    const decoded = decodeForecastText(Array.from({ length: 6 }, (_, index) => `2026-01-${16 + index}: snow`).join("\n"));
+    expect(decoded.entries).toHaveLength(6);
+    expect(decoded.exceedsDayLimit).toBe(true);
+    expect(decoded.invalidLines).toEqual([]);
+    expect(decodeForecastText(encodeForecastText(decoded.entries.slice(0, 5))).exceedsDayLimit).toBe(false);
+  });
+
+  test("reports duplicate dates instead of silently replacing a day's entry", () => {
+    const decoded = decodeForecastText("2026-01-16: snow\n2026-01-16: rain\n2026-01-16: cloudy");
+    expect(decoded.entries).toHaveLength(3);
+    expect(decoded.duplicateDates).toEqual(["2026-01-16"]);
+    expect(decoded.exceedsDayLimit).toBe(false);
+  });
+
+  test("counts distinct days when detecting the day limit", () => {
+    const decoded = decodeForecastText(Array.from({ length: 6 }, () => "2026-01-16: snow").join("\n"));
+    expect(decoded.exceedsDayLimit).toBe(false);
+    expect(decoded.duplicateDates).toEqual(["2026-01-16"]);
+  });
+
   test("describes the expected input", () => {
     expect(forecastTextHint()).toContain("2026-01-16: snow, 30F");
+    expect(forecastTextHint()).toContain("Up to 5 days");
   });
 });
 

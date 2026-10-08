@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildPresetWeatherState, matchWeatherScenePreset } from "./presets";
+import { isRealCalendarDate } from "./forecast-utils";
 import { makeDefaultWeatherState, normalizeWeatherState } from "./shared";
 
 describe("weather scene presets", () => {
@@ -14,5 +15,11 @@ describe("weather scene presets", () => {
   test("matches an exact preset state", () => {
     const state = normalizeWeatherState({ ...makeDefaultWeatherState(), ...buildPresetWeatherState("snow") });
     expect(matchWeatherScenePreset(state)).toBe("snow");
+  });
+
+  test("repairs an impossible calendar date before applying a preset", () => {
+    const current = { ...makeDefaultWeatherState(), date: "2026-02-30" };
+    const preset = buildPresetWeatherState("rain", current);
+    expect(isRealCalendarDate(preset!.date!)).toBe(true);
   });
 });

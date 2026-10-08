@@ -26,6 +26,7 @@ import {
   formatTemperatureForUnit,
   makeDefaultWeatherState,
   parseHourFromTimeString,
+  parseStoryDateTime,
 } from "./shared";
 import type {
   BackendToFrontend,
@@ -771,6 +772,14 @@ function createHudWidget(
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-label", "LumiWeather controls");
   }
+  if (expanded) {
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      callbacks.onToggleDrawer();
+    });
+  }
 
   let launcherButton: HTMLButtonElement | undefined;
   let launcherIcon: HTMLSpanElement | undefined;
@@ -1133,6 +1142,7 @@ function renderForecastStrip(list: HTMLDivElement, entries: ForecastEntry[], uni
     const day = document.createElement("span");
     day.className = "weather-hud-forecast-day";
     day.textContent = formatForecastDayLabel(entry.date);
+    day.title = entry.date;
 
     const icon = document.createElement("span");
     icon.className = "weather-hud-forecast-icon";
@@ -1144,7 +1154,13 @@ function renderForecastStrip(list: HTMLDivElement, entries: ForecastEntry[], uni
     text.textContent = entry.temperature
       ? `${entry.condition} · ${formatTemperatureForUnit(entry.temperature, unit)}`
       : entry.condition;
-    text.title = entry.summary;
+    if (entry.summary) {
+      const summary = document.createElement("span");
+      summary.className = "weather-hud-forecast-summary";
+      summary.textContent = entry.summary;
+      text.appendChild(summary);
+    }
+    text.title = [entry.date, entry.condition, entry.temperature, entry.summary].filter(Boolean).join(" · ");
 
     row.appendChild(day);
     row.appendChild(icon);
@@ -1155,11 +1171,9 @@ function renderForecastStrip(list: HTMLDivElement, entries: ForecastEntry[], uni
 
 /** `Fri` for the next day, falling back to the raw date when it cannot be parsed. */
 function formatForecastDayLabel(dateValue: string): string {
-  const match = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return dateValue;
-  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  if (Number.isNaN(parsed.getTime())) return dateValue;
-  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(parsed);
+  const timestamp = parseStoryDateTime(dateValue, "12:00");
+  if (timestamp === null) return dateValue;
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" }).format(timestamp);
 }
 
 /**
@@ -1218,7 +1232,7 @@ function syncHudClock(hud: HudElements, displayState: WeatherState, hasState: bo
   hud.root.dataset.clockSource = liveDate ? "live" : "story";
 }
 
-function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState | null, expanded: boolean): void {
+function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState | null, expanded: boolean, hasActiveChat: boolean): void {
   const displayState = state ?? makeDefaultWeatherState();
   const liveDate = resolveClockDate(displayState, prefs.clockMode);
   const phase = resolveHudTimePhase(displayState, liveDate);
@@ -1248,15 +1262,20 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
   hud.summary.textContent = summaryText;
+  hud.summary.title = summaryText;
   hud.summary.dataset.tickerText = summaryText;
   hud.wind.textContent = state
     ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`
     : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
+  hud.location.title = hud.location.textContent;
+  hud.wind.title = hud.wind.textContent;
   // A missing interceptor permission used to be visible only inside the settings
   // panel; surface it on the HUD itself, where the user is already looking.
   const permissionLimited = hud.root.dataset.permission === "limited";
-  hud.source.textContent = permissionLimited
+  hud.source.textContent = hud.root.dataset.error === "true"
+    ? "Update failed"
+    : permissionLimited
     ? "Permission needed"
     : state
       ? displayState.source === "manual" ? "Scene lock" : "Story sync"
@@ -1284,6 +1303,8 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   if (hud.storyButton && hud.manualButton) {
     hud.storyButton.classList.toggle("weather-hud-chip-active", state?.source === "story");
     hud.manualButton.classList.toggle("weather-hud-chip-active", state?.source === "manual");
+    hud.storyButton.setAttribute("aria-pressed", String(state?.source === "story"));
+    hud.manualButton.setAttribute("aria-pressed", String(state?.source === "manual"));
     hud.storyButton.disabled = !state || state.source === "story";
     hud.manualButton.disabled = !state;
   }
@@ -1291,6 +1312,8 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   const activePresetId = matchWeatherScenePreset(state);
   for (const [presetId, button] of hud.presetButtons) {
     button.classList.toggle("weather-hud-preset-active", presetId === activePresetId);
+    button.setAttribute("aria-pressed", String(presetId === activePresetId));
+    button.disabled = !hasActiveChat;
   }
 
   if (hud.layerSelect) {
@@ -1305,6 +1328,7 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   if (hud.pauseButton) {
     hud.pauseButton.textContent = prefs.pauseEffects ? "Resume motion" : "Pause motion";
     hud.pauseButton.classList.toggle("weather-hud-control-active", prefs.pauseEffects);
+    hud.pauseButton.setAttribute("aria-pressed", String(prefs.pauseEffects));
   }
 
   if (hud.resumeButton) {
@@ -1541,7 +1565,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let activeChatRequestId = 0;
   let hudExpanded = false;
   let permissionWarning: string | null = null;
-  const processedWeatherTags = new Map<string, string>();
+  let backendWarning: string | null = null;
   let keyboardState = ctx.ui.events.getKeyboardState();
   const coarsePointerMedia = window.matchMedia("(pointer: coarse)");
   let mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointerMedia.matches);
@@ -1635,12 +1659,9 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const ensureHostObserver = () => {
     if (hostObserver || !document.body) return;
-    hostObserver = new MutationObserver(() => {
-      if (attachFxRoots()) {
-        updateScene();
-      }
-      if (backFx.host?.isConnected && frontFx.host?.isConnected) stopHostObserver();
-    });
+    // Chat/background hosts can be replaced without a route or viewport change.
+    // Keep watching and coalesce mutations so those replacements recover too.
+    hostObserver = new MutationObserver(() => queueFxRootAttach());
     hostObserver.observe(document.body, { childList: true, subtree: true });
   };
 
@@ -1649,8 +1670,7 @@ export function setup(ctx: SpindleFrontendContext) {
     hostSyncFrame = window.requestAnimationFrame(() => {
       const changed = attachFxRoots();
       if (changed) updateScene();
-      if (backFx.host?.isConnected && frontFx.host?.isConnected) stopHostObserver();
-      else ensureHostObserver();
+      ensureHostObserver();
     });
   };
   cleanups.push(() => {
@@ -1701,11 +1721,13 @@ export function setup(ctx: SpindleFrontendContext) {
     destroyHud();
     hud = createHudWidget(ctx, nextPosition, hudExpanded, mobileHudLayout, keyboardState, {
       onToggleDrawer: () => {
+        const restoreFocus = !!hud?.root.contains(document.activeElement);
         const currentPosition = hud && !hud.widget.isFullscreen() ? hud.widget.getPosition() : windowedHudPosition;
         windowedHudPosition = currentPosition;
         hudExpanded = !hudExpanded;
         buildHud(currentPosition);
         updateScene();
+        if (restoreFocus && hud) (hud.launcherButton ?? hud.drawerToggle).focus({ preventScroll: true });
       },
       onOpenSettings: () => {
         ctx.events.emit("open-settings", { view: "extensions" });
@@ -1729,11 +1751,12 @@ export function setup(ctx: SpindleFrontendContext) {
         sendToBackend(ctx, { type: "save_prefs", prefs: { pauseEffects: !currentPrefs.pauseEffects } });
       },
     });
+    hud.root.dataset.reducedMotion = String(getReducedMotion());
     removeHudDragListener = hud.widget.onDragEnd((nextPositionFromDrag) => {
       windowedHudPosition = nextPositionFromDrag;
       sendToBackend(ctx, { type: "save_prefs", prefs: { widgetPosition: nextPositionFromDrag } });
     });
-    syncHudState(hud, currentPrefs, currentState, hudExpanded);
+    syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
   };
 
   buildHud(currentPrefs.widgetPosition);
@@ -1802,7 +1825,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let disposed = false;
   const canRunLightning = () => !disposed &&
     currentState?.condition === "storm" && !getReducedMotion() &&
-    !currentPrefs.pauseEffects && currentPrefs.effectsEnabled &&
+    !currentPrefs.pauseEffects && currentPrefs.effectsEnabled && currentPrefs.lightningFlashEnabled &&
     document.visibilityState !== "hidden" && !!activeChatId;
 
   const scheduleStormFlash = () => {
@@ -1875,9 +1898,12 @@ export function setup(ctx: SpindleFrontendContext) {
 
     if (hud) {
       hud.root.dataset.permission = permissionWarning ? "limited" : "ok";
-      syncHudState(hud, currentPrefs, currentState, hudExpanded);
+      hud.root.dataset.error = String(!!backendWarning);
+      hud.source.title = backendWarning ?? permissionWarning ?? "";
+      hud.root.dataset.reducedMotion = String(reducedMotion);
+      syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
     }
-    settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : permissionWarning ?? undefined);
+    settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : backendWarning ?? permissionWarning ?? undefined, activeChatId);
     applySceneState(backFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
     applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
     const showBack = showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both");
@@ -1906,7 +1932,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const clockMode = currentPrefs.clockMode;
     if (clockMode === "story") return;
     if (clockMode === "auto" && currentState?.source !== "manual") return;
-    syncHudState(hud, currentPrefs, currentState, hudExpanded);
+    syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
   }, 1000);
   cleanups.push(() => window.clearInterval(clockTimer));
 
@@ -1926,13 +1952,8 @@ export function setup(ctx: SpindleFrontendContext) {
       if (!shouldProcessWeatherTag(payload)) return;
       const chatId = payload.chatId ?? activeChatId;
       if (!chatId) return;
-      const dedupeKey = `${chatId}:${payload.messageId ?? ""}:${payload.fullMatch}`;
-      if (processedWeatherTags.has(dedupeKey)) return;
-      processedWeatherTags.set(dedupeKey, payload.fullMatch);
-      if (processedWeatherTags.size > 200) {
-        const oldest = processedWeatherTags.keys().next().value;
-        if (oldest) processedWeatherTags.delete(oldest);
-      }
+      // The backend deduplicates successfully saved tags. A frontend cache would
+      // suppress restored swipes/edits and retries after a failed save.
       sendToBackend(ctx, {
         type: "weather_tag_intercepted",
         chatId,
@@ -1949,6 +1970,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
     switch (message.type) {
       case "prefs":
+        backendWarning = null;
         currentPrefs = message.prefs;
         windowedHudPosition = currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
         if (mobileHudLayout) {
@@ -1965,6 +1987,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
       case "active_chat_state":
         if (!shouldApplyChatState(activeChatId, message.chatId, message.requestId, activeChatRequestId)) break;
+        backendWarning = null;
         activeChatId = message.chatId;
         currentState = message.state;
         updateScene();
@@ -1972,12 +1995,16 @@ export function setup(ctx: SpindleFrontendContext) {
 
       case "weather_state":
         if (message.chatId !== activeChatId) break;
+        backendWarning = null;
         currentState = message.state;
         updateScene();
         break;
 
       case "error":
         console.warn(`[weather_hud] ${message.message}`);
+        backendWarning = message.message;
+        settingsUI.reportError(message.message);
+        updateScene();
         break;
     }
   });
@@ -1987,7 +2014,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (chatId === activeChatId && activeChatRequestId > 0) return;
     activeChatId = chatId;
     currentState = null;
-    processedWeatherTags.clear();
+    backendWarning = null;
     queueFxRootAttach();
     activeChatRequestId += 1;
     sendToBackend(ctx, { type: "chat_changed", chatId, requestId: activeChatRequestId });
@@ -2007,9 +2034,11 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(settingsChangedUnsub);
 
   sendToBackend(ctx, { type: "frontend_ready" });
+  requestActiveChatState(ctx.getActiveChat().chatId);
   queueFxRootAttach();
   updateScene();
   void ctx.permissions.getGranted().then((granted) => {
+    if (disposed) return;
     if (!granted.includes("interceptor")) {
       permissionWarning = "Enable the Interceptor permission to inject the current weather scene into prompts.";
       updateScene();

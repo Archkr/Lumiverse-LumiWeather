@@ -23,7 +23,7 @@ function pad2(value: number): string {
 }
 
 export function formatDate(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  return `${String(date.getFullYear()).padStart(4, "0")}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 export function formatTime(date: Date): string {
@@ -57,12 +57,17 @@ export function parseHourFromTimeString(timeValue: string): number | null {
   return hours;
 }
 
+/**
+ * Encodes the story's calendar and wall-clock fields in UTC. This is not a real
+ * instant in the user's timezone: fictional times must survive daylight-saving
+ * gaps, and the same tag must resolve identically on every device.
+ */
 export function parseStoryDateTime(dateValue: string, timeValue: string): number | null {
   const dateMatch = dateValue.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!dateMatch) return null;
 
   const normalizedTime = timeValue.trim();
-  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/i);
+  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
   const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
 
   let hours = 0;
@@ -90,15 +95,18 @@ export function parseStoryDateTime(dateValue: string, timeValue: string): number
   const month = Number.parseInt(dateMatch[2], 10);
   const day = Number.parseInt(dateMatch[3], 10);
   if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
-  const parsed = new Date(year, month - 1, day, hours, minutes, seconds, 0);
+  // setUTCFullYear avoids the Date constructor's special 1900 offset for 0-99.
+  const parsed = new Date(0);
+  parsed.setUTCFullYear(year, month - 1, day);
+  parsed.setUTCHours(hours, minutes, seconds, 0);
   if (
     Number.isNaN(parsed.getTime()) ||
-    parsed.getFullYear() !== year ||
-    parsed.getMonth() !== month - 1 ||
-    parsed.getDate() !== day ||
-    parsed.getHours() !== hours ||
-    parsed.getMinutes() !== minutes ||
-    parsed.getSeconds() !== seconds
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day ||
+    parsed.getUTCHours() !== hours ||
+    parsed.getUTCMinutes() !== minutes ||
+    parsed.getUTCSeconds() !== seconds
   ) {
     return null;
   }
@@ -109,15 +117,17 @@ export function isTimePhasePalette(palette: WeatherPalette): boolean {
   return (TIME_PHASE_PALETTES as readonly string[]).includes(palette);
 }
 
-/** Day of year in the range 1-366, or null when the timestamp is not a real date. */
+/** UTC day of year in the range 1-366, or null for an invalid timestamp. */
 export function resolveDayOfYear(timestamp: number): number | null {
   if (!Number.isFinite(timestamp)) return null;
   const date = new Date(timestamp);
-  const year = date.getFullYear();
+  const year = date.getUTCFullYear();
   if (!Number.isFinite(year)) return null;
-  const startOfYear = Date.UTC(year, 0, 1);
-  const current = Date.UTC(year, date.getMonth(), date.getDate());
-  const day = Math.round((current - startOfYear) / DAY_MS) + 1;
+  const startOfYear = new Date(0);
+  startOfYear.setUTCFullYear(year, 0, 1);
+  const current = new Date(0);
+  current.setUTCFullYear(year, date.getUTCMonth(), date.getUTCDate());
+  const day = Math.round((current.getTime() - startOfYear.getTime()) / DAY_MS) + 1;
   return Number.isFinite(day) ? day : null;
 }
 
@@ -195,7 +205,7 @@ export function resolveSolarArc(
   const polar = resolvePolarState(latitude, declination);
   const halfAngle = resolveDayHalfAngle(latitude, declination);
 
-  const hourFraction = (when.getHours() + when.getMinutes() / 60 + when.getSeconds() / 3600) / 24;
+  const hourFraction = (when.getUTCHours() + when.getUTCMinutes() / 60 + when.getUTCSeconds() / 3600) / 24;
   const sunAltitude = 90 * Math.cos(2 * Math.PI * (hourFraction - 0.5));
   const season = resolveSeasonFromDayOfYear(dayOfYear);
 

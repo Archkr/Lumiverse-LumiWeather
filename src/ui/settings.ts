@@ -1,20 +1,22 @@
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "../presets";
 import { decodeForecastText, encodeForecastText, forecastTextHint } from "../forecast-text";
-import { formatForecastEntry } from "../forecast-utils";
+import { formatForecastEntry, MAX_FORECAST_DAYS, normalizeTemperatureToken } from "../forecast-utils";
 import {
   WEATHER_SEASONS,
   WEATHER_WIND_DIRECTIONS,
   formatTemperatureForUnit,
   parseStoryDateTime,
 } from "../shared";
-import type { ForecastEntry, WeatherCondition, WeatherPalette, WeatherPrefs, WeatherSeason, WeatherState, WeatherWindDirection } from "../types";
+import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherSeason, WeatherState, WeatherWindDirection } from "../types";
 
 const CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 const PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
+let settingsInstanceCount = 0;
 
 export interface SettingsUI {
   root: HTMLElement;
-  sync(prefs: WeatherPrefs, state: WeatherState | null, statusOverride?: string): void;
+  sync(prefs: WeatherPrefs, state: WeatherState | null, statusOverride?: string, chatId?: string | null): void;
+  reportError(message: string): void;
   destroy(): void;
 }
 
@@ -90,26 +92,28 @@ function applyStateToInputs(
 ): void {
   if (state.condition) fields.conditionSelect.value = state.condition;
   if (state.palette) fields.paletteSelect.value = state.palette;
-  if (state.location) fields.locationInput.value = state.location;
-  if (state.date && /^\d{4}-\d{2}-\d{2}$/.test(state.date)) fields.dateInput.value = state.date;
-  if (state.time) fields.timeInput.value = state.time;
-  if (state.temperature) fields.temperatureInput.value = state.temperature;
-  if (state.wind) fields.windInput.value = state.wind;
+  if (state.location !== undefined) fields.locationInput.value = state.location;
+  if (state.date !== undefined) fields.dateInput.value = /^\d{4}-\d{2}-\d{2}$/.test(state.date) ? state.date : "";
+  if (state.time !== undefined) fields.timeInput.value = state.time;
+  if (state.temperature !== undefined) fields.temperatureInput.value = state.temperature;
+  if (state.wind !== undefined) fields.windInput.value = state.wind;
   if (state.windDirection) fields.windDirectionSelect.value = state.windDirection;
-  if (state.summary) fields.summaryInput.value = state.summary;
-  // An absent season means "no override", which the select represents as its
-  // empty derived option rather than leaving a stale explicit choice on screen.
-  fields.seasonSelect.value = state.seasonOverride ?? "";
+  if (state.summary !== undefined) fields.summaryInput.value = state.summary;
+  // Full states include the resolved season; an absent override on those means
+  // "Derived from date". Partial preset patches leave the season control alone.
+  if ("seasonOverride" in state || "season" in state) fields.seasonSelect.value = state.seasonOverride ?? "";
   // Only an omitted forecast leaves the draft alone; an explicit empty list is a
   // real change and must clear the field.
   if (state.forecast !== undefined) fields.forecastInput.value = encodeForecastText(state.forecast);
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
     fields.sceneIntensity.value = state.intensity.toFixed(2);
     fields.sceneIntensityValue.textContent = `${Math.round(state.intensity * 100)}%`;
+    fields.sceneIntensity.setAttribute("aria-valuetext", fields.sceneIntensityValue.textContent);
   }
 }
 
 export function createSettingsUI(sendToBackend: (payload: unknown) => void): SettingsUI {
+  const instanceId = `lumiweather-settings-${++settingsInstanceCount}`;
   const root = document.createElement("section");
   root.className = "weather-settings-card";
 
@@ -134,6 +138,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const status = document.createElement("span");
   status.className = "weather-settings-status";
+  status.setAttribute("role", "status");
 
   header.appendChild(headerGlow);
   header.appendChild(titleWrap);
@@ -162,7 +167,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const promptSection = createSection(
     "Prompt integration",
-    "To make the main model emit the hidden weather tag consistently, add the recommended macro to your system prompt or preset, just like simtracker uses {{sim_tracker}}.",
+    "Add the recommended macro to your active system prompt or preset so the model keeps the scene in sync with your story.",
   );
   const effectsSection = createSection("Effects", "Overall ambience, density, and motion.");
   const placementSection = createSection("Placement", "Control whether the weather stays behind the chat, in front, or both.");
@@ -266,6 +271,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const intensitySlider = document.createElement("input");
   intensitySlider.type = "range";
   intensitySlider.className = "weather-settings-range";
+  intensitySlider.setAttribute("aria-label", "Animation intensity");
   intensitySlider.min = "0.25";
   intensitySlider.max = "1.50";
   intensitySlider.step = "0.05";
@@ -274,11 +280,15 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   intensityValue.className = "weather-settings-value";
 
   intensitySlider.addEventListener("input", () => {
-    intensityValue.textContent = `${Math.round(Number.parseFloat(intensitySlider.value) * 100)}%`;
+    pendingIntensity = Number.parseFloat(intensitySlider.value);
+    intensityValue.textContent = `${Math.round(pendingIntensity * 100)}%`;
+    intensitySlider.setAttribute("aria-valuetext", intensityValue.textContent);
     if (intensitySaveTimer !== null) window.clearTimeout(intensitySaveTimer);
     intensitySaveTimer = window.setTimeout(() => {
-      sendToBackend({ type: "save_prefs", prefs: { intensity: Number.parseFloat(intensitySlider.value) } });
       intensitySaveTimer = null;
+      const intensity = pendingIntensity;
+      pendingIntensity = null;
+      if (intensity !== null) sendToBackend({ type: "save_prefs", prefs: { intensity } });
     }, 120);
   });
 
@@ -395,6 +405,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualHint.textContent = "Quick presets apply immediately. The full editor below lets you refine the current scene and keep it locked until you resume story sync.";
 
   const manualError = document.createElement("p");
+  manualError.id = `${instanceId}-error`;
   manualError.className = "weather-settings-error";
   manualError.setAttribute("role", "alert");
   manualError.hidden = true;
@@ -410,11 +421,11 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const conditionSelect = document.createElement("select");
   conditionSelect.className = "weather-settings-select";
-  conditionSelect.innerHTML = CONDITIONS.map((condition) => `<option value="${condition}">${condition}</option>`).join("");
+  conditionSelect.innerHTML = CONDITIONS.map((condition) => `<option value="${condition}">${condition.charAt(0).toUpperCase()}${condition.slice(1)}</option>`).join("");
 
   const paletteSelect = document.createElement("select");
   paletteSelect.className = "weather-settings-select";
-  paletteSelect.innerHTML = PALETTES.map((palette) => `<option value="${palette}">${palette}</option>`).join("");
+  paletteSelect.innerHTML = PALETTES.map((palette) => `<option value="${palette}">${palette.charAt(0).toUpperCase()}${palette.slice(1)}</option>`).join("");
 
   const dateInput = document.createElement("input");
   dateInput.type = "date";
@@ -423,7 +434,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const locationInput = document.createElement("input");
   locationInput.type = "text";
   locationInput.className = "weather-settings-input";
-  locationInput.placeholder = "Example Location";
+  locationInput.placeholder = "Moon Harbor";
 
   const timeInput = document.createElement("input");
   timeInput.type = "text";
@@ -442,6 +453,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const windDirectionSelect = document.createElement("select");
   windDirectionSelect.className = "weather-settings-select";
+  windDirectionSelect.setAttribute("aria-label", "Wind direction");
   windDirectionSelect.innerHTML = WEATHER_WIND_DIRECTIONS.map((direction) =>
     `<option value="${direction}">${direction.charAt(0).toUpperCase()}${direction.slice(1)}</option>`,
   ).join("");
@@ -467,13 +479,16 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const forecastInput = document.createElement("textarea");
   forecastInput.className = "weather-settings-input weather-settings-textarea";
+  forecastInput.setAttribute("aria-label", "Outlook");
   forecastInput.rows = 3;
   forecastInput.placeholder = "2026-01-16: snow, 30F, heavy flurries";
   forecastInput.spellcheck = false;
 
   const forecastHint = document.createElement("p");
+  forecastHint.id = `${instanceId}-forecast-hint`;
   forecastHint.className = "weather-settings-section-copy";
   forecastHint.textContent = forecastTextHint();
+  forecastInput.setAttribute("aria-describedby", `${forecastHint.id} ${manualError.id}`);
 
   const forecastField = document.createElement("div");
   forecastField.className = "weather-settings-forecast-field";
@@ -485,15 +500,16 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const sceneIntensity = document.createElement("input");
   sceneIntensity.type = "range";
   sceneIntensity.className = "weather-settings-range";
+  sceneIntensity.setAttribute("aria-label", "Scene intensity");
   sceneIntensity.min = "0.00";
   sceneIntensity.max = "1.00";
   sceneIntensity.step = "0.05";
   const sceneIntensityValue = document.createElement("span");
   sceneIntensityValue.className = "weather-settings-value";
   sceneIntensity.addEventListener("input", () => {
-    manualDraftDirty = true;
-    manualError.hidden = true;
+    markManualDraftDirty();
     sceneIntensityValue.textContent = `${Math.round(Number.parseFloat(sceneIntensity.value) * 100)}%`;
+    sceneIntensity.setAttribute("aria-valuetext", sceneIntensityValue.textContent);
   });
   sceneIntensityRow.appendChild(sceneIntensity);
   sceneIntensityRow.appendChild(sceneIntensityValue);
@@ -515,18 +531,29 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   };
 
   let currentState: WeatherState | null = null;
+  let currentChatId: string | null | undefined;
   let manualDraftDirty = false;
   let intensitySaveTimer: number | null = null;
+  let pendingIntensity: number | null = null;
+
+  const manualFields = [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput, sceneIntensity];
+
+  const clearManualError = () => {
+    manualError.hidden = true;
+    manualError.textContent = "";
+    for (const field of manualFields) field.removeAttribute("aria-invalid");
+  };
 
   const markManualDraftDirty = () => {
     manualDraftDirty = true;
-    manualError.hidden = true;
+    clearManualError();
   };
 
   for (const field of [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
+  for (const field of [dateInput, timeInput, temperatureInput]) field.setAttribute("aria-describedby", manualError.id);
 
   const buildManualState = (): Partial<WeatherState> => ({
     location: locationInput.value.trim() || currentState?.location,
@@ -549,22 +576,28 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     const activePresetId = matchWeatherScenePreset(state);
     for (const [presetId, button] of presetButtons) {
       button.classList.toggle("weather-settings-preset-active", presetId === activePresetId);
+      button.setAttribute("aria-pressed", String(presetId === activePresetId));
     }
   };
 
-  const applyManualState = (state?: Partial<WeatherState>) => {
+  const showManualError = (message: string, field: HTMLElement): false => {
+    clearManualError();
+    manualError.textContent = message;
+    manualError.hidden = false;
+    field.setAttribute("aria-invalid", "true");
+    field.focus();
+    return false;
+  };
+
+  const applyManualState = (state?: Partial<WeatherState>): boolean => {
     const nextState = state ?? buildManualState();
     const hasDate = typeof nextState.date === "string" && nextState.date.trim();
     const hasTime = typeof nextState.time === "string" && nextState.time.trim();
     if ((hasDate && !hasTime) || (!hasDate && hasTime) || (hasDate && hasTime && parseStoryDateTime(nextState.date!, nextState.time!) === null)) {
-      manualError.textContent = "Use a valid story date and time, such as 2026-01-15 and 3:00 PM.";
-      manualError.hidden = false;
-      return;
+      return showManualError("Use a valid story date and time, such as 2026-01-15 and 3:00 PM.", hasDate ? timeInput : dateInput);
     }
-    if (typeof nextState.temperature === "string" && nextState.temperature.trim() && !/^-?\d+(?:\.\d+)?\s*°?\s*(?:F|C|fahrenheit|celsius)$/i.test(nextState.temperature.trim())) {
-      manualError.textContent = "Temperature must include a numeric value and F or C, such as 61F or 16C.";
-      manualError.hidden = false;
-      return;
+    if (typeof nextState.temperature === "string" && nextState.temperature.trim() && !normalizeTemperatureToken(nextState.temperature)) {
+      return showManualError("Temperature must include a numeric value and F or C, such as 61F or 16C.", temperatureInput);
     }
     // Forecast lines are validated from the editor text rather than from the
     // decoded entries, because decoding drops unparseable lines and would
@@ -572,16 +605,18 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     if (state === undefined) {
       const forecast = decodeForecastText(forecastInput.value);
       if (forecast.invalidLines.length > 0) {
-        manualError.textContent = `Fix the outlook line "${
+        return showManualError(`Fix the outlook line "${
           forecast.invalidLines[0].slice(0, 40)
-        }". Use one day per line, such as 2026-01-16: snow, 30F, heavy flurries.`;
-        manualError.hidden = false;
-        return;
+        }". Use one day per line, such as 2026-01-16: snow, 30F, heavy flurries.`, forecastInput);
       }
+      if (forecast.duplicateDates.length > 0) return showManualError(`Use ${forecast.duplicateDates[0]} only once in the outlook.`, forecastInput);
+      if (forecast.exceedsDayLimit) return showManualError(`The outlook supports up to ${MAX_FORECAST_DAYS} days. Remove the extra days before applying.`, forecastInput);
     }
     manualDraftDirty = false;
-    manualError.hidden = true;
+    clearManualError();
+    manualToggle.checked = true;
     sendToBackend({ type: "set_manual_state", state: nextState });
+    return true;
   };
 
   for (const preset of WEATHER_SCENE_PRESETS) {
@@ -595,8 +630,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     button.addEventListener("click", () => {
       const nextState = buildPresetWeatherState(preset.id, currentState);
       if (!nextState) return;
-      manualToggle.checked = true;
-      applyStateToInputs(nextState, fields);
+      applyStateToInputs({ ...(currentState ?? {}), ...nextState }, fields);
       manualDraftDirty = false;
       applyManualState(nextState);
     });
@@ -606,9 +640,10 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   manualToggle.addEventListener("change", () => {
     if (manualToggle.checked) {
-      applyManualState();
+      if (!applyManualState()) manualToggle.checked = currentState?.source === "manual";
     } else {
       manualDraftDirty = false;
+      clearManualError();
       sendToBackend({ type: "clear_manual_override" });
     }
   });
@@ -638,7 +673,6 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   applyButton.className = "weather-settings-button weather-settings-button-primary";
   applyButton.textContent = "Apply manual weather";
   applyButton.addEventListener("click", () => {
-    manualToggle.checked = true;
     applyManualState();
   });
 
@@ -649,6 +683,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   resumeButton.addEventListener("click", () => {
     manualToggle.checked = false;
     manualDraftDirty = false;
+    clearManualError();
     sendToBackend({ type: "clear_manual_override" });
   });
 
@@ -690,25 +725,34 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   return {
     root,
-    sync(prefs, state, statusOverride) {
+    sync(prefs, state, statusOverride, chatId) {
+      if (chatId !== currentChatId) {
+        manualDraftDirty = false;
+        clearManualError();
+        currentChatId = chatId;
+      }
       currentState = state;
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
-      intensitySlider.value = String(prefs.intensity.toFixed(2));
-      intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
+      if (pendingIntensity === null) {
+        intensitySlider.value = String(prefs.intensity.toFixed(2));
+        intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
+        intensitySlider.setAttribute("aria-valuetext", intensityValue.textContent);
+      }
       motionSelect.value = prefs.reducedMotion;
       pauseToggle.checked = prefs.pauseEffects;
       transitionsToggle.checked = prefs.transitionsEnabled;
       clockSelect.value = prefs.clockMode;
       forecastToggle.checked = prefs.showForecast;
 
-      const chatAvailable = statusOverride !== "No active chat";
+      const chatAvailable = chatId !== null && statusOverride !== "No active chat";
       manualToggle.disabled = !chatAvailable;
       applyButton.disabled = !chatAvailable;
       resumeButton.disabled = !chatAvailable || !state || state.source === "story";
       for (const button of presetButtons.values()) button.disabled = !chatAvailable;
+      for (const field of manualFields) field.disabled = !chatAvailable;
 
       const displayTemperature = state ? formatTemperatureForUnit(state.temperature, prefs.temperatureUnit) : "";
 
@@ -725,10 +769,16 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         ? [
             `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}`,
             state.forecast.length > 0
-              ? `Outlook: ${state.forecast.map(formatForecastEntry).join(" | ")}`
+              ? `Outlook: ${state.forecast.map((entry) => formatForecastEntry({ ...entry, temperature: formatTemperatureForUnit(entry.temperature, prefs.temperatureUnit) })).join(" | ")}`
               : "",
           ].filter(Boolean).join(" · ")
         : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
+
+      previewHint.textContent = !chatAvailable
+        ? "Open a chat to view or customize its weather scene."
+        : state?.source === "manual"
+          ? "This chat stays locked to your scene until you resume story sync."
+          : "This chat's weather tag keeps the scene in sync with the story.";
 
       manualModePill.textContent = state?.source === "manual" ? "Manual lock" : "Story sync";
       manualModePill.dataset.mode = state?.source === "manual" ? "manual" : "story";
@@ -753,9 +803,21 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       }
 
       updatePresetSelection(state);
+      sceneIntensity.setAttribute("aria-valuetext", sceneIntensityValue.textContent ?? "");
+    },
+    reportError(message) {
+      manualDraftDirty = true;
+      clearManualError();
+      manualError.textContent = message;
+      manualError.hidden = false;
+      manualToggle.checked = currentState?.source === "manual";
     },
     destroy() {
       if (intensitySaveTimer !== null) window.clearTimeout(intensitySaveTimer);
+      if (pendingIntensity !== null) {
+        sendToBackend({ type: "save_prefs", prefs: { intensity: pendingIntensity } });
+        pendingIntensity = null;
+      }
       root.remove();
     },
   };

@@ -26,7 +26,7 @@ function pad2(value) {
   return String(value).padStart(2, "0");
 }
 function formatDate(date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  return `${String(date.getFullYear()).padStart(4, "0")}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 function formatTime(date) {
   const hours24 = date.getHours();
@@ -38,19 +38,19 @@ function parseHourFromTimeString(timeValue) {
   const normalizedTime = timeValue.trim();
   const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
   if (time12) {
-    let hours2 = Number.parseInt(time12[1], 10);
-    if (hours2 < 1 || hours2 > 12)
+    let hours = Number.parseInt(time12[1], 10);
+    if (hours < 1 || hours > 12)
       return null;
-    const minutes2 = Number.parseInt(time12[2], 10);
-    const seconds2 = time12[3] ? Number.parseInt(time12[3], 10) : 0;
-    if (minutes2 > 59 || seconds2 > 59)
+    const minutes = Number.parseInt(time12[2], 10);
+    const seconds = time12[3] ? Number.parseInt(time12[3], 10) : 0;
+    if (minutes > 59 || seconds > 59)
       return null;
     const meridiem = time12[4].toUpperCase();
-    if (meridiem === "PM" && hours2 < 12)
-      hours2 += 12;
-    if (meridiem === "AM" && hours2 === 12)
-      hours2 = 0;
-    return hours2;
+    if (meridiem === "PM" && hours < 12)
+      hours += 12;
+    if (meridiem === "AM" && hours === 12)
+      hours = 0;
+    return hours;
   }
   const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!time24)
@@ -67,7 +67,7 @@ function parseStoryDateTime(dateValue, timeValue) {
   if (!dateMatch)
     return null;
   const normalizedTime = timeValue.trim();
-  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/i);
+  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
   const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   let hours = 0;
   let minutes = 0;
@@ -97,8 +97,10 @@ function parseStoryDateTime(dateValue, timeValue) {
   const day = Number.parseInt(dateMatch[3], 10);
   if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31)
     return null;
-  const parsed = new Date(year, month - 1, day, hours, minutes, seconds, 0);
-  if (Number.isNaN(parsed.getTime()) || parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day || parsed.getHours() !== hours || parsed.getMinutes() !== minutes || parsed.getSeconds() !== seconds) {
+  const parsed = new Date(0);
+  parsed.setUTCFullYear(year, month - 1, day);
+  parsed.setUTCHours(hours, minutes, seconds, 0);
+  if (Number.isNaN(parsed.getTime()) || parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day || parsed.getUTCHours() !== hours || parsed.getUTCMinutes() !== minutes || parsed.getUTCSeconds() !== seconds) {
     return null;
   }
   return parsed.getTime();
@@ -110,12 +112,14 @@ function resolveDayOfYear(timestamp) {
   if (!Number.isFinite(timestamp))
     return null;
   const date = new Date(timestamp);
-  const year = date.getFullYear();
+  const year = date.getUTCFullYear();
   if (!Number.isFinite(year))
     return null;
-  const startOfYear = Date.UTC(year, 0, 1);
-  const current = Date.UTC(year, date.getMonth(), date.getDate());
-  const day = Math.round((current - startOfYear) / DAY_MS) + 1;
+  const startOfYear = new Date(0);
+  startOfYear.setUTCFullYear(year, 0, 1);
+  const current = new Date(0);
+  current.setUTCFullYear(year, date.getUTCMonth(), date.getUTCDate());
+  const day = Math.round((current.getTime() - startOfYear.getTime()) / DAY_MS) + 1;
   return Number.isFinite(day) ? day : null;
 }
 function resolveSolarDeclination(dayOfYear) {
@@ -157,7 +161,7 @@ function resolveSolarArc(dateValue, timeValue, latitude = DEFAULT_LATITUDE) {
   const declination = resolveSolarDeclination(dayOfYear);
   const polar = resolvePolarState(latitude, declination);
   const halfAngle = resolveDayHalfAngle(latitude, declination);
-  const hourFraction = (when.getHours() + when.getMinutes() / 60 + when.getSeconds() / 3600) / 24;
+  const hourFraction = (when.getUTCHours() + when.getUTCMinutes() / 60 + when.getUTCSeconds() / 3600) / 24;
   const sunAltitude = 90 * Math.cos(2 * Math.PI * (hourFraction - 0.5));
   const season = resolveSeasonFromDayOfYear(dayOfYear);
   if (polar === "day" || polar === "night") {
@@ -223,6 +227,7 @@ function seasonFromStoryDate(dateValue, timeValue) {
 }
 
 // src/forecast-utils.ts
+var MAX_FORECAST_DAYS = 5;
 var MAX_FORECAST_SUMMARY_LENGTH = 48;
 var CONDITION_ALIASES = {
   clear: "clear",
@@ -245,31 +250,21 @@ var CONDITION_ALIASES = {
   mist: "fog",
   hazy: "fog"
 };
-var DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 function isRealCalendarDate(value) {
-  const match = value.match(DATE_PATTERN);
-  if (!match)
-    return false;
-  const year = Number.parseInt(match[1], 10);
-  const month = Number.parseInt(match[2], 10);
-  const day = Number.parseInt(match[3], 10);
-  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31)
-    return false;
-  const parsed = new Date(year, month - 1, day);
-  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+  return value === value.trim() && parseStoryDateTime(value, "00:00") !== null;
 }
 function normalizeConditionToken(token) {
   const normalized = token.trim().toLowerCase().replace(/\s+/g, " ");
   return CONDITION_ALIASES[normalized] ?? null;
 }
 function normalizeTemperatureToken(token) {
-  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F|C)(?:ahrenheit|elsius)?$/i);
+  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F(?:ahrenheit)?|C(?:elsius)?)$/i);
   if (!match)
     return "";
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount))
     return "";
-  return `${Math.round(amount)}${match[2].toUpperCase() === "C" ? "C" : "F"}`;
+  return `${Math.round(amount)}${match[2][0].toUpperCase() === "C" ? "C" : "F"}`;
 }
 function truncateForecastSummary(value) {
   const collapsed = value.trim().replace(/\s+/g, " ");
@@ -292,11 +287,15 @@ function parseForecastEntry(raw) {
     return null;
   let condition = null;
   let temperature = "";
+  let temperatureOmitted = false;
   const summaryParts = [];
   for (const part of trimmed.slice(separatorIndex + 1).split(",")) {
     const token = part.trim();
-    if (!token)
+    if (!token) {
+      if (condition !== null)
+        temperatureOmitted = true;
       continue;
+    }
     if (summaryParts.length > 0) {
       summaryParts.push(token);
       continue;
@@ -307,7 +306,7 @@ function parseForecastEntry(raw) {
       continue;
     }
     const candidateTemperature = normalizeTemperatureToken(token);
-    if (candidateTemperature && !temperature) {
+    if (candidateTemperature && !temperature && !temperatureOmitted) {
       temperature = candidateTemperature;
       continue;
     }
@@ -321,7 +320,8 @@ function parseForecastEntry(raw) {
   };
 }
 function formatForecastEntry(entry) {
-  const details = [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
+  const keepEmptyTemperature = !entry.temperature && !!normalizeTemperatureToken(entry.summary.split(",")[0]);
+  const details = keepEmptyTemperature ? `${entry.condition}, , ${entry.summary}` : [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
   return details ? `${entry.date}: ${details}` : entry.date;
 }
 // src/shared.ts
@@ -378,13 +378,13 @@ function makeDefaultWeatherState(now = Date.now()) {
 }
 function formatTemperatureForUnit(value, unit) {
   const trimmed = value.trim();
-  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*([FC])(?:ahrenheit|elsius)?\b/i);
+  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F(?:ahrenheit)?|C(?:elsius)?)$/i);
   if (!match)
     return trimmed;
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount))
     return trimmed;
-  const sourceUnit = match[2].toUpperCase() === "C" ? "celsius" : "fahrenheit";
+  const sourceUnit = match[2][0].toUpperCase() === "C" ? "celsius" : "fahrenheit";
   if (sourceUnit === unit) {
     return `${Math.round(amount)}${unit === "celsius" ? "C" : "F"}`;
   }
@@ -508,7 +508,7 @@ function buildPresetWeatherState(presetId, currentState) {
   if (!preset)
     return null;
   const baseState = currentState ?? makeDefaultWeatherState();
-  const fallbackDate = /^\d{4}-\d{2}-\d{2}$/.test(baseState.date) ? baseState.date : formatDate(new Date);
+  const fallbackDate = isRealCalendarDate(baseState.date) ? baseState.date : formatDate(new Date);
   return {
     location: baseState.location,
     date: fallbackDate,
@@ -899,7 +899,7 @@ function destroyProceduralFog(root) {
 // src/mobile-layout.ts
 var MOBILE_HUD_BREAKPOINT = 600;
 var MOBILE_HUD_LAUNCHER_SIZE = { width: 40, height: 40 };
-var DESKTOP_HUD_COLLAPSED_SIZE = { width: 320, height: 148 };
+var DESKTOP_HUD_COLLAPSED_SIZE = { width: 320, height: 184 };
 var DESKTOP_HUD_EXPANDED_SIZE = { width: 360, height: 360 };
 function isMobileHudLayout(viewportWidth, coarsePointer) {
   return coarsePointer || viewportWidth <= MOBILE_HUD_BREAKPOINT;
@@ -1145,26 +1145,37 @@ function encodeForecastText(entries) {
 function decodeForecastText(text) {
   const entries = [];
   const invalidLines = [];
+  const seenDates = new Set;
+  const duplicateDates = new Set;
   for (const rawLine of text.split(`
 `)) {
     const line = rawLine.trim();
     if (!line)
       continue;
     const entry = parseForecastEntry(line);
-    if (entry)
+    if (entry) {
       entries.push(entry);
-    else
+      if (seenDates.has(entry.date))
+        duplicateDates.add(entry.date);
+      seenDates.add(entry.date);
+    } else
       invalidLines.push(line);
   }
-  return { entries, invalidLines };
+  return {
+    entries,
+    invalidLines,
+    duplicateDates: [...duplicateDates],
+    exceedsDayLimit: seenDates.size > MAX_FORECAST_DAYS
+  };
 }
 function forecastTextHint() {
-  return "One day per line, such as 2026-01-16: snow, 30F, heavy flurries. Leave empty to clear the outlook.";
+  return `Up to ${MAX_FORECAST_DAYS} days, one day per line, such as 2026-01-16: snow, 30F, heavy flurries. Use each date once. Leave empty to clear the outlook.`;
 }
 
 // src/ui/settings.ts
 var CONDITIONS = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 var PALETTES = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
+var settingsInstanceCount = 0;
 function createCodeBlock(text) {
   const code = document.createElement("pre");
   code.className = "weather-settings-code";
@@ -1215,29 +1226,32 @@ function applyStateToInputs(state, fields) {
     fields.conditionSelect.value = state.condition;
   if (state.palette)
     fields.paletteSelect.value = state.palette;
-  if (state.location)
+  if (state.location !== undefined)
     fields.locationInput.value = state.location;
-  if (state.date && /^\d{4}-\d{2}-\d{2}$/.test(state.date))
-    fields.dateInput.value = state.date;
-  if (state.time)
+  if (state.date !== undefined)
+    fields.dateInput.value = /^\d{4}-\d{2}-\d{2}$/.test(state.date) ? state.date : "";
+  if (state.time !== undefined)
     fields.timeInput.value = state.time;
-  if (state.temperature)
+  if (state.temperature !== undefined)
     fields.temperatureInput.value = state.temperature;
-  if (state.wind)
+  if (state.wind !== undefined)
     fields.windInput.value = state.wind;
   if (state.windDirection)
     fields.windDirectionSelect.value = state.windDirection;
-  if (state.summary)
+  if (state.summary !== undefined)
     fields.summaryInput.value = state.summary;
-  fields.seasonSelect.value = state.seasonOverride ?? "";
+  if ("seasonOverride" in state || "season" in state)
+    fields.seasonSelect.value = state.seasonOverride ?? "";
   if (state.forecast !== undefined)
     fields.forecastInput.value = encodeForecastText(state.forecast);
   if (typeof state.intensity === "number" && Number.isFinite(state.intensity)) {
     fields.sceneIntensity.value = state.intensity.toFixed(2);
     fields.sceneIntensityValue.textContent = `${Math.round(state.intensity * 100)}%`;
+    fields.sceneIntensity.setAttribute("aria-valuetext", fields.sceneIntensityValue.textContent);
   }
 }
 function createSettingsUI(sendToBackend) {
+  const instanceId = `lumiweather-settings-${++settingsInstanceCount}`;
   const root = document.createElement("section");
   root.className = "weather-settings-card";
   const header = document.createElement("header");
@@ -1255,6 +1269,7 @@ function createSettingsUI(sendToBackend) {
   titleWrap.appendChild(title);
   const status = document.createElement("span");
   status.className = "weather-settings-status";
+  status.setAttribute("role", "status");
   header.appendChild(headerGlow);
   header.appendChild(titleWrap);
   header.appendChild(status);
@@ -1276,7 +1291,7 @@ function createSettingsUI(sendToBackend) {
   preview.appendChild(previewLabel);
   preview.appendChild(previewValue);
   preview.appendChild(previewHint);
-  const promptSection = createSection("Prompt integration", "To make the main model emit the hidden weather tag consistently, add the recommended macro to your system prompt or preset, just like simtracker uses {{sim_tracker}}.");
+  const promptSection = createSection("Prompt integration", "Add the recommended macro to your active system prompt or preset so the model keeps the scene in sync with your story.");
   const effectsSection = createSection("Effects", "Overall ambience, density, and motion.");
   const placementSection = createSection("Placement", "Control whether the weather stays behind the chat, in front, or both.");
   const motionSection = createSection("Motion", "Fine-tune animation pacing without breaking story sync.");
@@ -1360,18 +1375,24 @@ function createSettingsUI(sendToBackend) {
   const intensitySlider = document.createElement("input");
   intensitySlider.type = "range";
   intensitySlider.className = "weather-settings-range";
+  intensitySlider.setAttribute("aria-label", "Animation intensity");
   intensitySlider.min = "0.25";
   intensitySlider.max = "1.50";
   intensitySlider.step = "0.05";
   const intensityValue = document.createElement("span");
   intensityValue.className = "weather-settings-value";
   intensitySlider.addEventListener("input", () => {
-    intensityValue.textContent = `${Math.round(Number.parseFloat(intensitySlider.value) * 100)}%`;
+    pendingIntensity = Number.parseFloat(intensitySlider.value);
+    intensityValue.textContent = `${Math.round(pendingIntensity * 100)}%`;
+    intensitySlider.setAttribute("aria-valuetext", intensityValue.textContent);
     if (intensitySaveTimer !== null)
       window.clearTimeout(intensitySaveTimer);
     intensitySaveTimer = window.setTimeout(() => {
-      sendToBackend({ type: "save_prefs", prefs: { intensity: Number.parseFloat(intensitySlider.value) } });
       intensitySaveTimer = null;
+      const intensity = pendingIntensity;
+      pendingIntensity = null;
+      if (intensity !== null)
+        sendToBackend({ type: "save_prefs", prefs: { intensity } });
     }, 120);
   });
   intensityRow.appendChild(intensitySlider);
@@ -1466,6 +1487,7 @@ function createSettingsUI(sendToBackend) {
   manualHint.className = "weather-settings-manual-hint";
   manualHint.textContent = "Quick presets apply immediately. The full editor below lets you refine the current scene and keep it locked until you resume story sync.";
   const manualError = document.createElement("p");
+  manualError.id = `${instanceId}-error`;
   manualError.className = "weather-settings-error";
   manualError.setAttribute("role", "alert");
   manualError.hidden = true;
@@ -1478,17 +1500,17 @@ function createSettingsUI(sendToBackend) {
   const presetButtons = new Map;
   const conditionSelect = document.createElement("select");
   conditionSelect.className = "weather-settings-select";
-  conditionSelect.innerHTML = CONDITIONS.map((condition) => `<option value="${condition}">${condition}</option>`).join("");
+  conditionSelect.innerHTML = CONDITIONS.map((condition) => `<option value="${condition}">${condition.charAt(0).toUpperCase()}${condition.slice(1)}</option>`).join("");
   const paletteSelect = document.createElement("select");
   paletteSelect.className = "weather-settings-select";
-  paletteSelect.innerHTML = PALETTES.map((palette) => `<option value="${palette}">${palette}</option>`).join("");
+  paletteSelect.innerHTML = PALETTES.map((palette) => `<option value="${palette}">${palette.charAt(0).toUpperCase()}${palette.slice(1)}</option>`).join("");
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.className = "weather-settings-input";
   const locationInput = document.createElement("input");
   locationInput.type = "text";
   locationInput.className = "weather-settings-input";
-  locationInput.placeholder = "Example Location";
+  locationInput.placeholder = "Moon Harbor";
   const timeInput = document.createElement("input");
   timeInput.type = "text";
   timeInput.className = "weather-settings-input";
@@ -1503,6 +1525,7 @@ function createSettingsUI(sendToBackend) {
   windInput.placeholder = "breezy";
   const windDirectionSelect = document.createElement("select");
   windDirectionSelect.className = "weather-settings-select";
+  windDirectionSelect.setAttribute("aria-label", "Wind direction");
   windDirectionSelect.innerHTML = WEATHER_WIND_DIRECTIONS.map((direction) => `<option value="${direction}">${direction.charAt(0).toUpperCase()}${direction.slice(1)}</option>`).join("");
   const seasonSelect = document.createElement("select");
   seasonSelect.className = "weather-settings-select";
@@ -1520,12 +1543,15 @@ function createSettingsUI(sendToBackend) {
   summaryInput.placeholder = "Steady afternoon rain";
   const forecastInput = document.createElement("textarea");
   forecastInput.className = "weather-settings-input weather-settings-textarea";
+  forecastInput.setAttribute("aria-label", "Outlook");
   forecastInput.rows = 3;
   forecastInput.placeholder = "2026-01-16: snow, 30F, heavy flurries";
   forecastInput.spellcheck = false;
   const forecastHint = document.createElement("p");
+  forecastHint.id = `${instanceId}-forecast-hint`;
   forecastHint.className = "weather-settings-section-copy";
   forecastHint.textContent = forecastTextHint();
+  forecastInput.setAttribute("aria-describedby", `${forecastHint.id} ${manualError.id}`);
   const forecastField = document.createElement("div");
   forecastField.className = "weather-settings-forecast-field";
   forecastField.appendChild(forecastInput);
@@ -1535,15 +1561,16 @@ function createSettingsUI(sendToBackend) {
   const sceneIntensity = document.createElement("input");
   sceneIntensity.type = "range";
   sceneIntensity.className = "weather-settings-range";
+  sceneIntensity.setAttribute("aria-label", "Scene intensity");
   sceneIntensity.min = "0.00";
   sceneIntensity.max = "1.00";
   sceneIntensity.step = "0.05";
   const sceneIntensityValue = document.createElement("span");
   sceneIntensityValue.className = "weather-settings-value";
   sceneIntensity.addEventListener("input", () => {
-    manualDraftDirty = true;
-    manualError.hidden = true;
+    markManualDraftDirty();
     sceneIntensityValue.textContent = `${Math.round(Number.parseFloat(sceneIntensity.value) * 100)}%`;
+    sceneIntensity.setAttribute("aria-valuetext", sceneIntensityValue.textContent);
   });
   sceneIntensityRow.appendChild(sceneIntensity);
   sceneIntensityRow.appendChild(sceneIntensityValue);
@@ -1563,16 +1590,27 @@ function createSettingsUI(sendToBackend) {
     sceneIntensityValue
   };
   let currentState = null;
+  let currentChatId;
   let manualDraftDirty = false;
   let intensitySaveTimer = null;
+  let pendingIntensity = null;
+  const manualFields = [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput, sceneIntensity];
+  const clearManualError = () => {
+    manualError.hidden = true;
+    manualError.textContent = "";
+    for (const field of manualFields)
+      field.removeAttribute("aria-invalid");
+  };
   const markManualDraftDirty = () => {
     manualDraftDirty = true;
-    manualError.hidden = true;
+    clearManualError();
   };
   for (const field of [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
+  for (const field of [dateInput, timeInput, temperatureInput])
+    field.setAttribute("aria-describedby", manualError.id);
   const buildManualState = () => ({
     location: locationInput.value.trim() || currentState?.location,
     date: dateInput.value || currentState?.date,
@@ -1592,33 +1630,42 @@ function createSettingsUI(sendToBackend) {
     const activePresetId = matchWeatherScenePreset(state);
     for (const [presetId, button] of presetButtons) {
       button.classList.toggle("weather-settings-preset-active", presetId === activePresetId);
+      button.setAttribute("aria-pressed", String(presetId === activePresetId));
     }
+  };
+  const showManualError = (message, field) => {
+    clearManualError();
+    manualError.textContent = message;
+    manualError.hidden = false;
+    field.setAttribute("aria-invalid", "true");
+    field.focus();
+    return false;
   };
   const applyManualState = (state) => {
     const nextState = state ?? buildManualState();
     const hasDate = typeof nextState.date === "string" && nextState.date.trim();
     const hasTime = typeof nextState.time === "string" && nextState.time.trim();
     if (hasDate && !hasTime || !hasDate && hasTime || hasDate && hasTime && parseStoryDateTime(nextState.date, nextState.time) === null) {
-      manualError.textContent = "Use a valid story date and time, such as 2026-01-15 and 3:00 PM.";
-      manualError.hidden = false;
-      return;
+      return showManualError("Use a valid story date and time, such as 2026-01-15 and 3:00 PM.", hasDate ? timeInput : dateInput);
     }
-    if (typeof nextState.temperature === "string" && nextState.temperature.trim() && !/^-?\d+(?:\.\d+)?\s*°?\s*(?:F|C|fahrenheit|celsius)$/i.test(nextState.temperature.trim())) {
-      manualError.textContent = "Temperature must include a numeric value and F or C, such as 61F or 16C.";
-      manualError.hidden = false;
-      return;
+    if (typeof nextState.temperature === "string" && nextState.temperature.trim() && !normalizeTemperatureToken(nextState.temperature)) {
+      return showManualError("Temperature must include a numeric value and F or C, such as 61F or 16C.", temperatureInput);
     }
     if (state === undefined) {
       const forecast = decodeForecastText(forecastInput.value);
       if (forecast.invalidLines.length > 0) {
-        manualError.textContent = `Fix the outlook line "${forecast.invalidLines[0].slice(0, 40)}". Use one day per line, such as 2026-01-16: snow, 30F, heavy flurries.`;
-        manualError.hidden = false;
-        return;
+        return showManualError(`Fix the outlook line "${forecast.invalidLines[0].slice(0, 40)}". Use one day per line, such as 2026-01-16: snow, 30F, heavy flurries.`, forecastInput);
       }
+      if (forecast.duplicateDates.length > 0)
+        return showManualError(`Use ${forecast.duplicateDates[0]} only once in the outlook.`, forecastInput);
+      if (forecast.exceedsDayLimit)
+        return showManualError(`The outlook supports up to ${MAX_FORECAST_DAYS} days. Remove the extra days before applying.`, forecastInput);
     }
     manualDraftDirty = false;
-    manualError.hidden = true;
+    clearManualError();
+    manualToggle.checked = true;
     sendToBackend({ type: "set_manual_state", state: nextState });
+    return true;
   };
   for (const preset of WEATHER_SCENE_PRESETS) {
     const button = document.createElement("button");
@@ -1632,8 +1679,7 @@ function createSettingsUI(sendToBackend) {
       const nextState = buildPresetWeatherState(preset.id, currentState);
       if (!nextState)
         return;
-      manualToggle.checked = true;
-      applyStateToInputs(nextState, fields);
+      applyStateToInputs({ ...currentState ?? {}, ...nextState }, fields);
       manualDraftDirty = false;
       applyManualState(nextState);
     });
@@ -1642,9 +1688,11 @@ function createSettingsUI(sendToBackend) {
   }
   manualToggle.addEventListener("change", () => {
     if (manualToggle.checked) {
-      applyManualState();
+      if (!applyManualState())
+        manualToggle.checked = currentState?.source === "manual";
     } else {
       manualDraftDirty = false;
+      clearManualError();
       sendToBackend({ type: "clear_manual_override" });
     }
   });
@@ -1669,7 +1717,6 @@ function createSettingsUI(sendToBackend) {
   applyButton.className = "weather-settings-button weather-settings-button-primary";
   applyButton.textContent = "Apply manual weather";
   applyButton.addEventListener("click", () => {
-    manualToggle.checked = true;
     applyManualState();
   });
   const resumeButton = document.createElement("button");
@@ -1679,6 +1726,7 @@ function createSettingsUI(sendToBackend) {
   resumeButton.addEventListener("click", () => {
     manualToggle.checked = false;
     manualDraftDirty = false;
+    clearManualError();
     sendToBackend({ type: "clear_manual_override" });
   });
   manualActions.appendChild(applyButton);
@@ -1713,25 +1761,35 @@ function createSettingsUI(sendToBackend) {
   root.appendChild(body);
   return {
     root,
-    sync(prefs, state, statusOverride) {
+    sync(prefs, state, statusOverride, chatId) {
+      if (chatId !== currentChatId) {
+        manualDraftDirty = false;
+        clearManualError();
+        currentChatId = chatId;
+      }
       currentState = state;
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
-      intensitySlider.value = String(prefs.intensity.toFixed(2));
-      intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
+      if (pendingIntensity === null) {
+        intensitySlider.value = String(prefs.intensity.toFixed(2));
+        intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
+        intensitySlider.setAttribute("aria-valuetext", intensityValue.textContent);
+      }
       motionSelect.value = prefs.reducedMotion;
       pauseToggle.checked = prefs.pauseEffects;
       transitionsToggle.checked = prefs.transitionsEnabled;
       clockSelect.value = prefs.clockMode;
       forecastToggle.checked = prefs.showForecast;
-      const chatAvailable = statusOverride !== "No active chat";
+      const chatAvailable = chatId !== null && statusOverride !== "No active chat";
       manualToggle.disabled = !chatAvailable;
       applyButton.disabled = !chatAvailable;
       resumeButton.disabled = !chatAvailable || !state || state.source === "story";
       for (const button of presetButtons.values())
         button.disabled = !chatAvailable;
+      for (const field of manualFields)
+        field.disabled = !chatAvailable;
       const displayTemperature = state ? formatTemperatureForUnit(state.temperature, prefs.temperatureUnit) : "";
       const stateMode = statusOverride ? "notice" : state?.source ?? "waiting";
       status.dataset.mode = stateMode;
@@ -1740,8 +1798,9 @@ function createSettingsUI(sendToBackend) {
       status.textContent = statusOverride ?? (state ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}` : "Waiting for LumiWeather");
       previewValue.textContent = state ? [
         `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}`,
-        state.forecast.length > 0 ? `Outlook: ${state.forecast.map(formatForecastEntry).join(" | ")}` : ""
+        state.forecast.length > 0 ? `Outlook: ${state.forecast.map((entry) => formatForecastEntry({ ...entry, temperature: formatTemperatureForUnit(entry.temperature, prefs.temperatureUnit) })).join(" | ")}` : ""
       ].filter(Boolean).join(" · ") : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
+      previewHint.textContent = !chatAvailable ? "Open a chat to view or customize its weather scene." : state?.source === "manual" ? "This chat stays locked to your scene until you resume story sync." : "This chat's weather tag keeps the scene in sync with the story.";
       manualModePill.textContent = state?.source === "manual" ? "Manual lock" : "Story sync";
       manualModePill.dataset.mode = state?.source === "manual" ? "manual" : "story";
       manualToggle.checked = state?.source === "manual";
@@ -1763,10 +1822,22 @@ function createSettingsUI(sendToBackend) {
         sceneIntensityValue.textContent = "30%";
       }
       updatePresetSelection(state);
+      sceneIntensity.setAttribute("aria-valuetext", sceneIntensityValue.textContent ?? "");
+    },
+    reportError(message) {
+      manualDraftDirty = true;
+      clearManualError();
+      manualError.textContent = message;
+      manualError.hidden = false;
+      manualToggle.checked = currentState?.source === "manual";
     },
     destroy() {
       if (intensitySaveTimer !== null)
         window.clearTimeout(intensitySaveTimer);
+      if (pendingIntensity !== null) {
+        sendToBackend({ type: "save_prefs", prefs: { intensity: pendingIntensity } });
+        pendingIntensity = null;
+      }
       root.remove();
     }
   };
@@ -2058,6 +2129,7 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-settings-button:disabled,
+.weather-settings-preset:disabled,
 .weather-settings-checkbox:disabled,
 .weather-settings-select:disabled,
 .weather-settings-input:disabled,
@@ -3193,7 +3265,8 @@ var WEATHER_HUD_CSS = `
 }
 
 /* A missing interceptor permission is surfaced on the HUD badge, not only in settings. */
-.weather-hud-widget[data-permission="limited"] .weather-hud-source {
+.weather-hud-widget[data-permission="limited"] .weather-hud-source,
+.weather-hud-widget[data-error="true"] .weather-hud-source {
   border-color: color-mix(in srgb, #ffb45e 55%, transparent);
   color: rgba(255, 214, 160, 0.96);
   background: color-mix(in srgb, #ffb45e 14%, var(--weather-hud-surface));
@@ -3228,6 +3301,16 @@ var WEATHER_HUD_CSS = `
 .weather-hud-forecast-icon svg {
   width: 14px;
   height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.weather-hud-forecast-icon .weather-hud-icon-solid {
+  fill: currentColor;
+  stroke: none;
 }
 
 .weather-hud-forecast-copy {
@@ -3277,9 +3360,38 @@ var WEATHER_HUD_CSS = `
   gap: 10px;
 }
 
+/* Keep every control reachable inside the compact desktop frame. */
+.weather-hud-widget[data-presentation="desktop"][data-expanded="true"] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.weather-hud-widget[data-presentation="desktop"][data-expanded="true"] .weather-hud-drawer {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--weather-hud-line) transparent;
+  padding-right: 4px;
+  scroll-padding-block: 10px;
+}
+
+.weather-hud-forecast-summary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--weather-hud-text-muted);
+  text-transform: none;
+}
+
 .weather-hud-widget[data-paused="true"]::after {
   animation-play-state: paused;
   opacity: calc(0.55 * var(--weather-hud-scene-intensity));
+}
+
+.weather-hud-widget[data-paused="true"] .weather-hud-summary {
+  animation-play-state: paused;
 }
 
 @keyframes weather-hud-drift {
@@ -4106,20 +4218,22 @@ var WEATHER_HUD_CSS = `
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .weather-hud-summary {
-    display: block;
-    width: auto;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    animation: none;
-  }
+.weather-hud-widget[data-reduced-motion="true"]::after {
+  animation: none;
+}
 
-  .weather-hud-summary::after {
-    content: none;
-  }
+.weather-hud-widget[data-reduced-motion="true"] .weather-hud-summary {
+  display: block;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: none;
+}
+
+.weather-hud-widget[data-reduced-motion="true"] .weather-hud-summary::after {
+  content: none;
 }
 `;
 
@@ -4689,6 +4803,15 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-label", "LumiWeather controls");
   }
+  if (expanded) {
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape")
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      callbacks.onToggleDrawer();
+    });
+  }
   let launcherButton;
   let launcherIcon;
   if (presentation.kind === "mobile-launcher") {
@@ -5009,6 +5132,7 @@ function renderForecastStrip(list, entries, unit) {
     const day = document.createElement("span");
     day.className = "weather-hud-forecast-day";
     day.textContent = formatForecastDayLabel(entry.date);
+    day.title = entry.date;
     const icon = document.createElement("span");
     icon.className = "weather-hud-forecast-icon";
     icon.innerHTML = conditionIcon(entry.condition);
@@ -5016,7 +5140,13 @@ function renderForecastStrip(list, entries, unit) {
     const text = document.createElement("span");
     text.className = "weather-hud-forecast-copy";
     text.textContent = entry.temperature ? `${entry.condition} · ${formatTemperatureForUnit(entry.temperature, unit)}` : entry.condition;
-    text.title = entry.summary;
+    if (entry.summary) {
+      const summary = document.createElement("span");
+      summary.className = "weather-hud-forecast-summary";
+      summary.textContent = entry.summary;
+      text.appendChild(summary);
+    }
+    text.title = [entry.date, entry.condition, entry.temperature, entry.summary].filter(Boolean).join(" · ");
     row.appendChild(day);
     row.appendChild(icon);
     row.appendChild(text);
@@ -5024,13 +5154,10 @@ function renderForecastStrip(list, entries, unit) {
   }
 }
 function formatForecastDayLabel(dateValue) {
-  const match = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match)
+  const timestamp = parseStoryDateTime(dateValue, "12:00");
+  if (timestamp === null)
     return dateValue;
-  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  if (Number.isNaN(parsed.getTime()))
-    return dateValue;
-  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(parsed);
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" }).format(timestamp);
 }
 function resolveClockDate(state, clockMode) {
   if (clockMode === "story")
@@ -5076,7 +5203,7 @@ function syncHudClock(hud, displayState, hasState, liveDate) {
   }
   hud.root.dataset.clockSource = liveDate ? "live" : "story";
 }
-function syncHudState(hud, prefs, state, expanded) {
+function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   const displayState = state ?? makeDefaultWeatherState();
   const liveDate = resolveClockDate(displayState, prefs.clockMode);
   const phase = resolveHudTimePhase2(displayState, liveDate);
@@ -5101,11 +5228,14 @@ function syncHudState(hud, prefs, state, expanded) {
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
   hud.summary.textContent = summaryText;
+  hud.summary.title = summaryText;
   hud.summary.dataset.tickerText = summaryText;
   hud.wind.textContent = state ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}` : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
+  hud.location.title = hud.location.textContent;
+  hud.wind.title = hud.wind.textContent;
   const permissionLimited = hud.root.dataset.permission === "limited";
-  hud.source.textContent = permissionLimited ? "Permission needed" : state ? displayState.source === "manual" ? "Scene lock" : "Story sync" : "Waiting";
+  hud.source.textContent = hud.root.dataset.error === "true" ? "Update failed" : permissionLimited ? "Permission needed" : state ? displayState.source === "manual" ? "Scene lock" : "Story sync" : "Waiting";
   const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
   hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
   hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
@@ -5121,12 +5251,16 @@ function syncHudState(hud, prefs, state, expanded) {
   if (hud.storyButton && hud.manualButton) {
     hud.storyButton.classList.toggle("weather-hud-chip-active", state?.source === "story");
     hud.manualButton.classList.toggle("weather-hud-chip-active", state?.source === "manual");
+    hud.storyButton.setAttribute("aria-pressed", String(state?.source === "story"));
+    hud.manualButton.setAttribute("aria-pressed", String(state?.source === "manual"));
     hud.storyButton.disabled = !state || state.source === "story";
     hud.manualButton.disabled = !state;
   }
   const activePresetId = matchWeatherScenePreset(state);
   for (const [presetId, button] of hud.presetButtons) {
     button.classList.toggle("weather-hud-preset-active", presetId === activePresetId);
+    button.setAttribute("aria-pressed", String(presetId === activePresetId));
+    button.disabled = !hasActiveChat;
   }
   if (hud.layerSelect) {
     hud.layerSelect.value = prefs.layerMode;
@@ -5138,6 +5272,7 @@ function syncHudState(hud, prefs, state, expanded) {
   if (hud.pauseButton) {
     hud.pauseButton.textContent = prefs.pauseEffects ? "Resume motion" : "Pause motion";
     hud.pauseButton.classList.toggle("weather-hud-control-active", prefs.pauseEffects);
+    hud.pauseButton.setAttribute("aria-pressed", String(prefs.pauseEffects));
   }
   if (hud.resumeButton) {
     hud.resumeButton.disabled = !state || state.source === "story";
@@ -5298,7 +5433,7 @@ function setup(ctx) {
   let activeChatRequestId = 0;
   let hudExpanded = false;
   let permissionWarning = null;
-  const processedWeatherTags = new Map;
+  let backendWarning = null;
   let keyboardState = ctx.ui.events.getKeyboardState();
   const coarsePointerMedia = window.matchMedia("(pointer: coarse)");
   let mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointerMedia.matches);
@@ -5374,13 +5509,7 @@ function setup(ctx) {
   const ensureHostObserver = () => {
     if (hostObserver || !document.body)
       return;
-    hostObserver = new MutationObserver(() => {
-      if (attachFxRoots()) {
-        updateScene();
-      }
-      if (backFx.host?.isConnected && frontFx.host?.isConnected)
-        stopHostObserver();
-    });
+    hostObserver = new MutationObserver(() => queueFxRootAttach());
     hostObserver.observe(document.body, { childList: true, subtree: true });
   };
   const queueFxRootAttach = () => {
@@ -5390,10 +5519,7 @@ function setup(ctx) {
       const changed = attachFxRoots();
       if (changed)
         updateScene();
-      if (backFx.host?.isConnected && frontFx.host?.isConnected)
-        stopHostObserver();
-      else
-        ensureHostObserver();
+      ensureHostObserver();
     });
   };
   cleanups.push(() => {
@@ -5435,11 +5561,14 @@ function setup(ctx) {
     destroyHud();
     hud = createHudWidget(ctx, nextPosition, hudExpanded, mobileHudLayout, keyboardState, {
       onToggleDrawer: () => {
+        const restoreFocus = !!hud?.root.contains(document.activeElement);
         const currentPosition = hud && !hud.widget.isFullscreen() ? hud.widget.getPosition() : windowedHudPosition;
         windowedHudPosition = currentPosition;
         hudExpanded = !hudExpanded;
         buildHud(currentPosition);
         updateScene();
+        if (restoreFocus && hud)
+          (hud.launcherButton ?? hud.drawerToggle).focus({ preventScroll: true });
       },
       onOpenSettings: () => {
         ctx.events.emit("open-settings", { view: "extensions" });
@@ -5463,11 +5592,12 @@ function setup(ctx) {
         sendToBackend(ctx, { type: "save_prefs", prefs: { pauseEffects: !currentPrefs.pauseEffects } });
       }
     });
+    hud.root.dataset.reducedMotion = String(getReducedMotion());
     removeHudDragListener = hud.widget.onDragEnd((nextPositionFromDrag) => {
       windowedHudPosition = nextPositionFromDrag;
       sendToBackend(ctx, { type: "save_prefs", prefs: { widgetPosition: nextPositionFromDrag } });
     });
-    syncHudState(hud, currentPrefs, currentState, hudExpanded);
+    syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
   };
   buildHud(currentPrefs.widgetPosition);
   cleanups.push(() => destroyHud());
@@ -5526,7 +5656,7 @@ function setup(ctx) {
     }
   };
   let disposed = false;
-  const canRunLightning = () => !disposed && currentState?.condition === "storm" && !getReducedMotion() && !currentPrefs.pauseEffects && currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId;
+  const canRunLightning = () => !disposed && currentState?.condition === "storm" && !getReducedMotion() && !currentPrefs.pauseEffects && currentPrefs.effectsEnabled && currentPrefs.lightningFlashEnabled && document.visibilityState !== "hidden" && !!activeChatId;
   const scheduleStormFlash = () => {
     resetFlashTimer();
     if (!canRunLightning()) {
@@ -5587,9 +5717,12 @@ function setup(ctx) {
     syncFxCondition(frontFx, currentState?.condition ?? null);
     if (hud) {
       hud.root.dataset.permission = permissionWarning ? "limited" : "ok";
-      syncHudState(hud, currentPrefs, currentState, hudExpanded);
+      hud.root.dataset.error = String(!!backendWarning);
+      hud.source.title = backendWarning ?? permissionWarning ?? "";
+      hud.root.dataset.reducedMotion = String(reducedMotion);
+      syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
     }
-    settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : permissionWarning ?? undefined);
+    settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : backendWarning ?? permissionWarning ?? undefined, activeChatId);
     applySceneState(backFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
     applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
     const showBack = showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both");
@@ -5619,7 +5752,7 @@ function setup(ctx) {
       return;
     if (clockMode === "auto" && currentState?.source !== "manual")
       return;
-    syncHudState(hud, currentPrefs, currentState, hudExpanded);
+    syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
   }, 1000);
   cleanups.push(() => window.clearInterval(clockTimer));
   const onMotionChange = () => updateScene();
@@ -5637,15 +5770,6 @@ function setup(ctx) {
     const chatId = payload.chatId ?? activeChatId;
     if (!chatId)
       return;
-    const dedupeKey = `${chatId}:${payload.messageId ?? ""}:${payload.fullMatch}`;
-    if (processedWeatherTags.has(dedupeKey))
-      return;
-    processedWeatherTags.set(dedupeKey, payload.fullMatch);
-    if (processedWeatherTags.size > 200) {
-      const oldest = processedWeatherTags.keys().next().value;
-      if (oldest)
-        processedWeatherTags.delete(oldest);
-    }
     sendToBackend(ctx, {
       type: "weather_tag_intercepted",
       chatId,
@@ -5659,6 +5783,7 @@ function setup(ctx) {
     const message = raw;
     switch (message.type) {
       case "prefs":
+        backendWarning = null;
         currentPrefs = message.prefs;
         windowedHudPosition = currentPrefs.widgetPosition ?? DEFAULT_WIDGET_POSITION;
         if (mobileHudLayout) {
@@ -5675,6 +5800,7 @@ function setup(ctx) {
       case "active_chat_state":
         if (!shouldApplyChatState(activeChatId, message.chatId, message.requestId, activeChatRequestId))
           break;
+        backendWarning = null;
         activeChatId = message.chatId;
         currentState = message.state;
         updateScene();
@@ -5682,11 +5808,15 @@ function setup(ctx) {
       case "weather_state":
         if (message.chatId !== activeChatId)
           break;
+        backendWarning = null;
         currentState = message.state;
         updateScene();
         break;
       case "error":
         console.warn(`[weather_hud] ${message.message}`);
+        backendWarning = message.message;
+        settingsUI.reportError(message.message);
+        updateScene();
         break;
     }
   });
@@ -5696,7 +5826,7 @@ function setup(ctx) {
       return;
     activeChatId = chatId;
     currentState = null;
-    processedWeatherTags.clear();
+    backendWarning = null;
     queueFxRootAttach();
     activeChatRequestId += 1;
     sendToBackend(ctx, { type: "chat_changed", chatId, requestId: activeChatRequestId });
@@ -5715,9 +5845,12 @@ function setup(ctx) {
   });
   cleanups.push(settingsChangedUnsub);
   sendToBackend(ctx, { type: "frontend_ready" });
+  requestActiveChatState(ctx.getActiveChat().chatId);
   queueFxRootAttach();
   updateScene();
   ctx.permissions.getGranted().then((granted) => {
+    if (disposed)
+      return;
     if (!granted.includes("interceptor")) {
       permissionWarning = "Enable the Interceptor permission to inject the current weather scene into prompts.";
       updateScene();

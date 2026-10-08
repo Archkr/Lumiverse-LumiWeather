@@ -1,10 +1,11 @@
 import type { ChatMessageDTO } from "lumiverse-spindle-types";
 
-import { normalizeWeatherState } from "./shared";
+import { normalizeWeatherTag } from "./shared";
 import { extractLastWeatherTag } from "./tag-utils";
 import type { ForecastEntry, WeatherState } from "./types";
 
 type StoryHistoryMessage = Pick<ChatMessageDTO, "content" | "index_in_chat" | "is_user"> & {
+  id?: string;
   role?: "system" | "user" | "assistant";
   send_date?: number;
   swipe_id?: number;
@@ -67,7 +68,7 @@ export function rebuildStoryWeatherState(
     if (!tag) continue;
 
     const updatedAt = resolveMessageTimestamp(message) ?? fallbackUpdatedAt;
-    state = normalizeWeatherState({ ...tag.attrs, updatedAt, source: "story" }, state);
+    state = { ...normalizeWeatherTag(tag.attrs, state), updatedAt };
   }
   return state;
 }

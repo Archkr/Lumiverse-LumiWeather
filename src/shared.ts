@@ -92,7 +92,8 @@ function normalizeTextWithTruncation(
   if (typeof value !== "string") return { text: fallback, truncated: false };
   const trimmed = value.trim().replace(/\s+/g, " ");
   if (!trimmed) return { text: fallback, truncated: false };
-  return { text: trimmed.slice(0, maxLength), truncated: trimmed.length > maxLength };
+  const truncated = trimmed.length > maxLength;
+  return { text: trimmed.slice(0, truncated ? maxLength - 1 : maxLength), truncated };
 }
 
 export const SUMMARY_MAX_LENGTH = 96;
@@ -227,11 +228,11 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
   const palette = normalizePalette(source.palette, derivePalette(condition, date, time));
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
-  const windDirectionValue = source.windDirection ?? source.wind_direction ?? source["wind-direction"];
+  const windDirectionValue = source.windDirection ?? source.winddirection ?? source.wind_direction ?? source["wind-direction"];
 
   // A tag that omits the projection keeps the one already in play, so a single
   // day-to-day tag does not erase a multi-day outlook.
-  const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays;
+  const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays ?? source.forecastdays;
   const forecast = forecastValue === undefined ? fallback.forecast : normalizeForecast(forecastValue);
   const derivedSeason = seasonFromStoryDate(date, time);
   const seasonOverride = normalizeSeason(
@@ -259,7 +260,8 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
 }
 
 export function normalizeWeatherTag(attrs: Record<string, string>, previous?: WeatherState | null): WeatherState {
-  return normalizeWeatherState({ ...attrs, updatedAt: Date.now(), source: "story" }, previous);
+  const normalizedAttrs = Object.fromEntries(Object.entries(attrs).map(([name, value]) => [name.toLowerCase(), value]));
+  return normalizeWeatherState({ ...normalizedAttrs, updatedAt: Date.now(), source: "story" }, previous);
 }
 
 /** Upgrade persisted scenes without mistaking their resolved season for intent. */
@@ -284,13 +286,13 @@ export function applyManualWeatherState(previous: WeatherState, patch: Partial<W
 
 export function formatTemperatureForUnit(value: string, unit: TemperatureUnit): string {
   const trimmed = value.trim();
-  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*([FC])(?:ahrenheit|elsius)?\b/i);
+  const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F(?:ahrenheit)?|C(?:elsius)?)$/i);
   if (!match) return trimmed;
 
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount)) return trimmed;
 
-  const sourceUnit = match[2].toUpperCase() === "C" ? "celsius" : "fahrenheit";
+  const sourceUnit = match[2][0].toUpperCase() === "C" ? "celsius" : "fahrenheit";
   if (sourceUnit === unit) {
     return `${Math.round(amount)}${unit === "celsius" ? "C" : "F"}`;
   }

@@ -283,6 +283,7 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-settings-button:disabled,
+.weather-settings-preset:disabled,
 .weather-settings-checkbox:disabled,
 .weather-settings-select:disabled,
 .weather-settings-input:disabled,
@@ -1418,7 +1419,8 @@ export const WEATHER_HUD_CSS = `
 }
 
 /* A missing interceptor permission is surfaced on the HUD badge, not only in settings. */
-.weather-hud-widget[data-permission="limited"] .weather-hud-source {
+.weather-hud-widget[data-permission="limited"] .weather-hud-source,
+.weather-hud-widget[data-error="true"] .weather-hud-source {
   border-color: color-mix(in srgb, #ffb45e 55%, transparent);
   color: rgba(255, 214, 160, 0.96);
   background: color-mix(in srgb, #ffb45e 14%, var(--weather-hud-surface));
@@ -1453,6 +1455,16 @@ export const WEATHER_HUD_CSS = `
 .weather-hud-forecast-icon svg {
   width: 14px;
   height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.weather-hud-forecast-icon .weather-hud-icon-solid {
+  fill: currentColor;
+  stroke: none;
 }
 
 .weather-hud-forecast-copy {
@@ -1502,9 +1514,38 @@ export const WEATHER_HUD_CSS = `
   gap: 10px;
 }
 
+/* Keep every control reachable inside the compact desktop frame. */
+.weather-hud-widget[data-presentation="desktop"][data-expanded="true"] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.weather-hud-widget[data-presentation="desktop"][data-expanded="true"] .weather-hud-drawer {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--weather-hud-line) transparent;
+  padding-right: 4px;
+  scroll-padding-block: 10px;
+}
+
+.weather-hud-forecast-summary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--weather-hud-text-muted);
+  text-transform: none;
+}
+
 .weather-hud-widget[data-paused="true"]::after {
   animation-play-state: paused;
   opacity: calc(0.55 * var(--weather-hud-scene-intensity));
+}
+
+.weather-hud-widget[data-paused="true"] .weather-hud-summary {
+  animation-play-state: paused;
 }
 
 @keyframes weather-hud-drift {
@@ -2331,19 +2372,21 @@ export const WEATHER_HUD_CSS = `
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .weather-hud-summary {
-    display: block;
-    width: auto;
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    animation: none;
-  }
+.weather-hud-widget[data-reduced-motion="true"]::after {
+  animation: none;
+}
 
-  .weather-hud-summary::after {
-    content: none;
-  }
+.weather-hud-widget[data-reduced-motion="true"] .weather-hud-summary {
+  display: block;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: none;
+}
+
+.weather-hud-widget[data-reduced-motion="true"] .weather-hud-summary::after {
+  content: none;
 }
 `;

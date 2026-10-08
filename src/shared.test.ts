@@ -35,6 +35,25 @@ describe("story weather normalization", () => {
     expect("timestampMs" in state).toBe(false);
   });
 
+  test("accepts case-insensitive tag attributes and their existing aliases", () => {
+    const state = normalizeWeatherTag({
+      LOCATION: "Moon Harbor",
+      DATE: "2026-01-15",
+      Time: "3:00 PM",
+      CONDITION: "SNOW",
+      WindDirection: "NW",
+      ForecastDays: "2026-01-16: rain, 35F",
+    });
+    expect(state).toMatchObject({
+      location: "Moon Harbor",
+      date: "2026-01-15",
+      time: "3:00 PM",
+      condition: "snow",
+      windDirection: "northwest",
+    });
+    expect(state.forecast[0]).toMatchObject({ condition: "rain", temperature: "35F" });
+  });
+
   test("clamps values and preserves explicit previous state", () => {
     const previous = makeDefaultWeatherState(0);
     const state = normalizeWeatherState({ intensity: 4, summary: "" }, previous);
@@ -56,6 +75,9 @@ describe("story weather normalization", () => {
     expect(parseHourFromTimeString("12:05 PM")).toBe(12);
     expect(formatTemperatureForUnit("16C", "fahrenheit")).toBe("61F");
     expect(formatTemperatureForUnit("61°F", "celsius")).toBe("16C");
+    expect(formatTemperatureForUnit("16 Celsius", "fahrenheit")).toBe("61F");
+    expect(formatTemperatureForUnit("61Felsius", "celsius")).toBe("61Felsius");
+    expect(formatTemperatureForUnit("61F with rain", "celsius")).toBe("61F with rain");
   });
 
   test("normalizes preference bounds", () => {
@@ -88,6 +110,11 @@ describe("story weather normalization", () => {
 
     const short = normalizeWeatherTag({ date: "2026-01-15", time: "3:00 PM", summary: "Steady rain" });
     expect(short.summary).toBe("Steady rain");
+
+    const unbroken = normalizeWeatherTag({ summary: "a".repeat(SUMMARY_MAX_LENGTH + 1) });
+    expect(unbroken.summary).toHaveLength(SUMMARY_MAX_LENGTH);
+    expect(unbroken.summary.endsWith("\u2026")).toBe(true);
+    expect(normalizeWeatherState(unbroken).summary).toBe(unbroken.summary);
   });
 
   test("normalizes the new preference fields and defaults them for old installs", () => {

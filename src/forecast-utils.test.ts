@@ -5,6 +5,7 @@ import {
   formatForecastEntry,
   isRealCalendarDate,
   normalizeForecast,
+  normalizeTemperatureToken,
   parseForecastEntry,
   serializeForecast,
   splitForecastEntries,
@@ -19,6 +20,9 @@ describe("weather forecast parsing", () => {
     expect(isRealCalendarDate("2024-02-29")).toBe(true);
     expect(isRealCalendarDate("15-01-2026")).toBe(false);
     expect(isRealCalendarDate("")).toBe(false);
+    expect(isRealCalendarDate("0004-02-29")).toBe(true);
+    expect(isRealCalendarDate("0001-02-29")).toBe(false);
+    expect(isRealCalendarDate("0000-01-01")).toBe(false);
   });
 
   test("accepts pipes, semicolons, and newlines as entry separators", () => {
@@ -111,6 +115,26 @@ describe("weather forecast parsing", () => {
     // A summary with no condition or temperature must survive a round trip.
     const summaryOnly = normalizeForecast([{ date: "2026-01-20", summary: "Hazy heat" }]);
     expect(summaryOnly[0].summary).toBe("Hazy heat");
+  });
+
+  test("keeps structured forecast prose in its original field on reload", () => {
+    const entries = normalizeForecast([
+      { date: "2026-01-18", summary: "rain" },
+      { date: "2026-01-19", summary: "30F" },
+      { date: "2026-01-20", condition: "unsupported", temperature: "16C", summary: "Cold air" },
+    ]);
+    expect(entries[0]).toMatchObject({ condition: "clear", summary: "rain", temperature: "" });
+    expect(entries[1]).toMatchObject({ condition: "clear", summary: "30F", temperature: "" });
+    expect(entries[2]).toMatchObject({ condition: "clear", summary: "Cold air", temperature: "16C" });
+    expect(normalizeForecast(entries)).toEqual(entries);
+    expect(normalizeForecast(serializeForecast(entries))).toEqual(entries);
+  });
+
+  test("accepts complete temperature units and rejects mixed suffixes", () => {
+    expect(normalizeTemperatureToken("16 Celsius")).toBe("16C");
+    expect(normalizeTemperatureToken("61 Fahrenheit")).toBe("61F");
+    expect(normalizeTemperatureToken("16Cahrenheit")).toBe("");
+    expect(normalizeTemperatureToken("61Felsius")).toBe("");
   });
 
   test("round-trips through the serialized tag form", () => {

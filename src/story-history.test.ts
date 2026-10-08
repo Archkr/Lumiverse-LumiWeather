@@ -74,6 +74,13 @@ describe("story weather history", () => {
     expect(hasSameStoryScene(state, state ? { ...state, updatedAt: 9000 } : null)).toBe(true);
   });
 
+  test("normalizes mixed-case attribute names when replaying stored tags", () => {
+    const state = rebuildStoryWeatherState([
+      message(0, "assistant", '<weather-state Location="Garden" DATE="2026-07-20" TIME="4:00 PM" Condition="RAIN" WindDirection="WEST"></weather-state>'),
+    ], 3000);
+    expect(state).toMatchObject({ location: "Garden", date: "2026-07-20", time: "4:00 PM", condition: "rain", windDirection: "west", updatedAt: 3000 });
+  });
+
   test("stamps each replayed tag with its own message timestamp", () => {
     // Regression: every replayed tag used to receive one shared Date.now(), so a
     // scene written weeks ago published as freshly observed.

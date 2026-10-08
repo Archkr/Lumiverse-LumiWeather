@@ -1,7 +1,7 @@
 export const MOBILE_HUD_BREAKPOINT = 600;
 
 export const MOBILE_HUD_LAUNCHER_SIZE = { width: 40, height: 40 } as const;
-export const DESKTOP_HUD_COLLAPSED_SIZE = { width: 320, height: 148 } as const;
+export const DESKTOP_HUD_COLLAPSED_SIZE = { width: 320, height: 184 } as const;
 export const DESKTOP_HUD_EXPANDED_SIZE = { width: 360, height: 360 } as const;
 
 export type HudPresentation = {

@@ -1,4 +1,5 @@
 import { formatDate, makeDefaultWeatherState } from "./shared";
+import { isRealCalendarDate } from "./forecast-utils";
 import type { WeatherState } from "./types";
 
 export interface WeatherScenePreset {
@@ -132,7 +133,7 @@ export function buildPresetWeatherState(
   if (!preset) return null;
 
   const baseState = currentState ?? makeDefaultWeatherState();
-  const fallbackDate = /^\d{4}-\d{2}-\d{2}$/.test(baseState.date)
+  const fallbackDate = isRealCalendarDate(baseState.date)
     ? baseState.date
     : formatDate(new Date());
 

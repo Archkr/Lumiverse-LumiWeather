@@ -65,7 +65,7 @@ Supported conditions:
 - `snow`
 - `fog`
 
-Condition names are case-insensitive and common aliases such as `sunny`, `overcast`, `rainy`, `thunderstorm`, `snowy`, and `mist` are normalized to these six values. Dates must be real calendar dates, and times must be valid 12-hour or 24-hour values.
+Condition and attribute names are case-insensitive. Common condition aliases such as `sunny`, `overcast`, `rainy`, `thunderstorm`, `snowy`, and `mist` are normalized to these six values. Dates must be real calendar dates, and times must be valid 12-hour or 24-hour values. Story time is independent of the device's timezone and daylight-saving changes.
 
 ### Optional attributes
 
@@ -114,7 +114,7 @@ The HUD clock follows story time by default. **HUD clock** in settings chooses b
 5. The backend stores the normalized weather state per chat.
 6. If the model does not emit a weather tag, the current scene remains unchanged and the HUD reports that it is waiting for LumiWeather.
 
-Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice. When a tagged message is deleted, edited, or swiped, LumiWeather rebuilds story state from the latest remaining assistant tag.
+Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice. When a tagged message is deleted, edited, or swiped, LumiWeather rebuilds story state from the latest remaining assistant tag. Rendering older messages keeps the latest scene intact.
 
 ## Story Sync vs Manual Lock
 
@@ -133,8 +133,10 @@ Only completed assistant tags are accepted. Streaming tags and user-authored tag
 The manual scene editor covers every field a weather tag can carry, including the v1.4 additions:
 
 - **Season** offers `Derived from date` by default, so editing the story date updates the season instead of pinning whatever the old date implied. Pick a season explicitly to override it; selecting `Derived from date` again clears the override. The choice survives saving and reloading. For older saved scenes without override metadata, a season matching the date is treated as derived; a different season is retained as an override.
-- **Outlook** takes one day per line using the same format as the tag attribute, for example `2026-01-16: snow, 30F, heavy flurries`. Leave it empty to clear the projection. A line that cannot be parsed is reported instead of being silently dropped.
+- **Outlook** takes up to five distinct days, one per line using the same format as the tag attribute, for example `2026-01-16: snow, 30F, heavy flurries`. Leave it empty to clear the projection. Invalid lines, duplicate dates, and extra days are reported before saving.
 - All seven scene presets match the tagged form exactly, so a preset you apply by hand shows as active and produces the same scene as a tag would.
+
+Unsaved manual edits stay with the current chat and reset when switching chats. Save failures are shown in the HUD and settings while retaining the draft for retrying. The desktop controls drawer scrolls to keep every control reachable; press Escape to close it. **Pause motion** and **Reduced motion** also apply to the HUD's animated summary, and disabling **Lightning flashes** stops both lightning bolts and scene flashes.
 
 ## Installation
 

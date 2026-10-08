@@ -1,4 +1,5 @@
 import { clamp } from "./shared";
+import { parseStoryDateTime } from "./time-utils";
 import type { ForecastEntry, WeatherCondition } from "./types";
 
 export const MAX_FORECAST_DAYS = 5;
@@ -26,17 +27,8 @@ const CONDITION_ALIASES: Record<string, WeatherCondition> = {
   hazy: "fog",
 };
 
-const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-
 export function isRealCalendarDate(value: string): boolean {
-  const match = value.match(DATE_PATTERN);
-  if (!match) return false;
-  const year = Number.parseInt(match[1], 10);
-  const month = Number.parseInt(match[2], 10);
-  const day = Number.parseInt(match[3], 10);
-  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return false;
-  const parsed = new Date(year, month - 1, day);
-  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+  return value === value.trim() && parseStoryDateTime(value, "00:00") !== null;
 }
 
 export function normalizeConditionToken(token: string): WeatherCondition | null {
@@ -46,11 +38,11 @@ export function normalizeConditionToken(token: string): WeatherCondition | null 
 
 /** Accepts `61F`, `16C`, `61 °F`, or `fahrenheit`/`celsius` suffixes. */
 export function normalizeTemperatureToken(token: string): string {
-  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F|C)(?:ahrenheit|elsius)?$/i);
+  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F(?:ahrenheit)?|C(?:elsius)?)$/i);
   if (!match) return "";
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount)) return "";
-  return `${Math.round(amount)}${match[2].toUpperCase() === "C" ? "C" : "F"}`;
+  return `${Math.round(amount)}${match[2][0].toUpperCase() === "C" ? "C" : "F"}`;
 }
 
 export function truncateForecastSummary(value: string): string {
@@ -93,11 +85,17 @@ export function parseForecastEntry(raw: string): ForecastEntry | null {
 
   let condition: WeatherCondition | null = null;
   let temperature = "";
+  let temperatureOmitted = false;
   const summaryParts: string[] = [];
 
   for (const part of trimmed.slice(separatorIndex + 1).split(",")) {
     const token = part.trim();
-    if (!token) continue;
+    if (!token) {
+      // Canonical serialization can leave an empty temperature slot to keep a
+      // temperature-shaped summary (e.g. "30F") from becoming metadata.
+      if (condition !== null) temperatureOmitted = true;
+      continue;
+    }
 
     // The summary starts at the first field that is neither a condition nor a
     // temperature, and every later field belongs to it.
@@ -113,7 +111,7 @@ export function parseForecastEntry(raw: string): ForecastEntry | null {
     }
 
     const candidateTemperature = normalizeTemperatureToken(token);
-    if (candidateTemperature && !temperature) {
+    if (candidateTemperature && !temperature && !temperatureOmitted) {
       temperature = candidateTemperature;
       continue;
     }
@@ -160,37 +158,41 @@ export function defaultForecastSummary(condition: WeatherCondition): string {
  * entries are sorted by date, and the projection is capped at `MAX_FORECAST_DAYS`.
  */
 export function normalizeForecast(input: unknown, maxDays = MAX_FORECAST_DAYS): ForecastEntry[] {
-  const rawEntries: string[] = [];
-
-  if (typeof input === "string") {
-    rawEntries.push(...splitForecastEntries(input));
-  } else if (Array.isArray(input)) {
-    for (const item of input) {
-      if (typeof item === "string") rawEntries.push(...splitForecastEntries(item));
-      else if (item && typeof item === "object") rawEntries.push(serializeForecastObject(item as Record<string, unknown>));
+  const entries: ForecastEntry[] = [];
+  const addInput = (candidate: unknown): void => {
+    if (typeof candidate === "string") {
+      for (const raw of splitForecastEntries(candidate)) {
+        const entry = parseForecastEntry(raw);
+        if (entry) entries.push(entry);
+      }
+    } else if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      const entry = normalizeForecastObject(candidate as Record<string, unknown>);
+      if (entry) entries.push(entry);
     }
-  } else if (input && typeof input === "object") {
-    rawEntries.push(serializeForecastObject(input as Record<string, unknown>));
-  }
+  };
+
+  if (Array.isArray(input)) input.forEach(addInput);
+  else addInput(input);
 
   const byDate = new Map<string, ForecastEntry>();
-  for (const raw of rawEntries) {
-    const entry = parseForecastEntry(raw);
-    if (entry) byDate.set(entry.date, entry);
-  }
+  for (const entry of entries) byDate.set(entry.date, entry);
 
   const limit = Math.max(0, Math.round(clamp(maxDays, 0, MAX_FORECAST_DAYS)));
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(0, limit);
 }
 
-function serializeForecastObject(candidate: Record<string, unknown>): string {
+function normalizeForecastObject(candidate: Record<string, unknown>): ForecastEntry | null {
   const read = (key: string): string => (typeof candidate[key] === "string" ? (candidate[key] as string).trim() : "");
   const date = read("date");
-  if (!date) return "";
-  // The summary must stay last: the parser treats the first field that is neither
-  // a condition nor a temperature as the start of the free-text summary.
-  const details = [read("condition"), read("temperature"), read("summary")].filter(Boolean).join(", ");
-  return details ? `${date}: ${details}` : date;
+  if (!isRealCalendarDate(date)) return null;
+  // Object fields already carry their roles. Re-parsing their prose as tag
+  // fields would turn a summary such as "rain" or "30F" into metadata on reload.
+  return {
+    date,
+    condition: normalizeConditionToken(read("condition")) ?? "clear",
+    temperature: normalizeTemperatureToken(read("temperature")),
+    summary: truncateForecastSummary(read("summary")),
+  };
 }
 
 /**
@@ -198,7 +200,10 @@ function serializeForecastObject(candidate: Record<string, unknown>): string {
  * form. Faithful to the stored model, so parse and serialize round-trip exactly.
  */
 export function formatForecastEntry(entry: ForecastEntry): string {
-  const details = [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
+  const keepEmptyTemperature = !entry.temperature && !!normalizeTemperatureToken(entry.summary.split(",")[0]);
+  const details = keepEmptyTemperature
+    ? `${entry.condition}, , ${entry.summary}`
+    : [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
   return details ? `${entry.date}: ${details}` : entry.date;
 }
 

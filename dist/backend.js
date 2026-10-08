@@ -5,7 +5,7 @@ function pad2(value) {
   return String(value).padStart(2, "0");
 }
 function formatDate(date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  return `${String(date.getFullYear()).padStart(4, "0")}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 function formatTime(date) {
   const hours24 = date.getHours();
@@ -17,19 +17,19 @@ function parseHourFromTimeString(timeValue) {
   const normalizedTime = timeValue.trim();
   const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
   if (time12) {
-    let hours2 = Number.parseInt(time12[1], 10);
-    if (hours2 < 1 || hours2 > 12)
+    let hours = Number.parseInt(time12[1], 10);
+    if (hours < 1 || hours > 12)
       return null;
-    const minutes2 = Number.parseInt(time12[2], 10);
-    const seconds2 = time12[3] ? Number.parseInt(time12[3], 10) : 0;
-    if (minutes2 > 59 || seconds2 > 59)
+    const minutes = Number.parseInt(time12[2], 10);
+    const seconds = time12[3] ? Number.parseInt(time12[3], 10) : 0;
+    if (minutes > 59 || seconds > 59)
       return null;
     const meridiem = time12[4].toUpperCase();
-    if (meridiem === "PM" && hours2 < 12)
-      hours2 += 12;
-    if (meridiem === "AM" && hours2 === 12)
-      hours2 = 0;
-    return hours2;
+    if (meridiem === "PM" && hours < 12)
+      hours += 12;
+    if (meridiem === "AM" && hours === 12)
+      hours = 0;
+    return hours;
   }
   const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!time24)
@@ -46,7 +46,7 @@ function parseStoryDateTime(dateValue, timeValue) {
   if (!dateMatch)
     return null;
   const normalizedTime = timeValue.trim();
-  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/i);
+  const time12 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?:\s*:\s*(\d{2}))?\s*([AP]M)$/i);
   const time24 = normalizedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   let hours = 0;
   let minutes = 0;
@@ -76,8 +76,10 @@ function parseStoryDateTime(dateValue, timeValue) {
   const day = Number.parseInt(dateMatch[3], 10);
   if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31)
     return null;
-  const parsed = new Date(year, month - 1, day, hours, minutes, seconds, 0);
-  if (Number.isNaN(parsed.getTime()) || parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day || parsed.getHours() !== hours || parsed.getMinutes() !== minutes || parsed.getSeconds() !== seconds) {
+  const parsed = new Date(0);
+  parsed.setUTCFullYear(year, month - 1, day);
+  parsed.setUTCHours(hours, minutes, seconds, 0);
+  if (Number.isNaN(parsed.getTime()) || parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day || parsed.getUTCHours() !== hours || parsed.getUTCMinutes() !== minutes || parsed.getUTCSeconds() !== seconds) {
     return null;
   }
   return parsed.getTime();
@@ -86,12 +88,14 @@ function resolveDayOfYear(timestamp) {
   if (!Number.isFinite(timestamp))
     return null;
   const date = new Date(timestamp);
-  const year = date.getFullYear();
+  const year = date.getUTCFullYear();
   if (!Number.isFinite(year))
     return null;
-  const startOfYear = Date.UTC(year, 0, 1);
-  const current = Date.UTC(year, date.getMonth(), date.getDate());
-  const day = Math.round((current - startOfYear) / DAY_MS) + 1;
+  const startOfYear = new Date(0);
+  startOfYear.setUTCFullYear(year, 0, 1);
+  const current = new Date(0);
+  current.setUTCFullYear(year, date.getUTCMonth(), date.getUTCDate());
+  const day = Math.round((current.getTime() - startOfYear.getTime()) / DAY_MS) + 1;
   return Number.isFinite(day) ? day : null;
 }
 function resolveSeasonFromDayOfYear(dayOfYear) {
@@ -164,31 +168,21 @@ var CONDITION_ALIASES = {
   mist: "fog",
   hazy: "fog"
 };
-var DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 function isRealCalendarDate(value) {
-  const match = value.match(DATE_PATTERN);
-  if (!match)
-    return false;
-  const year = Number.parseInt(match[1], 10);
-  const month = Number.parseInt(match[2], 10);
-  const day = Number.parseInt(match[3], 10);
-  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31)
-    return false;
-  const parsed = new Date(year, month - 1, day);
-  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+  return value === value.trim() && parseStoryDateTime(value, "00:00") !== null;
 }
 function normalizeConditionToken(token) {
   const normalized = token.trim().toLowerCase().replace(/\s+/g, " ");
   return CONDITION_ALIASES[normalized] ?? null;
 }
 function normalizeTemperatureToken(token) {
-  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F|C)(?:ahrenheit|elsius)?$/i);
+  const match = token.trim().match(/^(-?\d+(?:\.\d+)?)\s*\u00b0?\s*(F(?:ahrenheit)?|C(?:elsius)?)$/i);
   if (!match)
     return "";
   const amount = Number.parseFloat(match[1]);
   if (!Number.isFinite(amount))
     return "";
-  return `${Math.round(amount)}${match[2].toUpperCase() === "C" ? "C" : "F"}`;
+  return `${Math.round(amount)}${match[2][0].toUpperCase() === "C" ? "C" : "F"}`;
 }
 function truncateForecastSummary(value) {
   const collapsed = value.trim().replace(/\s+/g, " ");
@@ -214,11 +208,15 @@ function parseForecastEntry(raw) {
     return null;
   let condition = null;
   let temperature = "";
+  let temperatureOmitted = false;
   const summaryParts = [];
   for (const part of trimmed.slice(separatorIndex + 1).split(",")) {
     const token = part.trim();
-    if (!token)
+    if (!token) {
+      if (condition !== null)
+        temperatureOmitted = true;
       continue;
+    }
     if (summaryParts.length > 0) {
       summaryParts.push(token);
       continue;
@@ -229,7 +227,7 @@ function parseForecastEntry(raw) {
       continue;
     }
     const candidateTemperature = normalizeTemperatureToken(token);
-    if (candidateTemperature && !temperature) {
+    if (candidateTemperature && !temperature && !temperatureOmitted) {
       temperature = candidateTemperature;
       continue;
     }
@@ -243,38 +241,45 @@ function parseForecastEntry(raw) {
   };
 }
 function normalizeForecast(input, maxDays = MAX_FORECAST_DAYS) {
-  const rawEntries = [];
-  if (typeof input === "string") {
-    rawEntries.push(...splitForecastEntries(input));
-  } else if (Array.isArray(input)) {
-    for (const item of input) {
-      if (typeof item === "string")
-        rawEntries.push(...splitForecastEntries(item));
-      else if (item && typeof item === "object")
-        rawEntries.push(serializeForecastObject(item));
+  const entries = [];
+  const addInput = (candidate) => {
+    if (typeof candidate === "string") {
+      for (const raw of splitForecastEntries(candidate)) {
+        const entry = parseForecastEntry(raw);
+        if (entry)
+          entries.push(entry);
+      }
+    } else if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      const entry = normalizeForecastObject(candidate);
+      if (entry)
+        entries.push(entry);
     }
-  } else if (input && typeof input === "object") {
-    rawEntries.push(serializeForecastObject(input));
-  }
+  };
+  if (Array.isArray(input))
+    input.forEach(addInput);
+  else
+    addInput(input);
   const byDate = new Map;
-  for (const raw of rawEntries) {
-    const entry = parseForecastEntry(raw);
-    if (entry)
-      byDate.set(entry.date, entry);
-  }
+  for (const entry of entries)
+    byDate.set(entry.date, entry);
   const limit = Math.max(0, Math.round(clamp(maxDays, 0, MAX_FORECAST_DAYS)));
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date)).slice(0, limit);
 }
-function serializeForecastObject(candidate) {
+function normalizeForecastObject(candidate) {
   const read = (key) => typeof candidate[key] === "string" ? candidate[key].trim() : "";
   const date = read("date");
-  if (!date)
-    return "";
-  const details = [read("condition"), read("temperature"), read("summary")].filter(Boolean).join(", ");
-  return details ? `${date}: ${details}` : date;
+  if (!isRealCalendarDate(date))
+    return null;
+  return {
+    date,
+    condition: normalizeConditionToken(read("condition")) ?? "clear",
+    temperature: normalizeTemperatureToken(read("temperature")),
+    summary: truncateForecastSummary(read("summary"))
+  };
 }
 function formatForecastEntry(entry) {
-  const details = [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
+  const keepEmptyTemperature = !entry.temperature && !!normalizeTemperatureToken(entry.summary.split(",")[0]);
+  const details = keepEmptyTemperature ? `${entry.condition}, , ${entry.summary}` : [entry.condition, entry.temperature, entry.summary].filter(Boolean).join(", ");
   return details ? `${entry.date}: ${details}` : entry.date;
 }
 function serializeForecast(entries) {
@@ -322,7 +327,8 @@ function normalizeTextWithTruncation(value, fallback, maxLength) {
   const trimmed = value.trim().replace(/\s+/g, " ");
   if (!trimmed)
     return { text: fallback, truncated: false };
-  return { text: trimmed.slice(0, maxLength), truncated: trimmed.length > maxLength };
+  const truncated = trimmed.length > maxLength;
+  return { text: trimmed.slice(0, truncated ? maxLength - 1 : maxLength), truncated };
 }
 var SUMMARY_MAX_LENGTH = 96;
 var CONDITION_ALIASES2 = {
@@ -440,8 +446,8 @@ function normalizeWeatherState(input, previous) {
   const palette = normalizePalette(source.palette, derivePalette(condition, date, time));
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
-  const windDirectionValue = source.windDirection ?? source.wind_direction ?? source["wind-direction"];
-  const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays;
+  const windDirectionValue = source.windDirection ?? source.winddirection ?? source.wind_direction ?? source["wind-direction"];
+  const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays ?? source.forecastdays;
   const forecast = forecastValue === undefined ? fallback.forecast : normalizeForecast(forecastValue);
   const derivedSeason = seasonFromStoryDate(date, time);
   const seasonOverride = normalizeSeason(source.seasonOverride === undefined ? source.season : source.seasonOverride);
@@ -465,7 +471,8 @@ function normalizeWeatherState(input, previous) {
   };
 }
 function normalizeWeatherTag(attrs, previous) {
-  return normalizeWeatherState({ ...attrs, updatedAt: Date.now(), source: "story" }, previous);
+  const normalizedAttrs = Object.fromEntries(Object.entries(attrs).map(([name, value]) => [name.toLowerCase(), value]));
+  return normalizeWeatherState({ ...normalizedAttrs, updatedAt: Date.now(), source: "story" }, previous);
 }
 function normalizeStoredWeatherState(input) {
   const state = normalizeWeatherState(input);
@@ -671,7 +678,7 @@ function rebuildStoryWeatherState(messages, fallbackUpdatedAt = Date.now()) {
     if (!tag)
       continue;
     const updatedAt = resolveMessageTimestamp(message) ?? fallbackUpdatedAt;
-    state = normalizeWeatherState({ ...tag.attrs, updatedAt, source: "story" }, state);
+    state = { ...normalizeWeatherTag(tag.attrs, state), updatedAt };
   }
   return state;
 }
@@ -792,18 +799,52 @@ var HISTORY_RECONCILE_DELAY_MS = 150;
 var sessions = new Map;
 var processedTags = new Map;
 var historyReconcileTimers = new Map;
+var operationQueues = new Map;
+async function runSerialized(key, operation) {
+  const previous = operationQueues.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(operation);
+  operationQueues.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (operationQueues.get(key) === next)
+      operationQueues.delete(key);
+  }
+}
 function getSession(userId) {
   const existing = sessions.get(userId);
   if (existing)
     return existing;
-  const next = { activeChatId: null };
+  const next = { activeChatId: null, activeChatRequest: 0 };
   sessions.set(userId, next);
   return next;
 }
 function pruneProcessedTags(now = Date.now()) {
-  for (const [key, timestamp] of processedTags) {
-    if (now - timestamp > TAG_DEDUPE_TTL_MS)
+  for (const [key, tag] of processedTags) {
+    if (now - tag.timestamp > TAG_DEDUPE_TTL_MS)
       processedTags.delete(key);
+  }
+}
+function clearProcessedChatTags(chatId) {
+  for (const [key, tag] of processedTags) {
+    if (tag.chatId === chatId)
+      processedTags.delete(key);
+  }
+}
+function rememberHistoryTags(userId, chatId, messages) {
+  pruneProcessedTags();
+  for (const message of messages) {
+    const role = message.role ?? (message.is_user ? "user" : "assistant");
+    if (role !== "assistant" || !message.id || typeof message.content !== "string")
+      continue;
+    const tag = extractLastWeatherTag(message.content);
+    if (!tag)
+      continue;
+    processedTags.set(JSON.stringify([userId, chatId, message.id]), {
+      attrs: buildTagDedupeKey(tag.attrs),
+      timestamp: Date.now(),
+      chatId
+    });
   }
 }
 function pushMacroValues() {
@@ -844,10 +885,10 @@ async function savePrefs(userId, prefs) {
   await spindle.userStorage.setJson(PREFS_FILE, prefs, { userId });
 }
 async function loadStoryWeatherState(chatId) {
+  const raw = await spindle.variables.local.get(chatId, WEATHER_STATE_VAR);
+  if (!raw)
+    return null;
   try {
-    const raw = await spindle.variables.local.get(chatId, WEATHER_STATE_VAR);
-    if (!raw)
-      return null;
     return normalizeStoredWeatherState(JSON.parse(raw));
   } catch {
     return null;
@@ -857,15 +898,13 @@ async function saveStoryWeatherState(chatId, state) {
   await spindle.variables.local.set(chatId, WEATHER_STATE_VAR, JSON.stringify(state));
 }
 async function clearStoryWeatherState(chatId) {
-  try {
-    await spindle.variables.local.delete(chatId, WEATHER_STATE_VAR);
-  } catch {}
+  await spindle.variables.local.delete(chatId, WEATHER_STATE_VAR);
 }
 async function loadManualWeatherState(chatId) {
+  const raw = await spindle.variables.local.get(chatId, WEATHER_MANUAL_STATE_VAR);
+  if (!raw)
+    return null;
   try {
-    const raw = await spindle.variables.local.get(chatId, WEATHER_MANUAL_STATE_VAR);
-    if (!raw)
-      return null;
     return normalizeStoredWeatherState(JSON.parse(raw));
   } catch {
     return null;
@@ -875,9 +914,7 @@ async function saveManualWeatherState(chatId, state) {
   await spindle.variables.local.set(chatId, WEATHER_MANUAL_STATE_VAR, JSON.stringify(state));
 }
 async function clearManualWeatherState(chatId) {
-  try {
-    await spindle.variables.local.delete(chatId, WEATHER_MANUAL_STATE_VAR);
-  } catch {}
+  await spindle.variables.local.delete(chatId, WEATHER_MANUAL_STATE_VAR);
 }
 async function loadEffectiveWeatherState(chatId) {
   const storyState = await loadStoryWeatherState(chatId);
@@ -885,10 +922,10 @@ async function loadEffectiveWeatherState(chatId) {
   return selectEffectiveWeatherState(storyState, manualState);
 }
 async function loadWeatherRevision(chatId) {
+  const raw = await spindle.variables.local.get(chatId, WEATHER_REVISION_VAR);
+  if (!raw)
+    return 0;
   try {
-    const raw = await spindle.variables.local.get(chatId, WEATHER_REVISION_VAR);
-    if (!raw)
-      return 0;
     const parsed = JSON.parse(raw);
     const revision = Number(parsed?.revision);
     return Number.isFinite(revision) ? Math.max(0, Math.round(revision)) : 0;
@@ -902,15 +939,22 @@ async function bumpWeatherRevision(chatId) {
   await spindle.variables.local.set(chatId, WEATHER_REVISION_VAR, JSON.stringify({ schemaVersion: 1, revision }));
   return revision;
 }
-async function publishWeatherState(chatId, state, revision) {
+async function publishWeatherState(chatId, state, revision, userId, activeChatRequest) {
   const resolvedState = chatId ? state === undefined ? await loadEffectiveWeatherState(chatId) : state : null;
   const storedRevision = chatId ? revision ?? await loadWeatherRevision(chatId) : 0;
   const resolvedRevision = storedRevision || resolvedState?.updatedAt || 0;
+  if (userId !== undefined) {
+    const session = getSession(userId);
+    if (session.activeChatId !== chatId)
+      return;
+    if (activeChatRequest !== undefined && session.activeChatRequest !== activeChatRequest)
+      return;
+  }
   spindle.rpcPool.sync("state.current", makeWeatherLumiStateSnapshot(chatId, resolvedState, resolvedRevision, EXTENSION_VERSION), { requires: [] });
 }
-async function reconcileStoryWeatherState(userId, chatId, notifyFrontend = true) {
+async function reconcileStoryWeatherState(userId, chatId, notifyFrontend = true, history) {
   const previousStory = await loadStoryWeatherState(chatId);
-  const messages = await spindle.chat.getMessages(chatId);
+  const messages = history ?? await spindle.chat.getMessages(chatId);
   const rebuiltStory = rebuildStoryWeatherState(messages, previousStory?.updatedAt);
   const unchanged = hasSameStoryScene(previousStory, rebuiltStory) && previousStory?.updatedAt === rebuiltStory?.updatedAt;
   const nextStory = unchanged ? previousStory : rebuiltStory;
@@ -920,12 +964,17 @@ async function reconcileStoryWeatherState(userId, chatId, notifyFrontend = true)
       await saveStoryWeatherState(chatId, nextStory);
     else
       await clearStoryWeatherState(chatId);
+    clearProcessedChatTags(chatId);
   }
   const effective = await loadManualWeatherState(chatId) ?? nextStory;
   const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
-  await publishWeatherState(chatId, effective, revision);
-  if (notifyFrontend)
-    send(userId, { type: "active_chat_state", chatId, state: effective });
+  rememberHistoryTags(userId, chatId, messages);
+  if (notifyFrontend) {
+    await publishWeatherState(chatId, effective, revision, userId);
+    if (getSession(userId).activeChatId === chatId) {
+      send(userId, { type: "active_chat_state", chatId, state: effective });
+    }
+  }
   return effective;
 }
 function scheduleStoryWeatherReconcile(userId, chatId) {
@@ -935,7 +984,7 @@ function scheduleStoryWeatherReconcile(userId, chatId) {
     clearTimeout(existing);
   historyReconcileTimers.set(key, setTimeout(() => {
     historyReconcileTimers.delete(key);
-    reconcileStoryWeatherState(userId, chatId).catch((error) => {
+    runSerialized(`chat:${chatId}`, () => reconcileStoryWeatherState(userId, chatId)).catch((error) => {
       spindle.log.warn(`LumiWeather history reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   }, HISTORY_RECONCILE_DELAY_MS));
@@ -953,35 +1002,54 @@ async function resolveActiveChatId(userId, candidate) {
   if (session.activeChatId)
     return session.activeChatId;
   try {
+    const activeChatRequest = session.activeChatRequest;
     const active = await spindle.chats.getActive(userId);
+    if (session.activeChatRequest !== activeChatRequest)
+      return session.activeChatId;
     session.activeChatId = active?.id ?? null;
     return session.activeChatId;
   } catch {
     return null;
   }
 }
+async function resolveWeatherEditChatId(userId, candidate) {
+  if (typeof candidate === "string" && candidate.trim())
+    return candidate;
+  if (candidate === null)
+    return null;
+  return resolveActiveChatId(userId);
+}
 async function pushActiveChatState(userId, explicitChatId, requestId) {
+  const session = getSession(userId);
+  const activeChatRequest = ++session.activeChatRequest;
   const chatId = await resolveActiveChatId(userId, explicitChatId);
+  if (session.activeChatRequest !== activeChatRequest)
+    return;
   if (!chatId) {
-    await publishWeatherState(null);
+    await publishWeatherState(null, null, 0, userId, activeChatRequest);
     send(userId, { type: "active_chat_state", chatId: null, state: null, requestId });
     return;
   }
-  let state;
-  try {
-    state = await reconcileStoryWeatherState(userId, chatId, false);
-  } catch (error) {
-    spindle.log.warn(`LumiWeather could not verify chat history: ${error instanceof Error ? error.message : String(error)}`);
-    state = await loadEffectiveWeatherState(chatId);
-  }
-  await publishWeatherState(chatId, state);
-  send(userId, {
-    type: "active_chat_state",
-    chatId,
-    state,
-    requestId
+  await runSerialized(`chat:${chatId}`, async () => {
+    let state;
+    try {
+      state = await reconcileStoryWeatherState(userId, chatId, false);
+    } catch (error) {
+      spindle.log.warn(`LumiWeather could not verify chat history: ${error instanceof Error ? error.message : String(error)}`);
+      state = await loadEffectiveWeatherState(chatId);
+    }
+    await publishWeatherState(chatId, state, undefined, userId, activeChatRequest);
+    if (session.activeChatRequest !== activeChatRequest || session.activeChatId !== chatId)
+      return;
+    send(userId, {
+      type: "active_chat_state",
+      chatId,
+      state,
+      requestId
+    });
   });
 }
+spindle.frontendCapabilities?.declare("message_tag_interceptor");
 spindle.rpcPool.sync("contract.v1", {
   schemaVersion: 1,
   protocol: "lumi_state.v1",
@@ -1052,7 +1120,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
     switch (message.type) {
       case "frontend_ready":
         await pushActiveChatState(userId);
-        send(userId, { type: "prefs", prefs: await loadPrefs(userId) });
+        await runSerialized(`prefs:${userId}`, async () => {
+          send(userId, { type: "prefs", prefs: await loadPrefs(userId) });
+        });
         break;
       case "chat_changed":
         await pushActiveChatState(userId, message.chatId, message.requestId);
@@ -1069,22 +1139,43 @@ spindle.onFrontendMessage(async (raw, userId) => {
           });
           break;
         }
-        pruneProcessedTags();
-        const tagKey = `${userId}:${chatId}:${message.messageId ?? ""}:${buildTagDedupeKey(message.attrs)}`;
-        if (processedTags.has(tagKey))
-          break;
-        processedTags.set(tagKey, Date.now());
-        const previousStory = await loadStoryWeatherState(chatId);
-        const nextStory = normalizeWeatherTag(message.attrs, previousStory);
-        await saveStoryWeatherState(chatId, nextStory);
-        const revision = await bumpWeatherRevision(chatId);
-        const effective = await loadManualWeatherState(chatId) ?? nextStory;
-        await publishWeatherState(chatId, effective, revision);
-        send(userId, { type: "weather_state", chatId, state: effective });
+        await runSerialized(`chat:${chatId}`, async () => {
+          pruneProcessedTags();
+          const messageId = typeof message.messageId === "string" && message.messageId.trim() ? message.messageId : null;
+          const tagKey = messageId ? JSON.stringify([userId, chatId, messageId]) : null;
+          const attrs = buildTagDedupeKey(message.attrs);
+          if (tagKey && processedTags.get(tagKey)?.attrs === attrs)
+            return;
+          let history = null;
+          if (messageId) {
+            try {
+              const messages = await spindle.chat.getMessages(chatId);
+              if (messages.some((entry) => entry.id === messageId))
+                history = messages;
+            } catch (error) {
+              spindle.log.warn(`LumiWeather could not verify intercepted message history: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+          if (history) {
+            const effective = await reconcileStoryWeatherState(userId, chatId, false, history);
+            await publishWeatherState(chatId, effective, undefined, userId);
+            send(userId, effective ? { type: "weather_state", chatId, state: effective } : { type: "active_chat_state", chatId, state: null });
+            return;
+          }
+          const previousStory = await loadStoryWeatherState(chatId);
+          const nextStory = normalizeWeatherTag(message.attrs, previousStory);
+          await saveStoryWeatherState(chatId, nextStory);
+          const revision = await bumpWeatherRevision(chatId);
+          const effective = await loadManualWeatherState(chatId) ?? nextStory;
+          await publishWeatherState(chatId, effective, revision, userId);
+          if (tagKey)
+            processedTags.set(tagKey, { attrs, timestamp: Date.now(), chatId });
+          send(userId, { type: "weather_state", chatId, state: effective });
+        });
         break;
       }
       case "set_manual_state": {
-        const chatId = await resolveActiveChatId(userId, message.chatId ?? undefined);
+        const chatId = await resolveWeatherEditChatId(userId, message.chatId);
         if (!chatId) {
           send(userId, { type: "error", message: "Manual weather override could not resolve an active chat." });
           spindle.toast.warning("Open a chat before locking a weather scene.", {
@@ -1093,43 +1184,51 @@ spindle.onFrontendMessage(async (raw, userId) => {
           });
           break;
         }
-        const previous = await loadManualWeatherState(chatId) ?? await loadStoryWeatherState(chatId) ?? makeDefaultWeatherState();
-        const nextState = applyManualWeatherState(previous, message.state);
-        await saveManualWeatherState(chatId, nextState);
-        const revision = await bumpWeatherRevision(chatId);
-        await publishWeatherState(chatId, nextState, revision);
-        send(userId, { type: "weather_state", chatId, state: nextState });
+        await runSerialized(`chat:${chatId}`, async () => {
+          const previous = await loadManualWeatherState(chatId) ?? await loadStoryWeatherState(chatId) ?? makeDefaultWeatherState();
+          const nextState = applyManualWeatherState(previous, message.state);
+          await saveManualWeatherState(chatId, nextState);
+          const revision = await bumpWeatherRevision(chatId);
+          await publishWeatherState(chatId, nextState, revision, userId);
+          send(userId, { type: "weather_state", chatId, state: nextState });
+        });
         break;
       }
       case "clear_manual_override": {
-        const chatId = await resolveActiveChatId(userId, message.chatId ?? undefined);
+        const chatId = await resolveWeatherEditChatId(userId, message.chatId);
         if (!chatId) {
           send(userId, { type: "error", message: "Manual weather override could not be cleared because no chat is active." });
           break;
         }
-        await clearManualWeatherState(chatId);
-        const revision = await bumpWeatherRevision(chatId);
-        const storyState = await loadStoryWeatherState(chatId);
-        await publishWeatherState(chatId, storyState, revision);
-        send(userId, {
-          type: "active_chat_state",
-          chatId,
-          state: storyState
+        await runSerialized(`chat:${chatId}`, async () => {
+          await clearManualWeatherState(chatId);
+          const revision = await bumpWeatherRevision(chatId);
+          const storyState = await loadStoryWeatherState(chatId);
+          await publishWeatherState(chatId, storyState, revision, userId);
+          send(userId, {
+            type: "active_chat_state",
+            chatId,
+            state: storyState
+          });
         });
         break;
       }
       case "save_prefs": {
-        const currentPrefs = await loadPrefs(userId);
-        const nextPrefs = normalizePrefs({ ...currentPrefs, ...message.prefs });
-        await savePrefs(userId, nextPrefs);
-        send(userId, { type: "prefs", prefs: nextPrefs });
+        await runSerialized(`prefs:${userId}`, async () => {
+          const currentPrefs = await loadPrefs(userId);
+          const nextPrefs = normalizePrefs({ ...currentPrefs, ...message.prefs });
+          await savePrefs(userId, nextPrefs);
+          send(userId, { type: "prefs", prefs: nextPrefs });
+        });
         break;
       }
       case "reset_widget_position": {
-        const currentPrefs = await loadPrefs(userId);
-        const nextPrefs = normalizePrefs({ ...currentPrefs, widgetPosition: null });
-        await savePrefs(userId, nextPrefs);
-        send(userId, { type: "prefs", prefs: nextPrefs });
+        await runSerialized(`prefs:${userId}`, async () => {
+          const currentPrefs = await loadPrefs(userId);
+          const nextPrefs = normalizePrefs({ ...currentPrefs, widgetPosition: null });
+          await savePrefs(userId, nextPrefs);
+          send(userId, { type: "prefs", prefs: nextPrefs });
+        });
         break;
       }
     }

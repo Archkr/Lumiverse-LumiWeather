@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_LATITUDE,
+  formatDate,
   isTimePhasePalette,
+  parseStoryDateTime,
   phaseFromHour,
   resolveDayHalfAngle,
   resolveDayOfYear,
@@ -14,6 +16,25 @@ import {
 import { WEATHER_PALETTES } from "./shared";
 
 describe("weather time model", () => {
+  test("preserves narrative wall-clock times across timezone daylight-saving gaps", () => {
+    expect(parseStoryDateTime("2026-03-08", "2:30 AM")).toBe(Date.UTC(2026, 2, 8, 2, 30));
+    expect(parseStoryDateTime("2026-11-01", "1:30 AM")).toBe(Date.UTC(2026, 10, 1, 1, 30));
+    expect(parseStoryDateTime("2026-03-08", "2:30 : 15 AM")).toBe(Date.UTC(2026, 2, 8, 2, 30, 15));
+    expect(resolveSolarArc("2026-03-08", "2:30 AM").phase).toBe("night");
+  });
+
+  test("supports early story years without the Date constructor's 1900 offset", () => {
+    const timestamp = parseStoryDateTime("0004-02-29", "12:00 PM");
+    expect(timestamp).not.toBeNull();
+    expect(new Date(timestamp!).getUTCFullYear()).toBe(4);
+    expect(resolveDayOfYear(timestamp!)).toBe(60);
+    expect(parseStoryDateTime("0001-02-29", "12:00 PM")).toBeNull();
+    expect(parseStoryDateTime("0000-01-01", "12:00 PM")).toBeNull();
+    const localDate = new Date(0);
+    localDate.setFullYear(4, 1, 29);
+    expect(formatDate(localDate)).toBe("0004-02-29");
+  });
+
   test("recognizes only the palettes that already encode a phase", () => {
     expect(isTimePhasePalette("dawn")).toBe(true);
     expect(isTimePhasePalette("day")).toBe(true);
