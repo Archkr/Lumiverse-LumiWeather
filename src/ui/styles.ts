@@ -1744,19 +1744,44 @@ export const WEATHER_HUD_CSS = `
   width: var(--star-size);
   height: var(--star-size);
   border-radius: 50%;
-  background: rgba(231, 241, 255, 0.96);
-  box-shadow: 0 0 5px rgba(162, 198, 255, 0.62);
+  background: var(--star-color, #f3f8ff);
+  box-shadow: 0 0 3px rgba(218, 235, 255, 0.8), 0 0 8px rgba(150, 189, 255, 0.35);
   opacity: var(--star-opacity-scale);
   animation: weather-star-twinkle var(--star-duration) ease-in-out infinite;
   animation-delay: var(--star-delay);
   animation-play-state: paused;
 }
 
+.weather-fx-star-bright {
+  box-shadow: 0 0 4px rgba(238, 247, 255, 0.95), 0 0 12px rgba(166, 203, 255, 0.55);
+}
+
+.weather-fx-star-bright::before,
+.weather-fx-star-bright::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.weather-fx-star-bright::before {
+  width: calc(var(--star-size) * 3.5);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--star-color) 50%, transparent);
+}
+
+.weather-fx-star-bright::after {
+  width: 1px;
+  height: calc(var(--star-size) * 3.5);
+  background: linear-gradient(180deg, transparent, var(--star-color) 50%, transparent);
+}
+
 .weather-fx-moonlight {
   inset: -3vmax;
-  background:
-    radial-gradient(ellipse at 86% 14%, rgba(183, 210, 255, 0.55), rgba(115, 151, 226, 0.23) 22%, transparent 57%),
-    radial-gradient(ellipse at 12% 75%, rgba(89, 123, 185, 0.16), transparent 60%);
+  background: linear-gradient(180deg, rgba(183, 210, 255, 0.14), rgba(115, 151, 226, 0.05) 24%, transparent 56%);
   opacity: var(--weather-moonlight-opacity);
   mix-blend-mode: screen;
   animation: weather-glow-drift 22s ease-in-out infinite alternate;
@@ -2315,7 +2340,7 @@ export const WEATHER_HUD_CSS = `
 }
 
 @keyframes weather-star-twinkle {
-  0%, 100% { opacity: calc(var(--star-opacity-scale) * 0.55); }
+  0%, 100% { opacity: calc(var(--star-opacity-scale) * 0.7); }
   50% { opacity: var(--star-opacity-scale); }
 }
 

@@ -318,17 +318,22 @@ function createNightSkyLayers(kind: "back" | "front"): HTMLDivElement[] {
   stars.className = "weather-fx-stars";
   stars.setAttribute("aria-hidden", "true");
   const compact = window.matchMedia("(max-width: 768px)").matches;
-  const count = kind === "back" ? (compact ? 36 : 64) : (compact ? 20 : 32);
+  const existingCount = kind === "back" ? (compact ? 36 : 64) : (compact ? 20 : 32);
+  const count = kind === "back" ? (compact ? 48 : 96) : (compact ? 28 : 48);
   for (let index = 0; index < count; index += 1) {
-    // Stable, staggered positions keep a scene update from rearranging the sky.
-    const seed = index + (kind === "front" ? 71 : 1);
-    stars.appendChild(createSpan("weather-fx-star", {
+    // Keep existing stars in place; new stars use separate seeds on each layer.
+    const seed = index < existingCount
+      ? index + (kind === "front" ? 71 : 1)
+      : index - existingCount + (kind === "front" ? 201 : 105);
+    const bright = seed % 11 === 0;
+    stars.appendChild(createSpan(bright ? "weather-fx-star weather-fx-star-bright" : "weather-fx-star", {
       "--star-left": `${2 + ((seed * 47.31) % 96)}%`,
       "--star-top": `${3 + ((seed * 29.17) % 69)}%`,
-      "--star-size": `${1.3 + (seed % 4) * 0.4}px`,
-      "--star-duration": `${5 + (seed % 7)}s`,
+      "--star-size": `${bright ? 2.6 + (seed % 3) * 0.4 : 1.1 + (seed % 5) * 0.3}px`,
+      "--star-color": seed % 7 === 0 ? "#fff0d9" : seed % 3 === 0 ? "#d0e4ff" : "#f3f8ff",
+      "--star-duration": `${6 + (seed % 7)}s`,
       "--star-delay": `${-(seed % 11)}s`,
-      "--star-opacity-scale": `${0.62 + (seed % 5) * 0.08}`,
+      "--star-opacity-scale": `${bright ? 1 : 0.7 + (seed % 5) * 0.06}`,
     }));
   }
   return [moonlight, stars];
