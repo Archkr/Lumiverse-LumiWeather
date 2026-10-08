@@ -1130,6 +1130,36 @@ function resolveSceneTokens(state, intensity) {
   };
 }
 
+// src/scene-hosts.ts
+function asHTMLElement(element) {
+  return element instanceof HTMLElement ? element : null;
+}
+function closestByClassName(start, name) {
+  const pattern = new RegExp(`(?:^|[^a-zA-Z0-9])${name}(?:$|[^a-zA-Z0-9])`);
+  for (let element = start;element; element = element.parentElement) {
+    if ([...element.classList].some((className) => pattern.test(className)))
+      return asHTMLElement(element);
+  }
+  return null;
+}
+function resolveSceneHosts(root = document) {
+  const scrollRegion = asHTMLElement(root.querySelector('[data-chat-scroll="true"]'));
+  const chatView = asHTMLElement(scrollRegion?.closest('[data-component="ChatView"]') ?? null);
+  const sceneScope = chatView ?? root;
+  const backgroundLayer = asHTMLElement(sceneScope.querySelector('[class*="sceneBackgroundLayer"]'));
+  const sceneTextLayer = asHTMLElement(sceneScope.querySelector('[class*="sceneTextContextLayer"]'));
+  const sceneHost = backgroundLayer?.parentElement ?? chatView;
+  const chatColumnInner = asHTMLElement(scrollRegion?.closest('[data-lumiverse-surface="chat-column-inner"]') ?? null) ?? closestByClassName(scrollRegion, "chatColumnInner");
+  const chatColumn = asHTMLElement(scrollRegion?.closest('[data-lumiverse-surface="chat-column"]') ?? null) ?? closestByClassName(scrollRegion, "chatColumn");
+  const chatBody = asHTMLElement(scrollRegion?.closest('[data-lumiverse-surface="chat-body"]') ?? null) ?? chatColumn?.parentElement ?? null;
+  return {
+    backHost: sceneHost ?? backgroundLayer,
+    backBefore: sceneTextLayer?.parentElement === sceneHost ? sceneTextLayer : null,
+    frontHost: chatBody ?? chatColumn ?? chatColumnInner ?? scrollRegion,
+    frontBefore: null
+  };
+}
+
 // src/state-utils.ts
 function shouldApplyChatState(currentChatId, responseChatId, responseRequestId, activeRequestId) {
   if (responseRequestId !== undefined)
@@ -4739,28 +4769,6 @@ function syncFxCondition(fxRoot, condition) {
   destroyProceduralFog(fxRoot.root);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
   fxRoot.poolCondition = condition;
-}
-function asHTMLElement(element) {
-  return element instanceof HTMLElement ? element : null;
-}
-function closestByClassFragment(start, fragment) {
-  if (!(start instanceof Element))
-    return null;
-  return asHTMLElement(start.closest(`[class*="${fragment}"]`));
-}
-function resolveSceneHosts() {
-  const backgroundLayer = asHTMLElement(document.querySelector('[class*="sceneBackgroundLayer"]'));
-  const sceneTextLayer = asHTMLElement(document.querySelector('[class*="sceneTextContextLayer"]'));
-  const sceneHost = backgroundLayer?.parentElement instanceof HTMLElement ? backgroundLayer.parentElement : null;
-  const scrollRegion = asHTMLElement(document.querySelector('[data-chat-scroll="true"]'));
-  const chatColumnInner = closestByClassFragment(scrollRegion, "chatColumnInner") ?? (scrollRegion?.parentElement instanceof HTMLElement ? scrollRegion.parentElement : null);
-  const chatColumn = closestByClassFragment(scrollRegion, "chatColumn") ?? (chatColumnInner?.parentElement instanceof HTMLElement ? chatColumnInner.parentElement : chatColumnInner);
-  return {
-    backHost: sceneHost ?? backgroundLayer,
-    backBefore: sceneTextLayer?.parentElement === sceneHost ? sceneTextLayer : null,
-    frontHost: chatColumn ?? chatColumnInner ?? scrollRegion,
-    frontBefore: null
-  };
 }
 function readChatIdFromSettingsUpdate(payload) {
   if (!payload || typeof payload !== "object")

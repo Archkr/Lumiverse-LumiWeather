@@ -15,6 +15,7 @@ import {
 import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
 import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
 import { resolveSceneTokens } from "./scene-tokens";
+import { resolveSceneHosts } from "./scene-hosts";
 import {
   resolveHudTimePhase as sharedResolveHudTimePhase,
   resolveSolarArc,
@@ -81,13 +82,6 @@ type FxRoot = {
  * duration on `.weather-fx-root` in `ui/styles.ts`.
  */
 const SCENE_TRANSITION_MS = 1300;
-
-type SceneHostResolution = {
-  backHost: HTMLElement | null;
-  backBefore: HTMLElement | null;
-  frontHost: HTMLElement | null;
-  frontBefore: HTMLElement | null;
-};
 
 type HudCallbacks = {
   onToggleDrawer(): void;
@@ -690,38 +684,6 @@ function syncFxCondition(fxRoot: FxRoot, condition: WeatherCondition | null): vo
   destroyProceduralFog(fxRoot.root);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
   fxRoot.poolCondition = condition;
-}
-
-function asHTMLElement(element: Element | null): HTMLElement | null {
-  return element instanceof HTMLElement ? element : null;
-}
-
-function closestByClassFragment(start: Element | null, fragment: string): HTMLElement | null {
-  if (!(start instanceof Element)) return null;
-  return asHTMLElement(start.closest(`[class*="${fragment}"]`));
-}
-
-function resolveSceneHosts(): SceneHostResolution {
-  const backgroundLayer = asHTMLElement(document.querySelector('[class*="sceneBackgroundLayer"]'));
-  const sceneTextLayer = asHTMLElement(document.querySelector('[class*="sceneTextContextLayer"]'));
-  const sceneHost = backgroundLayer?.parentElement instanceof HTMLElement ? backgroundLayer.parentElement : null;
-  const scrollRegion = asHTMLElement(document.querySelector('[data-chat-scroll="true"]'));
-  const chatColumnInner =
-    closestByClassFragment(scrollRegion, "chatColumnInner") ??
-    (scrollRegion?.parentElement instanceof HTMLElement ? scrollRegion.parentElement : null);
-  const chatColumn =
-    closestByClassFragment(scrollRegion, "chatColumn") ??
-    (chatColumnInner?.parentElement instanceof HTMLElement ? chatColumnInner.parentElement : chatColumnInner);
-
-  return {
-    // Lumiverse fades the scene-background element itself to zero opacity when
-    // no generated backdrop is active. Mount beside it inside the scene host,
-    // beneath the text scrim and chat body, so back-only FX remain visible.
-    backHost: sceneHost ?? backgroundLayer,
-    backBefore: sceneTextLayer?.parentElement === sceneHost ? sceneTextLayer : null,
-    frontHost: chatColumn ?? chatColumnInner ?? scrollRegion,
-    frontBefore: null,
-  };
 }
 
 function readChatIdFromSettingsUpdate(payload: unknown): string | null | undefined {
