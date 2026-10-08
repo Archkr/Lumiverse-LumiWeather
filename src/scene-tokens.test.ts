@@ -26,6 +26,8 @@ const OPACITY_KEYS: ReadonlyArray<keyof SceneTokens> = [
   "rainOpacity",
   "snowOpacity",
   "moteOpacity",
+  "starOpacity",
+  "moonlightOpacity",
   "flashOpacity",
 ];
 
@@ -115,6 +117,42 @@ describe("scene tokens", () => {
     expect(bright.moteOpacity).toBeGreaterThan(dim.moteOpacity);
     // Overcast scenes keep only a trace of motes rather than the clear-sky amount.
     expect(cloudy.moteOpacity).toBeLessThan(bright.moteOpacity / 4);
+  });
+
+  test("clear night has visible stars and moonlight without daytime motes", () => {
+    const night = resolveSceneTokens(state({ condition: "clear", palette: "night" }), 0.5);
+    expect(night.starOpacity).toBeGreaterThan(0.5);
+    expect(night.moonlightOpacity).toBeGreaterThan(0.4);
+    expect(night.skyOpacity).toBeGreaterThan(0.1);
+    expect(night.moteOpacity).toBe(0);
+  });
+
+  test("night ambience disappears in daytime and under adverse weather", () => {
+    for (const palette of ["dawn", "day", "dusk", "storm", "mist", "snow"] as WeatherPalette[]) {
+      const tokens = resolveSceneTokens(state({ condition: "clear", palette }), 0.6);
+      expect(tokens.starOpacity).toBe(0);
+      expect(tokens.moonlightOpacity).toBe(0);
+    }
+
+    const clear = resolveSceneTokens(state({ condition: "clear", palette: "night" }), 0.6);
+    const cloudy = resolveSceneTokens(state({ condition: "cloudy", palette: "night" }), 0.6);
+    expect(cloudy.starOpacity).toBe(0);
+    expect(cloudy.moonlightOpacity).toBeGreaterThan(0);
+    expect(cloudy.moonlightOpacity).toBeLessThan(clear.moonlightOpacity / 4);
+    for (const condition of ["rain", "storm", "snow", "fog"] as WeatherCondition[]) {
+      const tokens = resolveSceneTokens(state({ condition, palette: "night" }), 0.6);
+      expect(tokens.starOpacity).toBe(0);
+      expect(tokens.moonlightOpacity).toBe(0);
+    }
+  });
+
+  test("night ambience grows with intensity while low settings remain visible", () => {
+    const soft = resolveSceneTokens(state({ condition: "clear", palette: "night" }), 0);
+    const hard = resolveSceneTokens(state({ condition: "clear", palette: "night" }), 1.5);
+    expect(soft.starOpacity).toBeGreaterThan(0.4);
+    expect(soft.moonlightOpacity).toBeGreaterThan(0.3);
+    expect(hard.starOpacity).toBeGreaterThan(soft.starOpacity);
+    expect(hard.moonlightOpacity).toBeGreaterThan(soft.moonlightOpacity);
   });
 
   test("matches the palette that derivePalette would choose for a tag", () => {

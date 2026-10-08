@@ -16,6 +16,7 @@ import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
 import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
 import { resolveSceneTokens } from "./scene-tokens";
 import { resolveSceneHosts } from "./scene-hosts";
+import { conditionIcon, conditionIconLabel } from "./weather-icons";
 import {
   resolveHudTimePhase as sharedResolveHudTimePhase,
   resolveSolarArc,
@@ -124,24 +125,6 @@ type HudElements = {
 };
 
 type HudTimePhase = "dawn" | "day" | "dusk" | "night";
-
-function conditionIcon(condition: WeatherCondition): string {
-  switch (condition) {
-    case "cloudy":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 18.2h10.7a3.8 3.8 0 00.6-7.55 5.5 5.5 0 00-10.45-1.2 4.4 4.4 0 00-.85 8.75Z"/></svg>`;
-    case "rain":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 14.8h10.8a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6.3a4.3 4.3 0 00-1 8.5Z"/><path d="m8.2 17.4-1 2.3M12.3 17.4l-1 2.3M16.4 17.4l-1 2.3"/></svg>`;
-    case "storm":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.5h10.9a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6a4.3 4.3 0 00-1.1 8.5Z"/><path class="weather-hud-icon-solid" d="m13.1 12.8-3.25 5h2.45l-.75 3.7 4.6-5.65h-2.7l1.45-3.05Z"/></svg>`;
-    case "snow":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8v18.4M4.05 7.4l15.9 9.2M4.05 16.6l15.9-9.2M12 2.8 9.8 5M12 2.8 14.2 5M12 21.2 9.8 19M12 21.2l2.2-2.2M4.05 7.4l3-.8M4.05 7.4l.8 3M19.95 16.6l-3 .8M19.95 16.6l-.8-3"/></svg>`;
-    case "fog":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 13.5h11a3.45 3.45 0 00.5-6.85A5.1 5.1 0 008.2 5.6a4 4 0 00-1.8 7.9Z"/><path d="M4 17.1h13M7 20.2h13"/></svg>`;
-    case "clear":
-    default:
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.25"/><path d="M12 2.5v2.1M12 19.4v2.1M2.5 12h2.1M19.4 12h2.1M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M18.7 5.3l-1.5 1.5M6.8 17.2l-1.5 1.5"/></svg>`;
-  }
-}
 
 function resolveHudTimePhase(state: WeatherState, liveDate: Date | null): HudTimePhase {
   const hour = liveDate?.getHours() ?? parseHourFromTimeString(state.time);
@@ -326,6 +309,31 @@ function createProceduralFogLayer(): HTMLDivElement {
   return layer;
 }
 
+function createNightSkyLayers(kind: "back" | "front"): HTMLDivElement[] {
+  const moonlight = document.createElement("div");
+  moonlight.className = "weather-fx-moonlight";
+  moonlight.setAttribute("aria-hidden", "true");
+
+  const stars = document.createElement("div");
+  stars.className = "weather-fx-stars";
+  stars.setAttribute("aria-hidden", "true");
+  const compact = window.matchMedia("(max-width: 768px)").matches;
+  const count = kind === "back" ? (compact ? 36 : 64) : (compact ? 20 : 32);
+  for (let index = 0; index < count; index += 1) {
+    // Stable, staggered positions keep a scene update from rearranging the sky.
+    const seed = index + (kind === "front" ? 71 : 1);
+    stars.appendChild(createSpan("weather-fx-star", {
+      "--star-left": `${2 + ((seed * 47.31) % 96)}%`,
+      "--star-top": `${3 + ((seed * 29.17) % 69)}%`,
+      "--star-size": `${1.3 + (seed % 4) * 0.4}px`,
+      "--star-duration": `${5 + (seed % 7)}s`,
+      "--star-delay": `${-(seed % 11)}s`,
+      "--star-opacity-scale": `${0.62 + (seed % 5) * 0.08}`,
+    }));
+  }
+  return [moonlight, stars];
+}
+
 function createFxMarkup(kind: "back" | "front"): FxRoot {
   const root = document.createElement("div");
   root.className = "weather-fx-root";
@@ -338,6 +346,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     const sky = document.createElement("div");
     sky.className = "weather-fx-sky";
     root.appendChild(sky);
+    root.append(...createNightSkyLayers(kind));
 
     const glow = document.createElement("div");
     glow.className = "weather-fx-glow";
@@ -522,6 +531,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     const sky = document.createElement("div");
     sky.className = "weather-fx-sky weather-fx-sky-front";
     root.appendChild(sky);
+    root.append(...createNightSkyLayers(kind));
 
     const clouds = document.createElement("div");
     clouds.className = "weather-fx-clouds weather-fx-clouds-front";
@@ -1216,8 +1226,9 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.root.style.setProperty("--weather-sun-altitude", solar.sunAltitude.toFixed(1));
   hud.root.dataset.season = state ? displayState.season : "unknown";
 
-  hud.icon.innerHTML = conditionIcon(displayState.condition);
-  const iconLabel = `${displayState.condition.charAt(0).toUpperCase()}${displayState.condition.slice(1)} weather`;
+  const iconMarkup = conditionIcon(displayState.condition, phase);
+  hud.icon.innerHTML = iconMarkup;
+  const iconLabel = conditionIconLabel(displayState.condition, phase);
   hud.icon.setAttribute("role", "img");
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
@@ -1252,7 +1263,7 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   );
 
   if (hud.launcherButton && hud.launcherIcon) {
-    hud.launcherIcon.innerHTML = conditionIcon(displayState.condition);
+    hud.launcherIcon.innerHTML = iconMarkup;
     const launcherLabel = state
       ? `Open LumiWeather: ${displayState.location}, ${displayState.condition}, ${formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit)}`
       : "Open LumiWeather: waiting for a weather update";
@@ -1345,6 +1356,8 @@ const TRANSITIONED_TOKENS: ReadonlyArray<readonly [string, keyof ResolvedSceneTo
   ["--weather-rain-opacity", "rainOpacity"],
   ["--weather-snow-opacity", "snowOpacity"],
   ["--weather-mote-opacity", "moteOpacity"],
+  ["--weather-star-opacity", "starOpacity"],
+  ["--weather-moonlight-opacity", "moonlightOpacity"],
   ["--weather-flash-opacity", "flashOpacity"],
 ];
 
@@ -1425,6 +1438,7 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   root.root.classList.toggle("weather-paused", prefs.pauseEffects || document.visibilityState === "hidden");
   root.root.classList.toggle("weather-rain-active", state.condition === "rain" || state.condition === "storm");
   root.root.classList.toggle("weather-snow-active", state.condition === "snow");
+  root.root.classList.toggle("weather-night-active", tokens.starOpacity > 0 || tokens.moonlightOpacity > 0);
 
   // The front layer zeroes several atmosphere opacities, so the resolved values
   // are what must be recorded and blended.
@@ -1435,6 +1449,10 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
     fogOpacity: isFront ? 0 : tokens.fogOpacity,
     rainOpacity: rainLayerOpacity,
     snowOpacity: tokens.snowOpacity * (isFront ? 0.96 : 0.82),
+    // Front-only mode still needs a visible night sky; both mode keeps its
+    // foreground contribution subtle enough to preserve message readability.
+    starOpacity: tokens.starOpacity * (isFront ? (prefs.layerMode === "both" ? 0.4 : 0.78) : 1),
+    moonlightOpacity: tokens.moonlightOpacity * (isFront ? (prefs.layerMode === "both" ? 0.22 : 0.65) : 1),
   };
 
   const nextKey = sceneKeyFor(state, effectiveIntensity, prefs);

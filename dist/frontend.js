@@ -1016,6 +1016,8 @@ function resolveSceneTokens(state, intensity) {
     rainOpacity: 0,
     snowOpacity: 0,
     moteOpacity: 0.06,
+    starOpacity: 0,
+    moonlightOpacity: 0,
     flashOpacity: 0.26
   };
   switch (state.condition) {
@@ -1027,6 +1029,9 @@ function resolveSceneTokens(state, intensity) {
       values.horizonOpacity = 0.1;
       values.mistOpacity = 0.06;
       values.moteOpacity = 0.02;
+      if (state.palette === "night") {
+        values.moonlightOpacity = 0.09;
+      }
       cloudCore = "rgba(205, 216, 231, 0.34)";
       cloudEdge = "rgba(238, 244, 255, 0.12)";
       fogColor = "rgba(210, 223, 239, 0.18)";
@@ -1095,11 +1100,13 @@ function resolveSceneTokens(state, intensity) {
     case "clear":
     default:
       if (state.palette === "night") {
-        values.skyOpacity = 0.06;
+        values.skyOpacity = 0.13;
         values.glowOpacity = 0.08;
         values.beamOpacity = 0.03;
         values.cloudOpacity = 0.02;
-        values.moteOpacity = 0.02;
+        values.moteOpacity = 0;
+        values.starOpacity = 0.66;
+        values.moonlightOpacity = 0.48;
       }
       break;
   }
@@ -1126,6 +1133,8 @@ function resolveSceneTokens(state, intensity) {
     rainOpacity: values.rainOpacity * detailScale,
     snowOpacity: values.snowOpacity * detailScale,
     moteOpacity: state.condition === "clear" && baseIntensity > 0.48 ? values.moteOpacity * detailScale : values.moteOpacity * 0.4,
+    starOpacity: values.starOpacity * detailScale,
+    moonlightOpacity: values.moonlightOpacity * atmosphereScale,
     flashOpacity: values.flashOpacity
   };
 }
@@ -1158,6 +1167,33 @@ function resolveSceneHosts(root = document) {
     frontHost: chatBody ?? chatColumn ?? chatColumnInner ?? scrollRegion,
     frontBefore: null
   };
+}
+
+// src/weather-icons.ts
+function conditionIcon(condition, phase = "day") {
+  switch (condition) {
+    case "cloudy":
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 18.2h10.7a3.8 3.8 0 00.6-7.55 5.5 5.5 0 00-10.45-1.2 4.4 4.4 0 00-.85 8.75Z"/></svg>`;
+    case "rain":
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 14.8h10.8a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6.3a4.3 4.3 0 00-1 8.5Z"/><path d="m8.2 17.4-1 2.3M12.3 17.4l-1 2.3M16.4 17.4l-1 2.3"/></svg>`;
+    case "storm":
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.5h10.9a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6a4.3 4.3 0 00-1.1 8.5Z"/><path class="weather-hud-icon-solid" d="m13.1 12.8-3.25 5h2.45l-.75 3.7 4.6-5.65h-2.7l1.45-3.05Z"/></svg>`;
+    case "snow":
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8v18.4M4.05 7.4l15.9 9.2M4.05 16.6l15.9-9.2M12 2.8 9.8 5M12 2.8 14.2 5M12 21.2 9.8 19M12 21.2l2.2-2.2M4.05 7.4l3-.8M4.05 7.4l.8 3M19.95 16.6l-3 .8M19.95 16.6l-.8-3"/></svg>`;
+    case "fog":
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 13.5h11a3.45 3.45 0 00.5-6.85A5.1 5.1 0 008.2 5.6a4 4 0 00-1.8 7.9Z"/><path d="M4 17.1h13M7 20.2h13"/></svg>`;
+    case "clear":
+    default:
+      if (phase === "night") {
+        return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8.7 8.7 0 019.8 3.5a8.7 8.7 0 1010.7 10.7Z"/></svg>`;
+      }
+      return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.25"/><path d="M12 2.5v2.1M12 19.4v2.1M2.5 12h2.1M19.4 12h2.1M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M18.7 5.3l-1.5 1.5M6.8 17.2l-1.5 1.5"/></svg>`;
+  }
+}
+function conditionIconLabel(condition, phase) {
+  if (condition === "clear" && phase === "night")
+    return "Clear night";
+  return `${condition.charAt(0).toUpperCase()}${condition.slice(1)} weather`;
 }
 
 // src/state-utils.ts
@@ -1993,6 +2029,18 @@ var WEATHER_HUD_CSS = `
   syntax: "<number>";
   inherits: true;
   initial-value: 0.04;
+}
+
+@property --weather-star-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --weather-moonlight-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
 }
 
 @property --weather-flash-opacity {
@@ -3476,6 +3524,8 @@ var WEATHER_HUD_CSS = `
     --weather-rain-opacity 600ms ease,
     --weather-snow-opacity 600ms ease,
     --weather-mote-opacity 600ms ease,
+    --weather-star-opacity 800ms ease,
+    --weather-moonlight-opacity 800ms ease,
     --weather-flash-opacity 300ms ease;
 }
 
@@ -3545,6 +3595,8 @@ var WEATHER_HUD_CSS = `
 .weather-fx-procedural-fog-layer,
 .weather-fx-procedural-fog,
 .weather-fx-motes,
+.weather-fx-stars,
+.weather-fx-moonlight,
 .weather-fx-rain,
 .weather-fx-snow,
 .weather-fx-wind-gusts,
@@ -3590,6 +3642,42 @@ var WEATHER_HUD_CSS = `
   opacity: var(--weather-beam-opacity);
   mix-blend-mode: screen;
   animation: weather-beam-sway 14s ease-in-out infinite alternate;
+}
+
+.weather-fx-stars {
+  opacity: var(--weather-star-opacity);
+  mix-blend-mode: screen;
+}
+
+.weather-fx-star {
+  position: absolute;
+  left: var(--star-left);
+  top: var(--star-top);
+  width: var(--star-size);
+  height: var(--star-size);
+  border-radius: 50%;
+  background: rgba(231, 241, 255, 0.96);
+  box-shadow: 0 0 5px rgba(162, 198, 255, 0.62);
+  opacity: var(--star-opacity-scale);
+  animation: weather-star-twinkle var(--star-duration) ease-in-out infinite;
+  animation-delay: var(--star-delay);
+  animation-play-state: paused;
+}
+
+.weather-fx-moonlight {
+  inset: -3vmax;
+  background:
+    radial-gradient(ellipse at 86% 14%, rgba(183, 210, 255, 0.55), rgba(115, 151, 226, 0.23) 22%, transparent 57%),
+    radial-gradient(ellipse at 12% 75%, rgba(89, 123, 185, 0.16), transparent 60%);
+  opacity: var(--weather-moonlight-opacity);
+  mix-blend-mode: screen;
+  animation: weather-glow-drift 22s ease-in-out infinite alternate;
+  animation-play-state: paused;
+}
+
+.weather-fx-root.weather-visible.weather-night-active .weather-fx-star,
+.weather-fx-root.weather-visible.weather-night-active .weather-fx-moonlight {
+  animation-play-state: running;
 }
 
 .weather-fx-horizon {
@@ -4041,6 +4129,7 @@ var WEATHER_HUD_CSS = `
 .weather-fx-root.weather-reduced-motion .weather-fx-fog-band,
 .weather-fx-root.weather-reduced-motion .weather-fx-mist-plume,
 .weather-fx-root.weather-reduced-motion .weather-fx-mote,
+.weather-fx-root.weather-reduced-motion .weather-fx-star,
 .weather-fx-root.weather-reduced-motion .weather-fx-rain-drop,
 .weather-fx-root.weather-reduced-motion .weather-fx-snow-flake,
 .weather-fx-root.weather-reduced-motion .weather-fx-wind-gust,
@@ -4052,6 +4141,10 @@ var WEATHER_HUD_CSS = `
 .weather-fx-root.weather-reduced-motion .weather-fx-sky,
 .weather-fx-root.weather-reduced-motion .weather-fx-glow,
 .weather-fx-root.weather-reduced-motion .weather-fx-beams {
+  animation: none;
+}
+
+.weather-fx-root.weather-reduced-motion .weather-fx-moonlight {
   animation: none;
 }
 
@@ -4131,6 +4224,11 @@ var WEATHER_HUD_CSS = `
 @keyframes weather-mote-drift {
   0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
   50% { transform: translate3d(var(--mote-drift-x), var(--mote-drift-y), 0) scale(1.12); }
+}
+
+@keyframes weather-star-twinkle {
+  0%, 100% { opacity: calc(var(--star-opacity-scale) * 0.55); }
+  50% { opacity: var(--star-opacity-scale); }
 }
 
 @keyframes weather-rain-fall {
@@ -4294,23 +4392,6 @@ var LIGHTNING_BOLT_POSITIONS = [23, 51, 75];
 var CLOUD_IMAGES = [cloud_1_default, cloud_2_default, cloud_3_default, cloud_4_default, cloud_5_default, cloud_6_default];
 var DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 var SCENE_TRANSITION_MS = 1300;
-function conditionIcon(condition) {
-  switch (condition) {
-    case "cloudy":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.7 18.2h10.7a3.8 3.8 0 00.6-7.55 5.5 5.5 0 00-10.45-1.2 4.4 4.4 0 00-.85 8.75Z"/></svg>`;
-    case "rain":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 14.8h10.8a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6.3a4.3 4.3 0 00-1 8.5Z"/><path d="m8.2 17.4-1 2.3M12.3 17.4l-1 2.3M16.4 17.4l-1 2.3"/></svg>`;
-    case "storm":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 14.5h10.9a3.7 3.7 0 00.55-7.35A5.45 5.45 0 007.6 6a4.3 4.3 0 00-1.1 8.5Z"/><path class="weather-hud-icon-solid" d="m13.1 12.8-3.25 5h2.45l-.75 3.7 4.6-5.65h-2.7l1.45-3.05Z"/></svg>`;
-    case "snow":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8v18.4M4.05 7.4l15.9 9.2M4.05 16.6l15.9-9.2M12 2.8 9.8 5M12 2.8 14.2 5M12 21.2 9.8 19M12 21.2l2.2-2.2M4.05 7.4l3-.8M4.05 7.4l.8 3M19.95 16.6l-3 .8M19.95 16.6l-.8-3"/></svg>`;
-    case "fog":
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 13.5h11a3.45 3.45 0 00.5-6.85A5.1 5.1 0 008.2 5.6a4 4 0 00-1.8 7.9Z"/><path d="M4 17.1h13M7 20.2h13"/></svg>`;
-    case "clear":
-    default:
-      return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.25"/><path d="M12 2.5v2.1M12 19.4v2.1M2.5 12h2.1M19.4 12h2.1M5.3 5.3l1.5 1.5M17.2 17.2l1.5 1.5M18.7 5.3l-1.5 1.5M6.8 17.2l-1.5 1.5"/></svg>`;
-  }
-}
 function resolveHudTimePhase2(state, liveDate) {
   const hour = liveDate?.getHours() ?? parseHourFromTimeString(state.time);
   return resolveHudTimePhase(state.palette, hour);
@@ -4469,6 +4550,28 @@ function createProceduralFogLayer() {
   layer.appendChild(canvas);
   return layer;
 }
+function createNightSkyLayers(kind) {
+  const moonlight = document.createElement("div");
+  moonlight.className = "weather-fx-moonlight";
+  moonlight.setAttribute("aria-hidden", "true");
+  const stars = document.createElement("div");
+  stars.className = "weather-fx-stars";
+  stars.setAttribute("aria-hidden", "true");
+  const compact = window.matchMedia("(max-width: 768px)").matches;
+  const count = kind === "back" ? compact ? 36 : 64 : compact ? 20 : 32;
+  for (let index = 0;index < count; index += 1) {
+    const seed = index + (kind === "front" ? 71 : 1);
+    stars.appendChild(createSpan("weather-fx-star", {
+      "--star-left": `${2 + seed * 47.31 % 96}%`,
+      "--star-top": `${3 + seed * 29.17 % 69}%`,
+      "--star-size": `${1.3 + seed % 4 * 0.4}px`,
+      "--star-duration": `${5 + seed % 7}s`,
+      "--star-delay": `${-(seed % 11)}s`,
+      "--star-opacity-scale": `${0.62 + seed % 5 * 0.08}`
+    }));
+  }
+  return [moonlight, stars];
+}
 function createFxMarkup(kind) {
   const root = document.createElement("div");
   root.className = "weather-fx-root";
@@ -4479,6 +4582,7 @@ function createFxMarkup(kind) {
     const sky = document.createElement("div");
     sky.className = "weather-fx-sky";
     root.appendChild(sky);
+    root.append(...createNightSkyLayers(kind));
     const glow = document.createElement("div");
     glow.className = "weather-fx-glow";
     root.appendChild(glow);
@@ -4633,6 +4737,7 @@ function createFxMarkup(kind) {
     const sky = document.createElement("div");
     sky.className = "weather-fx-sky weather-fx-sky-front";
     root.appendChild(sky);
+    root.append(...createNightSkyLayers(kind));
     const clouds = document.createElement("div");
     clouds.className = "weather-fx-clouds weather-fx-clouds-front";
     root.appendChild(clouds);
@@ -5236,8 +5341,9 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   const solar = resolveSolarArc(displayState.date, displayState.time);
   hud.root.style.setProperty("--weather-sun-altitude", solar.sunAltitude.toFixed(1));
   hud.root.dataset.season = state ? displayState.season : "unknown";
-  hud.icon.innerHTML = conditionIcon(displayState.condition);
-  const iconLabel = `${displayState.condition.charAt(0).toUpperCase()}${displayState.condition.slice(1)} weather`;
+  const iconMarkup = conditionIcon(displayState.condition, phase);
+  hud.icon.innerHTML = iconMarkup;
+  const iconLabel = conditionIconLabel(displayState.condition, phase);
   hud.icon.setAttribute("role", "img");
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
@@ -5258,7 +5364,7 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   hud.drawerToggle.setAttribute("aria-label", mobilePanel ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls");
   if (hud.launcherButton && hud.launcherIcon) {
-    hud.launcherIcon.innerHTML = conditionIcon(displayState.condition);
+    hud.launcherIcon.innerHTML = iconMarkup;
     const launcherLabel = state ? `Open LumiWeather: ${displayState.location}, ${displayState.condition}, ${formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit)}` : "Open LumiWeather: waiting for a weather update";
     hud.launcherButton.setAttribute("aria-label", launcherLabel);
     hud.launcherButton.title = launcherLabel;
@@ -5334,6 +5440,8 @@ var TRANSITIONED_TOKENS = [
   ["--weather-rain-opacity", "rainOpacity"],
   ["--weather-snow-opacity", "snowOpacity"],
   ["--weather-mote-opacity", "moteOpacity"],
+  ["--weather-star-opacity", "starOpacity"],
+  ["--weather-moonlight-opacity", "moonlightOpacity"],
   ["--weather-flash-opacity", "flashOpacity"]
 ];
 function tokenCssValue(value) {
@@ -5394,13 +5502,16 @@ function applySceneState(root, state, prefs, reducedMotion, onBlendComplete) {
   root.root.classList.toggle("weather-paused", prefs.pauseEffects || document.visibilityState === "hidden");
   root.root.classList.toggle("weather-rain-active", state.condition === "rain" || state.condition === "storm");
   root.root.classList.toggle("weather-snow-active", state.condition === "snow");
+  root.root.classList.toggle("weather-night-active", tokens.starOpacity > 0 || tokens.moonlightOpacity > 0);
   const resolvedTokens = {
     ...tokens,
     glowOpacity: isFront ? 0 : tokens.glowOpacity,
     beamOpacity: isFront ? 0 : tokens.beamOpacity,
     fogOpacity: isFront ? 0 : tokens.fogOpacity,
     rainOpacity: rainLayerOpacity,
-    snowOpacity: tokens.snowOpacity * (isFront ? 0.96 : 0.82)
+    snowOpacity: tokens.snowOpacity * (isFront ? 0.96 : 0.82),
+    starOpacity: tokens.starOpacity * (isFront ? prefs.layerMode === "both" ? 0.4 : 0.78 : 1),
+    moonlightOpacity: tokens.moonlightOpacity * (isFront ? prefs.layerMode === "both" ? 0.22 : 0.65 : 1)
   };
   const nextKey = sceneKeyFor(state, effectiveIntensity, prefs);
   const canBlend = prefs.effectsEnabled && (prefs.layerMode === "both" || prefs.layerMode === root.kind) && prefs.transitionsEnabled && sceneTransitionsSupported && !reducedMotion && !prefs.pauseEffects && document.visibilityState !== "hidden" && root.sceneTokens !== null && root.root.classList.contains("weather-visible");

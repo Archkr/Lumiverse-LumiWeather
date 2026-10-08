@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import type { InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
 import { DEFAULT_PREFS, normalizeWeatherTag, WEATHER_STATE_VAR, WEATHER_MANUAL_STATE_VAR } from "./shared";
 import type { BackendToFrontend, FrontendToBackend, WeatherPrefs, WeatherState } from "./types";
 
@@ -8,6 +9,7 @@ const published: Record<string, any> = {};
 const publishedRevisions: number[] = [];
 const capabilityDeclarations: string[] = [];
 const eventHandlers = new Map<string, (payload: unknown, userId?: string) => void>();
+const macroValues = new Map<string, string>();
 const errors: string[] = [];
 let messages: any[] = [];
 let prefs: WeatherPrefs = { ...DEFAULT_PREFS };
@@ -18,6 +20,7 @@ let failNextSave: string | null = null;
 let failNextDelete: string | null = null;
 let failNextRead: string | null = null;
 let receive: (message: FrontendToBackend, userId: string) => Promise<void>;
+let intercept: (messages: LlmMessageDTO[], context: unknown) => Promise<InterceptorResultDTO>;
 const globals = globalThis as typeof globalThis & { spindle?: unknown };
 const oldSpindle = globals.spindle;
 const noop = () => {};
@@ -73,7 +76,9 @@ beforeAll(async () => {
       if (key === "state.current") publishedRevisions.push(value.revision);
     } },
     sendToFrontend: (message: BackendToFrontend) => sent.push(message),
-    registerMacro: noop, updateMacroValue: noop, registerInterceptor: noop,
+    registerMacro: noop,
+    updateMacroValue: (name: string, value: string) => { macroValues.set(name, value); },
+    registerInterceptor: (handler: typeof intercept) => { intercept = handler; },
     on: (event: string, handler: (payload: unknown, userId?: string) => void) => {
       eventHandlers.set(event, handler);
       return noop;
@@ -110,6 +115,27 @@ afterAll(() => { globals.spindle = oldSpindle; });
 
 test("declares hidden-tag readiness on supported hosts and starts on older hosts", () => {
   expect(capabilityDeclarations).toEqual(["message_tag_interceptor"]);
+});
+
+test("tracker aliases and generation receive the forecast requirement with the saved outlook", async () => {
+  for (const name of ["story_weather_tracker", "weather_tracker", "story_weather"]) {
+    expect(macroValues.get(name)).toContain("Include a non-empty forecast attribute in every weather-state tag");
+  }
+  await send({ type: "weather_tag_intercepted", chatId: "chat", messageId: "forecast-prompt",
+    attrs: { date: "2026-12-31", time: "8:14 PM", temperature: "16C",
+      forecast: "2027-01-01: rain, 15C, lingering showers | 2027-01-02: cloudy, 14C, low clouds" } });
+  const result = await intercept([
+    { role: "system", content: "Base prompt" },
+    { role: "assistant", content: `A quiet evening.\n${tag}` },
+    { role: "user", content: "Continue the scene" },
+  ], { chatId: "chat" });
+
+  expect(result.messages[1]).toMatchObject({ role: "system" });
+  expect(result.messages[1].content).toContain("Include a non-empty forecast attribute in every weather-state tag");
+  expect(result.messages[1].content).toContain("Date: 2026-12-31");
+  expect(result.messages[1].content).toContain("Forecast: 2027-01-01: rain, 15C, lingering showers | 2027-01-02: cloudy, 14C, low clouds");
+  expect(result.messages[2].content).toBe("A quiet evening.");
+  expect(errors).toEqual([]);
 });
 
 test("manual season changes survive JSON transport, backend merge, and persisted reload", async () => {

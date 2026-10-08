@@ -119,6 +119,18 @@ export const WEATHER_HUD_CSS = `
   initial-value: 0.04;
 }
 
+@property --weather-star-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --weather-moonlight-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 @property --weather-flash-opacity {
   syntax: "<number>";
   inherits: true;
@@ -1600,6 +1612,8 @@ export const WEATHER_HUD_CSS = `
     --weather-rain-opacity 600ms ease,
     --weather-snow-opacity 600ms ease,
     --weather-mote-opacity 600ms ease,
+    --weather-star-opacity 800ms ease,
+    --weather-moonlight-opacity 800ms ease,
     --weather-flash-opacity 300ms ease;
 }
 
@@ -1669,6 +1683,8 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-procedural-fog-layer,
 .weather-fx-procedural-fog,
 .weather-fx-motes,
+.weather-fx-stars,
+.weather-fx-moonlight,
 .weather-fx-rain,
 .weather-fx-snow,
 .weather-fx-wind-gusts,
@@ -1714,6 +1730,42 @@ export const WEATHER_HUD_CSS = `
   opacity: var(--weather-beam-opacity);
   mix-blend-mode: screen;
   animation: weather-beam-sway 14s ease-in-out infinite alternate;
+}
+
+.weather-fx-stars {
+  opacity: var(--weather-star-opacity);
+  mix-blend-mode: screen;
+}
+
+.weather-fx-star {
+  position: absolute;
+  left: var(--star-left);
+  top: var(--star-top);
+  width: var(--star-size);
+  height: var(--star-size);
+  border-radius: 50%;
+  background: rgba(231, 241, 255, 0.96);
+  box-shadow: 0 0 5px rgba(162, 198, 255, 0.62);
+  opacity: var(--star-opacity-scale);
+  animation: weather-star-twinkle var(--star-duration) ease-in-out infinite;
+  animation-delay: var(--star-delay);
+  animation-play-state: paused;
+}
+
+.weather-fx-moonlight {
+  inset: -3vmax;
+  background:
+    radial-gradient(ellipse at 86% 14%, rgba(183, 210, 255, 0.55), rgba(115, 151, 226, 0.23) 22%, transparent 57%),
+    radial-gradient(ellipse at 12% 75%, rgba(89, 123, 185, 0.16), transparent 60%);
+  opacity: var(--weather-moonlight-opacity);
+  mix-blend-mode: screen;
+  animation: weather-glow-drift 22s ease-in-out infinite alternate;
+  animation-play-state: paused;
+}
+
+.weather-fx-root.weather-visible.weather-night-active .weather-fx-star,
+.weather-fx-root.weather-visible.weather-night-active .weather-fx-moonlight {
+  animation-play-state: running;
 }
 
 .weather-fx-horizon {
@@ -2165,6 +2217,7 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-root.weather-reduced-motion .weather-fx-fog-band,
 .weather-fx-root.weather-reduced-motion .weather-fx-mist-plume,
 .weather-fx-root.weather-reduced-motion .weather-fx-mote,
+.weather-fx-root.weather-reduced-motion .weather-fx-star,
 .weather-fx-root.weather-reduced-motion .weather-fx-rain-drop,
 .weather-fx-root.weather-reduced-motion .weather-fx-snow-flake,
 .weather-fx-root.weather-reduced-motion .weather-fx-wind-gust,
@@ -2176,6 +2229,10 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-root.weather-reduced-motion .weather-fx-sky,
 .weather-fx-root.weather-reduced-motion .weather-fx-glow,
 .weather-fx-root.weather-reduced-motion .weather-fx-beams {
+  animation: none;
+}
+
+.weather-fx-root.weather-reduced-motion .weather-fx-moonlight {
   animation: none;
 }
 
@@ -2255,6 +2312,11 @@ export const WEATHER_HUD_CSS = `
 @keyframes weather-mote-drift {
   0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
   50% { transform: translate3d(var(--mote-drift-x), var(--mote-drift-y), 0) scale(1.12); }
+}
+
+@keyframes weather-star-twinkle {
+  0%, 100% { opacity: calc(var(--star-opacity-scale) * 0.55); }
+  50% { opacity: var(--star-opacity-scale); }
 }
 
 @keyframes weather-rain-fall {

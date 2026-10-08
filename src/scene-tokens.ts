@@ -113,6 +113,8 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
     rainOpacity: 0,
     snowOpacity: 0,
     moteOpacity: 0.06,
+    starOpacity: 0,
+    moonlightOpacity: 0,
     flashOpacity: 0.26,
   };
 
@@ -125,6 +127,10 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
       values.horizonOpacity = 0.1;
       values.mistOpacity = 0.06;
       values.moteOpacity = 0.02;
+      if (state.palette === "night") {
+        // Cloud cover hides the stars but leaves a trace of diffused moonlight.
+        values.moonlightOpacity = 0.09;
+      }
       cloudCore = "rgba(205, 216, 231, 0.34)";
       cloudEdge = "rgba(238, 244, 255, 0.12)";
       fogColor = "rgba(210, 223, 239, 0.18)";
@@ -193,11 +199,13 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
     case "clear":
     default:
       if (state.palette === "night") {
-        values.skyOpacity = 0.06;
+        values.skyOpacity = 0.13;
         values.glowOpacity = 0.08;
         values.beamOpacity = 0.03;
         values.cloudOpacity = 0.02;
-        values.moteOpacity = 0.02;
+        values.moteOpacity = 0;
+        values.starOpacity = 0.66;
+        values.moonlightOpacity = 0.48;
       }
       break;
   }
@@ -226,6 +234,8 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
     rainOpacity: values.rainOpacity * detailScale,
     snowOpacity: values.snowOpacity * detailScale,
     moteOpacity: state.condition === "clear" && baseIntensity > 0.48 ? values.moteOpacity * detailScale : values.moteOpacity * 0.4,
+    starOpacity: values.starOpacity * detailScale,
+    moonlightOpacity: values.moonlightOpacity * atmosphereScale,
     flashOpacity: values.flashOpacity,
   };
 }

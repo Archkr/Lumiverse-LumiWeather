@@ -37,6 +37,8 @@ export interface SceneTokens {
   rainOpacity: number;
   snowOpacity: number;
   moteOpacity: number;
+  starOpacity: number;
+  moonlightOpacity: number;
   flashOpacity: number;
 }
 

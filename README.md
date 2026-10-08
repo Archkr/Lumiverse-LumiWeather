@@ -53,7 +53,7 @@ The legacy `story_weather_*` aliases and technical extension ID remain in place 
 The assistant should keep all visible prose natural, then end the message with exactly one hidden weather tag:
 
 ```html
-<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: snow, 30F, heavy flurries | 2026-01-17: cloudy, 34F"></weather-state>
+<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>
 ```
 
 Supported conditions:
@@ -67,12 +67,13 @@ Supported conditions:
 
 Condition and attribute names are case-insensitive. Common condition aliases such as `sunny`, `overcast`, `rainy`, `thunderstorm`, `snowy`, and `mist` are normalized to these six values. Dates must be real calendar dates, and times must be valid 12-hour or 24-hour values. Story time is independent of the device's timezone and daylight-saving changes.
 
-### Optional attributes
+### Season and forecast
 
-`season` and `forecast` are optional and were added in v1.4. Tags written before v1.4 keep working unchanged.
+`season` and `forecast` were added in v1.4. The parser keeps both optional for compatibility, so older tags keep working unchanged. The current tracker instructions ask the model to include a populated `forecast` in every new tag, even when future weather is not mentioned in the visible reply.
 
 - `season` is one of `spring`, `summer`, `autumn`, or `winter`. When it is omitted, the season is derived from the story date.
-- `forecast` projects at most five later days. Separate entries with a pipe and format each as `date: condition, temperature, summary`. Condition, temperature, and summary are each optional, so `2026-01-17` alone is a valid entry. Unparseable entries are dropped rather than failing the whole tag, and the projection is sorted by date.
+- `forecast` projects the next three story calendar days by default, with at most five future days total, using dates strictly after the tag's story date. Separate entries with a pipe and format each as `date: condition, temperature, summary`. New generated entries should include all three details. The parser still accepts sparse legacy entries such as `2026-01-17`, drops unparseable entries rather than failing the whole tag, and sorts the projection by date.
+- The model uses story-established future weather when available and otherwise projects a plausible outlook from the location, season, current conditions, and temperature. Existing future entries are retained unless the narrative changes the outlook. As the story date advances, elapsed dates are removed and missing days are added to restore the three-day horizon. Stable weather is a valid projection; the model need not invent weather changes or narrate future events. Forecasts describe fictional story weather and do not use live weather data.
 - When `forecast` is omitted, the projection already in play is kept. Send `forecast=""` to clear it deliberately.
 
 Effect placement is user-controlled in settings:
