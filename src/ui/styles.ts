@@ -1682,6 +1682,14 @@ export const WEATHER_HUD_CSS = `
   inset: 0;
 }
 
+/* Keep the painted edges outside the clip through the full drift/sway cycle.
+   3vmax covers the 1vw drift and 1deg rotation, including tall mobile scenes. */
+.weather-fx-sky,
+.weather-fx-glow,
+.weather-fx-beams {
+  inset: -3vmax;
+}
+
 .weather-fx-sky {
   background: linear-gradient(180deg, var(--weather-bg-start) 0%, var(--weather-bg-mid) 46%, var(--weather-bg-end) 100%);
   opacity: var(--weather-sky-opacity);
