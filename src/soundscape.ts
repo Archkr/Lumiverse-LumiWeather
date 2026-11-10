@@ -200,6 +200,7 @@ export class WeatherSoundscape {
   private brownBuffer: AudioBuffer | null = null;
   private sources: AudioScheduledSourceNode[] = [];
   private thunderTimers = new Set<number>();
+  private suspendTimer: number | null = null;
   private lastProfile: SoundscapeProfile | null = null;
   private destroyed = false;
 
@@ -211,6 +212,11 @@ export class WeatherSoundscape {
     if (!profile.active) {
       this.rampToSilence();
       return profile;
+    }
+
+    if (this.suspendTimer !== null) {
+      window.clearTimeout(this.suspendTimer);
+      this.suspendTimer = null;
     }
 
     if (!this.ensureGraph()) {
@@ -294,6 +300,10 @@ export class WeatherSoundscape {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.suspendTimer !== null) {
+      window.clearTimeout(this.suspendTimer);
+      this.suspendTimer = null;
+    }
     for (const timer of this.thunderTimers) window.clearTimeout(timer);
     this.thunderTimers.clear();
     for (const source of this.sources) {
@@ -314,7 +324,15 @@ export class WeatherSoundscape {
   private rampToSilence(): void {
     if (!this.ctx || !this.masterGain) return;
     try {
-      this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.14);
+      this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+      if (this.suspendTimer === null && this.ctx.state === "running") {
+        this.suspendTimer = window.setTimeout(() => {
+          this.suspendTimer = null;
+          if (!this.destroyed && this.ctx && !this.lastProfile?.active && this.ctx.state === "running") {
+            void this.ctx.suspend().catch(() => {});
+          }
+        }, 260);
+      }
     } catch {
       // Ignore if context is closing
     }

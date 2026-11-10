@@ -1,18 +1,14 @@
 import type { SpindleFrontendContext, SpindleUIKeyboardState } from "lumiverse-spindle-types";
-import cloud1 from "./assets/cloud_1.png";
-import cloud2 from "./assets/cloud_2.png";
-import cloud3 from "./assets/cloud_3.png";
-import cloud4 from "./assets/cloud_4.png";
-import cloud5 from "./assets/cloud_5.png";
-import cloud6 from "./assets/cloud_6.png";
+import {
+  destroyAtmosphereEngine,
+  triggerAtmosphereLightning,
+  updateAtmosphereEngine,
+} from "./atmosphere-engine";
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "./presets";
 import {
-  resolveRainDensityThreshold,
-  resolveRainParticlePool,
   resolveRainProfile,
   resolveRainVector,
 } from "./fx-utils";
-import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
 import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
 import { resolveSceneTokens } from "./scene-tokens";
 import { resolveSceneHosts } from "./scene-hosts";
@@ -25,8 +21,6 @@ import {
 } from "./time-utils";
 import {
   DEFAULT_PREFS,
-  WEATHER_EXPOSURES,
-  WEATHER_PHENOMENA,
   WEATHER_TAG_NAME,
   clamp,
   formatTemperatureForUnit,
@@ -40,7 +34,6 @@ import type {
   FrontendToBackend,
   TemperatureUnit,
   WeatherClockMode,
-  WeatherCondition,
   WeatherExposure,
   WeatherPhenomenon,
   SceneTokens,
@@ -56,13 +49,7 @@ const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 1
 const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
 const CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.05 5.64 4.95 4.95 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05z"/></svg>`;
-const LIGHTNING_BOLT_SVGS = [
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M55 0 L35 55 L52 55 L25 145 L48 100 L30 100 L52 230 L35 185 L58 300"/><path d="M52 55 L72 82 L62 88" stroke-width="1.8"/><path d="M48 100 L22 125 L32 130" stroke-width="1.8"/><path d="M52 230 L72 248 L62 253" stroke-width="1.5"/></g></svg>`,
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M45 0 L68 48 L45 48 L72 135 L50 88 L66 88 L42 215 L62 168 L38 300"/><path d="M45 48 L22 72 L32 77" stroke-width="1.8"/><path d="M50 88 L75 110 L65 115" stroke-width="1.8"/></g></svg>`,
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 300" preserveAspectRatio="none" style="width:100%;height:100%;"><g fill="none" stroke="rgba(255,255,255,0.98)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"><path d="M50 0 L38 52 L55 52 L30 120 L50 80 L32 80 L55 200 L38 158 L55 300"/><path d="M55 52 L75 75 L65 80" stroke-width="1.8"/><path d="M50 80 L25 100 L35 105" stroke-width="1.8"/><path d="M55 200 L75 220 L65 225" stroke-width="1.5"/></g></svg>`,
-] as const;
 const LIGHTNING_BOLT_POSITIONS = [23, 51, 75] as const;
-const CLOUD_IMAGES = [cloud1, cloud2, cloud3, cloud4, cloud5, cloud6] as const;
 
 const DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 
@@ -75,7 +62,6 @@ type FxRoot = {
   root: HTMLDivElement;
   host: HTMLElement | null;
   kind: "back" | "front";
-  poolCondition: string | null;
   /** Tokens currently applied, used as the `from` side of the next blend. */
   sceneTokens: ResolvedSceneTokens | null;
   /** Identity of the applied scene, so an identical scene never re-blends. */
@@ -147,275 +133,11 @@ function sendToBackend(ctx: SpindleFrontendContext, payload: FrontendToBackend):
   ctx.sendToBackend(payload);
 }
 
-function createSpan(className: string, styles: Record<string, string>): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.className = className;
-  for (const [key, value] of Object.entries(styles)) {
-    span.style.setProperty(key, value);
-  }
-  return span;
-}
-
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
-function cssNumber(value: number, precision = 2): string {
-  return value.toFixed(precision).replace(/\.?0+$/, "");
-}
-
-function resolveProceduralFogTint(
-  palette: WeatherState["palette"],
-  phenomenon: WeatherState["phenomenon"] = "none",
-): readonly [number, number, number] {
-  if (phenomenon === "sandstorm") {
-    return [0.84, 0.67, 0.45];
-  }
-  switch (palette) {
-    case "dawn":
-      return [0.82, 0.76, 0.75];
-    case "dusk":
-      return [0.7, 0.66, 0.76];
-    case "night":
-      return [0.52, 0.62, 0.73];
-    case "storm":
-      return [0.48, 0.57, 0.67];
-    case "snow":
-      return [0.82, 0.87, 0.9];
-    case "mist":
-      return [0.7, 0.78, 0.81];
-    case "day":
-    default:
-      return [0.72, 0.8, 0.84];
-  }
-}
-
-function createCloudElement(index: number, total: number): HTMLSpanElement {
-  const row = index % 2;
-  const column = Math.floor(index / 2);
-  const columns = Math.max(1, Math.ceil(total / 2));
-  const depth = clamp((row === 0 ? 0.32 : 0.68) + randomRange(-0.16, 0.16), 0, 1);
-  const lanePosition = columns <= 1 ? 40 : -18 + (column / (columns - 1)) * 108;
-  const stagger = row === 0 ? 0 : 7;
-  const width = randomRange(300, 440) + depth * 80;
-  const height = width * 0.46;
-  const blur = Math.max(0.2, randomRange(0.6, 1.6) - depth * 0.5);
-  const scale = randomRange(0.82, 0.98) + depth * 0.12;
-  const driftStart = -4 - randomRange(0, 3);
-  const driftEnd = 4 + randomRange(0, 3);
-  const driftMid = (driftStart + driftEnd) / 2 + randomRange(-1.5, 1.5);
-  const duration = randomRange(58, 82) - depth * 8;
-
-  const cloud = createSpan("weather-fx-cloud", {
-    "--cloud-width": `${Math.round(width)}px`,
-    "--cloud-height": `${Math.round(height)}px`,
-    "--cloud-top": `${cssNumber((row === 0 ? -7 : 0) + randomRange(-2, 1))}%`,
-    "--cloud-left": `${cssNumber(lanePosition + stagger + randomRange(-2.5, 2.5))}%`,
-    "--cloud-duration": `${cssNumber(duration)}s`,
-    "--cloud-delay": `${cssNumber(randomRange(-46, -4))}s`,
-    "--cloud-blur": `${cssNumber(blur)}px`,
-    "--cloud-opacity-scale": `${cssNumber(0.6 + randomRange(0.06, 0.12) + depth * 0.06)}`,
-    "--cloud-depth": `${cssNumber(depth)}`,
-    "--cloud-scale": `${cssNumber(scale)}`,
-    "--cloud-scale-mid": `${cssNumber(scale + randomRange(0.02, 0.06))}`,
-    "--cloud-drift-x-start": `${cssNumber(driftStart)}vw`,
-    "--cloud-drift-x-mid": `${cssNumber(driftMid)}vw`,
-    "--cloud-drift-x-end": `${cssNumber(driftEnd)}vw`,
-    "--cloud-drift-y": `${cssNumber(randomRange(-0.45, 0.45))}vh`,
-  });
-  cloud.dataset.baseDuration = cssNumber(duration, 4);
-  const imageSource = CLOUD_IMAGES[Math.floor(Math.random() * CLOUD_IMAGES.length)];
-  cloud.style.setProperty("--cloud-image", `url("${imageSource}")`);
-  const image = document.createElement("img");
-  image.src = imageSource;
-  image.alt = "";
-  image.draggable = false;
-  image.decoding = "async";
-  cloud.appendChild(image);
-  return cloud;
-}
-
-function createWindGustElement(): HTMLSpanElement {
-  const length = randomRange(90, 260);
-  const curve = randomRange(6, 22);
-  const height = curve * 2 + 6;
-  const midpoint = height / 2;
-  const gust = createSpan("weather-fx-wind-gust", {
-    "--gust-left": `${cssNumber(randomRange(-45, 45))}%`,
-    "--gust-top": `${cssNumber(randomRange(12, 90))}%`,
-    "--gust-width": `${cssNumber(length)}px`,
-    "--gust-height": `${cssNumber(height)}px`,
-    "--gust-duration": `${cssNumber(randomRange(5.5, 12))}s`,
-    "--gust-delay": `${cssNumber(randomRange(-12, -0.4))}s`,
-    "--gust-opacity": cssNumber(randomRange(0.04, 0.16)),
-  });
-
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${cssNumber(length)} ${cssNumber(height)}`);
-  svg.setAttribute("preserveAspectRatio", "none");
-  svg.setAttribute("aria-hidden", "true");
-
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute(
-    "d",
-    `M 0 ${cssNumber(midpoint)} C ${cssNumber(length * 0.3)} ${cssNumber(midpoint - curve)}, ${cssNumber(length * 0.7)} ${cssNumber(midpoint + curve)}, ${cssNumber(length)} ${cssNumber(midpoint)}`,
-  );
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke", "currentColor");
-  path.setAttribute("stroke-width", cssNumber(randomRange(0.6, 1.6)));
-  path.setAttribute("stroke-linecap", "round");
-  svg.appendChild(path);
-  gust.appendChild(svg);
-  return gust;
-}
-
-function createSnowflakeElement(front: boolean): HTMLSpanElement {
-  const size = randomRange(front ? 1.6 : 1.2, front ? 5.2 : 4.3);
-  const direction = Math.random() < 0.5 ? -1 : 1;
-  const drift = randomRange(1.2, front ? 5.8 : 4.6) * direction;
-
-  return createSpan(front ? "weather-fx-snow-flake weather-fx-snow-flake-front" : "weather-fx-snow-flake", {
-    "--flake-left": `${cssNumber(randomRange(-4, 104))}%`,
-    "--flake-top": `${cssNumber(randomRange(-24, -6))}%`,
-    "--flake-size": `${cssNumber(size)}px`,
-    "--flake-glow": `${cssNumber(size * (front ? 3.1 : 2.7))}px`,
-    "--flake-duration": `${cssNumber(randomRange(front ? 7 : 8, front ? 16 : 20))}s`,
-    "--flake-shimmer-duration": `${cssNumber(randomRange(1.8, 3.8))}s`,
-    "--flake-delay": `${cssNumber(randomRange(-18, -0.2))}s`,
-    "--flake-drift-a": `${cssNumber(drift)}vw`,
-    "--flake-drift-b": `${cssNumber(drift * -0.65)}vw`,
-    "--flake-drift-c": `${cssNumber(drift * 0.85)}vw`,
-    "--flake-drift-end": `${cssNumber(drift * -0.45 - 0.8)}vw`,
-    "--flake-static-y": `${cssNumber(randomRange(12, 88))}vh`,
-    "--flake-opacity-scale": cssNumber(randomRange(0.3, 0.85)),
-  });
-}
-
-function randomizeRainImpactPosition(
-  splash: HTMLElement,
-  ripple: HTMLElement | null,
-  maxBottom: number,
-): void {
-  const position = randomRange(1, 99);
-  const bottom = randomRange(0, maxBottom);
-  splash.style.setProperty("--splash-left", `${cssNumber(position)}%`);
-  splash.style.setProperty("--splash-bottom", `${cssNumber(bottom)}%`);
-  splash.style.setProperty("--splash-lift", `${cssNumber(randomRange(-10, -5))}px`);
-  splash.style.setProperty("--splash-tilt", `${cssNumber(randomRange(-12, 12))}deg`);
-
-  if (ripple) {
-    ripple.style.setProperty("--ripple-left", `${cssNumber(position)}%`);
-    ripple.style.setProperty("--ripple-bottom", `${cssNumber(bottom)}%`);
-  }
-}
-
 function protectInteractive(element: HTMLElement): void {
   const stop = (event: Event) => event.stopPropagation();
   element.addEventListener("pointerdown", stop);
   element.addEventListener("mousedown", stop);
   element.addEventListener("touchstart", stop);
-}
-
-function createProceduralFogLayer(): HTMLDivElement {
-  const layer = document.createElement("div");
-  layer.className = "weather-fx-procedural-fog-layer";
-
-  const canvas = document.createElement("canvas");
-  canvas.className = "weather-fx-procedural-fog";
-  canvas.setAttribute("aria-hidden", "true");
-  layer.appendChild(canvas);
-  return layer;
-}
-
-function createNightSkyLayers(kind: "back" | "front"): HTMLDivElement[] {
-  const moonlight = document.createElement("div");
-  moonlight.className = "weather-fx-moonlight";
-  moonlight.setAttribute("aria-hidden", "true");
-
-  const stars = document.createElement("div");
-  stars.className = "weather-fx-stars";
-  stars.setAttribute("aria-hidden", "true");
-  const compact = window.matchMedia("(max-width: 768px)").matches;
-  const count = kind === "back" ? (compact ? 36 : 64) : (compact ? 20 : 32);
-  for (let index = 0; index < count; index += 1) {
-    // Stable, staggered positions keep a scene update from rearranging the sky.
-    const seed = index + (kind === "front" ? 71 : 1);
-    stars.appendChild(createSpan("weather-fx-star", {
-      "--star-left": `${2 + ((seed * 47.31) % 96)}%`,
-      "--star-top": `${3 + ((seed * 29.17) % 69)}%`,
-      "--star-size": `${1.3 + (seed % 4) * 0.4}px`,
-      "--star-duration": `${5 + (seed % 7)}s`,
-      "--star-delay": `${-(seed % 11)}s`,
-      "--star-opacity-scale": `${0.62 + (seed % 5) * 0.08}`,
-    }));
-  }
-  return [moonlight, stars];
-}
-
-function createAuroraLayer(front: boolean): HTMLDivElement {
-  const aurora = document.createElement("div");
-  aurora.className = front ? "weather-fx-aurora weather-fx-aurora-front" : "weather-fx-aurora";
-  aurora.setAttribute("aria-hidden", "true");
-  const ribbonCount = front ? 2 : 3;
-  for (let index = 0; index < ribbonCount; index += 1) {
-    aurora.appendChild(
-      createSpan("weather-fx-aurora-ribbon", {
-        "--aurora-index": String(index),
-        "--aurora-top": `${4 + index * 11}%`,
-        "--aurora-duration": `${18 + index * 5}s`,
-        "--aurora-delay": `${-index * 6.5}s`,
-      }),
-    );
-  }
-  return aurora;
-}
-
-function createPhenomenonLayer(front: boolean): HTMLDivElement {
-  const container = document.createElement("div");
-  container.className = front ? "weather-fx-phenomenon weather-fx-phenomenon-front" : "weather-fx-phenomenon";
-  container.setAttribute("aria-hidden", "true");
-  const compact = window.matchMedia("(max-width: 768px)").matches;
-  const count = front ? (compact ? 18 : 28) : (compact ? 28 : 44);
-  for (let index = 0; index < count; index += 1) {
-    const seed = index + (front ? 103 : 17);
-    const size = 3.2 + (seed % 5) * (front ? 1.35 : 1.05);
-    const sway = ((seed % 2 === 0 ? 1 : -1) * (1.8 + (seed % 4) * 1.1)).toFixed(2);
-    container.appendChild(
-      createSpan("weather-fx-phenomenon-particle", {
-        "--phenomenon-left": `${((seed * 37.9) % 104) - 2}%`,
-        "--phenomenon-top": `${(seed * 53.7) % 100}%`,
-        "--phenomenon-size": `${size.toFixed(1)}px`,
-        "--phenomenon-duration": `${6.5 + (seed % 8) * 1.4}s`,
-        "--phenomenon-delay": `${-((seed * 1.7) % 14).toFixed(2)}s`,
-        "--phenomenon-sway": `${sway}vw`,
-        "--phenomenon-opacity-scale": `${(0.45 + (seed % 6) * 0.09).toFixed(2)}`,
-      }),
-    );
-  }
-  return container;
-}
-
-function createWindowpaneLayer(front: boolean): HTMLDivElement {
-  const pane = document.createElement("div");
-  pane.className = front ? "weather-fx-windowpane weather-fx-windowpane-front" : "weather-fx-windowpane";
-  pane.setAttribute("aria-hidden", "true");
-  const compact = window.matchMedia("(max-width: 768px)").matches;
-  const dropCount = front ? (compact ? 18 : 30) : (compact ? 12 : 20);
-  for (let index = 0; index < dropCount; index += 1) {
-    const seed = index + (front ? 41 : 7);
-    pane.appendChild(
-      createSpan("weather-fx-window-drop", {
-        "--wdrop-left": `${3 + ((seed * 43.1) % 94)}%`,
-        "--wdrop-top": `${(seed * 61.3) % 92}%`,
-        "--wdrop-length": `${16 + (seed % 6) * 8}px`,
-        "--wdrop-width": `${1.5 + (seed % 3) * 0.6}px`,
-        "--wdrop-duration": `${2.8 + (seed % 7) * 0.65}s`,
-        "--wdrop-delay": `${-((seed * 1.3) % 6).toFixed(2)}s`,
-        "--wdrop-opacity": `${(0.38 + (seed % 5) * 0.11).toFixed(2)}`,
-      }),
-    );
-  }
-  return pane;
 }
 
 function createFxMarkup(kind: "back" | "front"): FxRoot {
@@ -425,389 +147,9 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
 
   const flash = document.createElement("div");
   flash.className = "weather-fx-flash";
-
-  if (kind === "back") {
-    const sky = document.createElement("div");
-    sky.className = "weather-fx-sky";
-    root.appendChild(sky);
-    root.append(...createNightSkyLayers(kind));
-    root.appendChild(createAuroraLayer(false));
-
-    const glow = document.createElement("div");
-    glow.className = "weather-fx-glow";
-    root.appendChild(glow);
-
-    const beams = document.createElement("div");
-    beams.className = "weather-fx-beams";
-    root.appendChild(beams);
-
-    const clouds = document.createElement("div");
-    clouds.className = "weather-fx-clouds";
-    root.appendChild(clouds);
-
-    const horizon = document.createElement("div");
-    horizon.className = "weather-fx-horizon";
-    root.appendChild(horizon);
-
-    const mist = document.createElement("div");
-    mist.className = "weather-fx-mist";
-    root.appendChild(mist);
-
-    root.appendChild(createProceduralFogLayer());
-
-    const fog = document.createElement("div");
-    fog.className = "weather-fx-fog";
-    root.appendChild(fog);
-
-    const motes = document.createElement("div");
-    motes.className = "weather-fx-motes";
-    root.appendChild(motes);
-
-    const windGusts = document.createElement("div");
-    windGusts.className = "weather-fx-wind-gusts";
-    root.appendChild(windGusts);
-
-    const rain = document.createElement("div");
-    rain.className = "weather-fx-rain";
-    root.appendChild(rain);
-
-    const snow = document.createElement("div");
-    snow.className = "weather-fx-snow";
-    root.appendChild(snow);
-
-    const compact = window.matchMedia("(max-width: 768px)").matches;
-    const cloudCount = compact ? 12 : 16;
-    for (let index = 0; index < cloudCount; index += 1) {
-      clouds.appendChild(createCloudElement(index, cloudCount));
-    }
-
-    for (let index = 0; index < (compact ? 3 : 4); index += 1) {
-      fog.appendChild(
-        createSpan("weather-fx-fog-band", {
-          "--fog-width": `${240 + Math.round(Math.random() * 320)}px`,
-          "--fog-height": `${52 + Math.round(Math.random() * 44)}px`,
-          "--fog-top": `${14 + index * 12 + Math.round(Math.random() * 5)}%`,
-          "--fog-left": `${-14 + Math.round(Math.random() * 90)}%`,
-          "--fog-duration": `${18 + Math.round(Math.random() * 16)}s`,
-          "--fog-delay": `${Math.round(Math.random() * -18)}s`,
-          "--fog-opacity-scale": `${(0.55 + Math.random() * 0.6).toFixed(2)}`,
-        }),
-      );
-    }
-
-    for (let index = 0; index < (compact ? 2 : 3); index += 1) {
-      mist.appendChild(
-        createSpan("weather-fx-mist-plume", {
-          "--mist-width": `${260 + Math.round(Math.random() * 280)}px`,
-          "--mist-height": `${80 + Math.round(Math.random() * 42)}px`,
-          "--mist-left": `${-12 + Math.round(Math.random() * 88)}%`,
-          "--mist-bottom": `${-3 + Math.round(Math.random() * 16)}%`,
-          "--mist-duration": `${16 + Math.round(Math.random() * 14)}s`,
-          "--mist-delay": `${Math.round(Math.random() * -16)}s`,
-          "--mist-opacity-scale": `${(0.6 + Math.random() * 0.55).toFixed(2)}`,
-        }),
-      );
-    }
-
-    for (let index = 0; index < (compact ? 4 : 8); index += 1) {
-      motes.appendChild(
-        createSpan("weather-fx-mote", {
-          "--mote-left": `${Math.round(Math.random() * 100)}%`,
-          "--mote-top": `${18 + Math.round(Math.random() * 64)}%`,
-          "--mote-size": `${2 + Math.random() * 4}px`,
-          "--mote-duration": `${10 + Math.random() * 10}s`,
-          "--mote-delay": `${Math.random() * -10}s`,
-          "--mote-drift-x": `${(-2 + Math.random() * 4).toFixed(2)}vw`,
-          "--mote-drift-y": `${(-1 + Math.random() * 3).toFixed(2)}vh`,
-          "--mote-opacity-scale": `${(0.45 + Math.random() * 0.7).toFixed(2)}`,
-        }),
-      );
-    }
-
-    for (let index = 0; index < (compact ? 10 : 16); index += 1) {
-      windGusts.appendChild(createWindGustElement());
-    }
-
-    const backRainCount = resolveRainParticlePool(compact).back;
-    for (let index = 0; index < backRainCount; index += 1) {
-      const duration = 1.05 + Math.random() * 0.75;
-      const drift = randomRange(4.5, 10);
-      const drop = createSpan("weather-fx-rain-drop", {
-        "--drop-left": `${Math.round(Math.random() * 104)}%`,
-        "--drop-top": `${(-20 - Math.random() * 28).toFixed(2)}%`,
-        "--drop-width": `${1 + Math.round(Math.random())}px`,
-        "--drop-length": `${18 + Math.round(Math.random() * 28)}px`,
-        "--drop-duration": `${duration}s`,
-        "--drop-delay": `${Math.random() * -2.3}s`,
-        "--drop-drift": `${cssNumber(drift * -1)}vw`,
-        "--drop-opacity-scale": `${(0.36 + Math.random() * 0.56).toFixed(2)}`,
-      });
-      drop.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, backRainCount), 4);
-      drop.dataset.baseDuration = cssNumber(duration, 4);
-      drop.dataset.baseDrift = cssNumber(drift, 4);
-      rain.appendChild(drop);
-    }
-
-    const splashes = document.createElement("div");
-    splashes.className = "weather-fx-rain-splashes";
-    root.appendChild(splashes);
-
-    const ripples = document.createElement("div");
-    ripples.className = "weather-fx-rain-ripples";
-    root.appendChild(ripples);
-
-    const backImpactCount = compact ? 12 : 20;
-    for (let index = 0; index < backImpactCount; index += 1) {
-      const position = randomRange(1, 99);
-      const bottom = randomRange(0, 10);
-      const duration = randomRange(0.65, 0.95);
-      const delay = randomRange(-3.4, -0.1);
-      const threshold = cssNumber(resolveRainDensityThreshold(index, backImpactCount), 4);
-      const splashSize = randomRange(6, 15);
-      const rippleSize = randomRange(12, 30);
-      const splash = createSpan("weather-fx-rain-splash", {
-        "--splash-left": `${cssNumber(position)}%`,
-        "--splash-bottom": `${cssNumber(bottom)}%`,
-        "--impact-duration": `${cssNumber(duration)}s`,
-        "--impact-delay": `${cssNumber(delay)}s`,
-        "--splash-size": `${cssNumber(splashSize)}px`,
-        "--splash-height": `${cssNumber(splashSize * 0.72)}px`,
-        "--splash-lift": `${cssNumber(randomRange(-10, -5))}px`,
-        "--splash-tilt": `${cssNumber(randomRange(-12, 12))}deg`,
-        "margin-left": `${cssNumber(splashSize * -0.5)}px`,
-      });
-      splash.dataset.densityThreshold = threshold;
-      splashes.appendChild(splash);
-
-      const ripple = createSpan("weather-fx-rain-ripple", {
-        "--ripple-left": `${cssNumber(position)}%`,
-        "--ripple-bottom": `${cssNumber(bottom)}%`,
-        "--impact-duration": `${cssNumber(duration)}s`,
-        "--impact-delay": `${cssNumber(delay)}s`,
-        "--ripple-size": `${cssNumber(rippleSize)}px`,
-        "margin-left": `${cssNumber(rippleSize * -0.5)}px`,
-      });
-      ripple.dataset.densityThreshold = threshold;
-      ripples.appendChild(ripple);
-      splash.addEventListener("animationiteration", () => {
-        randomizeRainImpactPosition(splash, ripple, 10);
-      });
-    }
-
-    for (let index = 0; index < (compact ? 48 : 72); index += 1) {
-      snow.appendChild(createSnowflakeElement(false));
-    }
-
-    const frost = document.createElement("div");
-    frost.className = "weather-fx-frost";
-    root.appendChild(frost);
-
-    root.appendChild(createPhenomenonLayer(false));
-    root.appendChild(createWindowpaneLayer(false));
-
-    const lightning = document.createElement("div");
-    lightning.className = "weather-fx-lightning";
-    for (let index = 0; index < LIGHTNING_BOLT_SVGS.length; index += 1) {
-      const bolt = document.createElement("div");
-      bolt.className = "weather-fx-lightning-bolt";
-      bolt.dataset.boltIndex = String(index);
-      bolt.innerHTML = LIGHTNING_BOLT_SVGS[index];
-      lightning.appendChild(bolt);
-    }
-    root.appendChild(lightning);
-  } else {
-    const sky = document.createElement("div");
-    sky.className = "weather-fx-sky weather-fx-sky-front";
-    root.appendChild(sky);
-    root.append(...createNightSkyLayers(kind));
-    root.appendChild(createAuroraLayer(true));
-
-    const clouds = document.createElement("div");
-    clouds.className = "weather-fx-clouds weather-fx-clouds-front";
-    root.appendChild(clouds);
-
-    const horizon = document.createElement("div");
-    horizon.className = "weather-fx-horizon weather-fx-horizon-front";
-    root.appendChild(horizon);
-
-    const mist = document.createElement("div");
-    mist.className = "weather-fx-mist weather-fx-mist-front";
-    root.appendChild(mist);
-
-    root.appendChild(createProceduralFogLayer());
-
-    const rain = document.createElement("div");
-    rain.className = "weather-fx-rain weather-fx-rain-front";
-    root.appendChild(rain);
-
-    const snow = document.createElement("div");
-    snow.className = "weather-fx-snow weather-fx-snow-front";
-    root.appendChild(snow);
-
-    const compact = window.matchMedia("(max-width: 768px)").matches;
-    const cloudCount = compact ? 12 : 16;
-    for (let index = 0; index < cloudCount; index += 1) {
-      clouds.appendChild(createCloudElement(index, cloudCount));
-    }
-
-    for (let index = 0; index < (compact ? 2 : 3); index += 1) {
-      mist.appendChild(
-        createSpan("weather-fx-mist-plume", {
-          "--mist-width": `${260 + Math.round(Math.random() * 280)}px`,
-          "--mist-height": `${80 + Math.round(Math.random() * 42)}px`,
-          "--mist-left": `${-12 + Math.round(Math.random() * 88)}%`,
-          "--mist-bottom": `${-3 + Math.round(Math.random() * 16)}%`,
-          "--mist-duration": `${16 + Math.round(Math.random() * 14)}s`,
-          "--mist-delay": `${Math.round(Math.random() * -16)}s`,
-          "--mist-opacity-scale": `${(0.6 + Math.random() * 0.55).toFixed(2)}`,
-        }),
-      );
-    }
-
-    const frontRainCount = resolveRainParticlePool(compact).front;
-    for (let index = 0; index < frontRainCount; index += 1) {
-      const duration = 0.72 + Math.random() * 0.55;
-      const drift = randomRange(7, 15);
-      const drop = createSpan("weather-fx-rain-drop weather-fx-rain-drop-front", {
-        "--drop-left": `${Math.round(Math.random() * 104)}%`,
-        "--drop-top": `${(-24 - Math.random() * 30).toFixed(2)}%`,
-        "--drop-width": `${1 + Math.round(Math.random() * 2)}px`,
-        "--drop-length": `${32 + Math.round(Math.random() * 40)}px`,
-        "--drop-duration": `${duration}s`,
-        "--drop-delay": `${Math.random() * -2.1}s`,
-        "--drop-drift": `${cssNumber(drift * -1)}vw`,
-        "--drop-opacity-scale": `${(0.32 + Math.random() * 0.64).toFixed(2)}`,
-      });
-      drop.dataset.densityThreshold = cssNumber(resolveRainDensityThreshold(index, frontRainCount), 4);
-      drop.dataset.baseDuration = cssNumber(duration, 4);
-      drop.dataset.baseDrift = cssNumber(drift, 4);
-      rain.appendChild(drop);
-    }
-
-    const splashes = document.createElement("div");
-    splashes.className = "weather-fx-rain-splashes weather-fx-rain-splashes-front";
-    root.appendChild(splashes);
-
-    const ripples = document.createElement("div");
-    ripples.className = "weather-fx-rain-ripples weather-fx-rain-ripples-front";
-    root.appendChild(ripples);
-
-    const frontImpactCount = compact ? 4 : 8;
-    for (let index = 0; index < frontImpactCount; index += 1) {
-      const position = randomRange(1, 99);
-      const bottom = randomRange(0, 14);
-      const duration = randomRange(0.65, 1.05);
-      const delay = randomRange(-1.4, -0.1);
-      const threshold = cssNumber(resolveRainDensityThreshold(index, frontImpactCount), 4);
-      const splashSize = randomRange(6, 16);
-      const rippleSize = randomRange(16, 36);
-      const splash = createSpan("weather-fx-rain-splash weather-fx-rain-splash-front", {
-        "--splash-left": `${cssNumber(position)}%`,
-        "--splash-bottom": `${cssNumber(bottom)}%`,
-        "--impact-duration": `${cssNumber(duration)}s`,
-        "--impact-delay": `${cssNumber(delay)}s`,
-        "--splash-size": `${cssNumber(splashSize)}px`,
-        "--splash-height": `${cssNumber(splashSize * 0.72)}px`,
-        "--splash-lift": `${cssNumber(randomRange(-12, -6))}px`,
-        "--splash-tilt": `${cssNumber(randomRange(-12, 12))}deg`,
-        "margin-left": `${cssNumber(splashSize * -0.5)}px`,
-      });
-      splash.dataset.densityThreshold = threshold;
-
-      const ripple = createSpan("weather-fx-rain-ripple weather-fx-rain-ripple-front", {
-        "--ripple-left": `${cssNumber(position)}%`,
-        "--ripple-bottom": `${cssNumber(bottom)}%`,
-        "--impact-duration": `${cssNumber(duration)}s`,
-        "--impact-delay": `${cssNumber(delay)}s`,
-        "--ripple-size": `${cssNumber(rippleSize)}px`,
-        "margin-left": `${cssNumber(rippleSize * -0.5)}px`,
-      });
-      ripple.dataset.densityThreshold = threshold;
-
-      splash.addEventListener("animationiteration", () => {
-        randomizeRainImpactPosition(splash, ripple, 14);
-      });
-      splashes.appendChild(splash);
-      ripples.appendChild(ripple);
-    }
-
-    for (let index = 0; index < (compact ? 30 : 48); index += 1) {
-      snow.appendChild(createSnowflakeElement(true));
-    }
-
-    root.appendChild(createPhenomenonLayer(true));
-    root.appendChild(createWindowpaneLayer(true));
-
-    const lightningGlow = document.createElement("div");
-    lightningGlow.className = "weather-fx-lightning-glow";
-    root.appendChild(lightningGlow);
-  }
-
   root.appendChild(flash);
 
-  return { root, host: null, kind, poolCondition: null, sceneTokens: null, sceneKey: null, blendTimer: null };
-}
-
-function pruneFxMarkup(
-  root: HTMLElement,
-  condition: WeatherCondition | null,
-  phenomenon: WeatherPhenomenon = "none",
-  exposure: WeatherExposure = "outdoor",
-): void {
-  const rainLike = condition === "rain" || condition === "storm";
-  const windLike = condition === "cloudy" || rainLike || phenomenon === "sandstorm" || phenomenon === "blossoms";
-  const cloudLike = condition === "cloudy" || rainLike || condition === "snow";
-  const fogLike = condition === "fog" || condition === "snow" || rainLike || phenomenon === "sandstorm" || exposure === "underground";
-  const proceduralFogLike = condition === "fog" || phenomenon === "sandstorm";
-  const particlePhenomenon = phenomenon !== "none" && phenomenon !== "aurora";
-
-  if (!cloudLike || exposure === "underground") root.querySelector(".weather-fx-clouds")?.remove();
-  if (!fogLike) {
-    root.querySelector(".weather-fx-fog")?.remove();
-    root.querySelector(".weather-fx-mist")?.remove();
-  }
-  if (!proceduralFogLike) root.querySelector(".weather-fx-procedural-fog-layer")?.remove();
-  if (condition !== "clear" && exposure !== "underground") root.querySelector(".weather-fx-motes")?.remove();
-  if (!windLike || exposure === "underground") root.querySelector(".weather-fx-wind-gusts")?.remove();
-  if (!rainLike || exposure === "underground") {
-    root.querySelector(".weather-fx-rain")?.remove();
-    root.querySelector(".weather-fx-rain-splashes")?.remove();
-    root.querySelector(".weather-fx-rain-ripples")?.remove();
-  }
-  if (condition !== "snow" || exposure === "underground") {
-    root.querySelector(".weather-fx-snow")?.remove();
-    root.querySelector(".weather-fx-frost")?.remove();
-  }
-  if (condition !== "storm" || exposure === "underground") {
-    root.querySelector(".weather-fx-lightning")?.remove();
-    root.querySelector(".weather-fx-lightning-glow")?.remove();
-  }
-  if (phenomenon !== "aurora" || exposure === "underground") {
-    root.querySelector(".weather-fx-aurora")?.remove();
-  }
-  if (!particlePhenomenon) {
-    root.querySelector(".weather-fx-phenomenon")?.remove();
-  }
-  if (exposure !== "indoor") {
-    root.querySelector(".weather-fx-windowpane")?.remove();
-  }
-  if (root.dataset.kind === "front" && !rainLike) root.querySelector(".weather-fx-rain-splashes")?.remove();
-}
-
-function syncFxCondition(
-  fxRoot: FxRoot,
-  condition: WeatherCondition | null,
-  phenomenon: WeatherPhenomenon = "none",
-  exposure: WeatherExposure = "outdoor",
-): void {
-  const nextPoolKey = condition ? `${condition}:${phenomenon}:${exposure}` : null;
-  if (fxRoot.poolCondition === nextPoolKey) return;
-
-  const next = createFxMarkup(fxRoot.kind);
-  pruneFxMarkup(next.root, condition, phenomenon, exposure);
-  destroyProceduralFog(fxRoot.root);
-  fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
-  fxRoot.poolCondition = nextPoolKey;
+  return { root, host: null, kind, sceneTokens: null, sceneKey: null, blendTimer: null };
 }
 
 function readChatIdFromSettingsUpdate(payload: unknown): string | null | undefined {
@@ -1632,7 +974,14 @@ function clearSceneBlend(root: FxRoot): void {
   }
 }
 
-function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs, reducedMotion: boolean, onBlendComplete: () => void): void {
+function applySceneState(
+  root: FxRoot,
+  state: WeatherState,
+  prefs: WeatherPrefs,
+  reducedMotion: boolean,
+  visible: boolean,
+  onBlendComplete: () => void,
+): void {
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const tokens = resolveSceneTokens(state, effectiveIntensity);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
@@ -1640,14 +989,14 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
   const isFront = root.kind === "front";
   const visibleRainDensity = reducedMotion ? Math.min(rainProfile.density, 0.22) : rainProfile.density;
   const rainLayerOpacity = tokens.rainOpacity * rainProfile.opacityScale * (isFront ? 0.82 : 0.72);
-  const cloudSpeedScale = state.condition === "storm" ? 0.76 : state.condition === "rain" ? 0.9 : 1;
+  const paused = prefs.pauseEffects || document.visibilityState === "hidden";
 
   root.root.dataset.condition = state.condition;
   root.root.dataset.palette = state.palette;
   root.root.dataset.exposure = state.exposure ?? "outdoor";
   root.root.dataset.phenomenon = state.phenomenon ?? "none";
   root.root.classList.toggle("weather-reduced-motion", reducedMotion);
-  root.root.classList.toggle("weather-paused", prefs.pauseEffects || document.visibilityState === "hidden");
+  root.root.classList.toggle("weather-paused", paused);
   root.root.classList.toggle("weather-rain-active", state.condition === "rain" || state.condition === "storm");
   root.root.classList.toggle("weather-snow-active", state.condition === "snow");
   root.root.classList.toggle("weather-night-active", tokens.starOpacity > 0 || tokens.moonlightOpacity > 0);
@@ -1680,11 +1029,10 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
     prefs.transitionsEnabled &&
     sceneTransitionsSupported &&
     !reducedMotion &&
-    !prefs.pauseEffects &&
-    document.visibilityState !== "hidden" &&
+    !paused &&
     root.sceneTokens !== null &&
     // A layer being revealed has its own opacity fade; blending would double up.
-    root.root.classList.contains("weather-visible");
+    visible;
 
   if (canBlend && root.sceneKey !== nextKey) {
     applySceneBlend(root, resolvedTokens, onBlendComplete);
@@ -1717,37 +1065,16 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
       ? String(clamp(tokens.snowOpacity * 0.2, 0.04, 0.22))
       : String(clamp(rainLayerOpacity * 0.13, 0.025, 0.12)),
   );
-  root.root.style.setProperty(
-    "--weather-particle-opacity-static",
-    state.condition === "snow"
-      ? String(clamp(tokens.snowOpacity * 0.2, 0.04, 0.22))
-      : String(clamp(rainLayerOpacity * 0.13, 0.025, 0.12)),
-  );
 
-  root.root.querySelectorAll<HTMLElement>(".weather-fx-rain-drop").forEach((drop) => {
-    const threshold = Number.parseFloat(drop.dataset.densityThreshold ?? "1");
-    const baseDuration = Number.parseFloat(drop.dataset.baseDuration ?? "1");
-    const baseDrift = Number.parseFloat(drop.dataset.baseDrift ?? "0");
-    // Density is a per-particle opacity multiplier rather than a binary hidden
-    // class, so drops feather in and out instead of vanishing mid-fall. The fade
-    // band is narrow so the number of fully visible drops still tracks density
-    // monotonically, which is what the FX tests pin down.
-    const densityScale = visibleRainDensity <= 0 ? 0 : clamp((visibleRainDensity - threshold) / 0.08, 0, 1);
-    drop.style.setProperty("--drop-density-scale", densityScale.toFixed(3));
-    // A fully faded drop stops animating; it is already at zero opacity.
-    drop.classList.toggle("weather-density-hidden", densityScale === 0);
-    drop.style.animationDuration = `${baseDuration * rainProfile.speedScale}s`;
-    drop.style.setProperty("--drop-drift", `${baseDrift * rainVector.driftDirection}vw`);
+  updateAtmosphereEngine(root.root, root.kind, {
+    state,
+    tokens: resolvedTokens,
+    prefs,
+    kind: root.kind,
+    visible,
+    reducedMotion,
+    paused,
   });
-  root.root.querySelectorAll<HTMLElement>(".weather-fx-rain-splash, .weather-fx-rain-ripple").forEach((impact) => {
-    const threshold = Number.parseFloat(impact.dataset.densityThreshold ?? "1");
-    impact.classList.toggle("weather-density-hidden", threshold > visibleRainDensity);
-  });
-  root.root.querySelectorAll<HTMLElement>(".weather-fx-cloud").forEach((cloud) => {
-    const baseDuration = Number.parseFloat(cloud.dataset.baseDuration ?? "60");
-    cloud.style.animationDuration = `${baseDuration * cloudSpeedScale}s`;
-  });
-
 }
 
 export function setup(ctx: SpindleFrontendContext) {
@@ -1861,8 +1188,34 @@ export function setup(ctx: SpindleFrontendContext) {
   const ensureHostObserver = () => {
     if (hostObserver || !document.body) return;
     // Chat/background hosts can be replaced without a route or viewport change.
-    // Keep watching and coalesce mutations so those replacements recover too.
-    hostObserver = new MutationObserver(() => queueFxRootAttach());
+    // Ignore mutations inside our own FX/HUD roots or when both hosts remain
+    // connected with our roots attached, avoiding expensive DOM queries on every
+    // streamed chat token.
+    hostObserver = new MutationObserver((records) => {
+      if (
+        backFx.host &&
+        backFx.host.isConnected &&
+        backFx.root.parentElement === backFx.host &&
+        frontFx.host &&
+        frontFx.host.isConnected &&
+        frontFx.root.parentElement === frontFx.host
+      ) {
+        let relevant = false;
+        for (let i = 0; i < records.length; i += 1) {
+          const record = records[i];
+          const target = record.target as Node;
+          if (backFx.root.contains(target) || frontFx.root.contains(target) || hud?.root.contains(target)) {
+            continue;
+          }
+          if (target === document.body || target === backFx.host.parentElement || target === frontFx.host.parentElement) {
+            relevant = true;
+            break;
+          }
+        }
+        if (!relevant) return;
+      }
+      queueFxRootAttach();
+    });
     hostObserver.observe(document.body, { childList: true, subtree: true });
   };
 
@@ -1882,8 +1235,8 @@ export function setup(ctx: SpindleFrontendContext) {
     stopHostObserver();
     clearSceneBlend(backFx);
     clearSceneBlend(frontFx);
-    destroyProceduralFog(backFx.root);
-    destroyProceduralFog(frontFx.root);
+    destroyAtmosphereEngine(backFx.root);
+    destroyAtmosphereEngine(frontFx.root);
     detachFxRoot(backFx);
     detachFxRoot(frontFx);
   });
@@ -2049,9 +1402,6 @@ export function setup(ctx: SpindleFrontendContext) {
       backFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-storm-flash");
       frontFx.root.classList.remove("weather-lightning-glow-flash");
-      backFx.root.querySelectorAll(".weather-fx-lightning-bolt").forEach((bolt) => {
-        bolt.classList.remove("weather-lightning-strike");
-      });
       return;
     }
 
@@ -2068,26 +1418,17 @@ export function setup(ctx: SpindleFrontendContext) {
         frontFx.root.classList.add("weather-storm-flash");
       }
 
-      const bolts = backFx.root.querySelectorAll<HTMLElement>(".weather-fx-lightning-bolt");
-      if (bolts.length > 0) {
-        const boltIndex = Math.floor(Math.random() * bolts.length);
-        const bolt = bolts[boltIndex];
-        const boltX = LIGHTNING_BOLT_POSITIONS[boltIndex] ?? 50;
+      const boltIndex = Math.floor(Math.random() * LIGHTNING_BOLT_POSITIONS.length);
+      const boltX = LIGHTNING_BOLT_POSITIONS[boltIndex] ?? 50;
 
-        bolt.classList.remove("weather-lightning-strike");
-        void bolt.offsetWidth;
-        bolt.classList.add("weather-lightning-strike");
+      triggerAtmosphereLightning(backFx.root, boltX);
+      triggerAtmosphereLightning(frontFx.root, boltX);
 
-        frontFx.root.style.setProperty("--weather-lightning-x", `${boltX}%`);
-        frontFx.root.classList.remove("weather-lightning-glow-flash");
-        void frontFx.root.offsetWidth;
-        frontFx.root.classList.add("weather-lightning-glow-flash");
-        soundscape.triggerThunder(boltX);
-
-        scheduleFlashCleanup(() => {
-          bolt.classList.remove("weather-lightning-strike");
-        }, 700);
-      }
+      frontFx.root.style.setProperty("--weather-lightning-x", `${boltX}%`);
+      frontFx.root.classList.remove("weather-lightning-glow-flash");
+      void frontFx.root.offsetWidth;
+      frontFx.root.classList.add("weather-lightning-glow-flash");
+      soundscape.triggerThunder(boltX);
 
       scheduleFlashCleanup(() => {
         backFx.root.classList.remove("weather-storm-flash");
@@ -2105,19 +1446,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const layerMode = currentPrefs.layerMode;
     const showEffects = currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId && !!currentState;
     const sceneState = currentState ?? makeDefaultWeatherState();
-
-    syncFxCondition(
-      backFx,
-      currentState?.condition ?? null,
-      currentState?.phenomenon ?? "none",
-      currentState?.exposure ?? "outdoor",
-    );
-    syncFxCondition(
-      frontFx,
-      currentState?.condition ?? null,
-      currentState?.phenomenon ?? "none",
-      currentState?.exposure ?? "outdoor",
-    );
+    const showBack = showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both");
+    const showFront = showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both");
 
     if (hud) {
       hud.root.dataset.permission = permissionWarning ? "limited" : "ok";
@@ -2127,25 +1457,10 @@ export function setup(ctx: SpindleFrontendContext) {
       syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
     }
     settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : backendWarning ?? permissionWarning ?? undefined, activeChatId);
-    applySceneState(backFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
-    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, scheduleStormFlash);
-    const showBack = showEffects && !!backFx.host && (layerMode === "back" || layerMode === "both");
-    const showFront = showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both");
     setFxVisibility(backFx, showBack);
     setFxVisibility(frontFx, showFront);
-    const showFog = showEffects && (currentState?.condition === "fog" || currentState?.phenomenon === "sandstorm");
-    if (showFog) {
-      const fogOptions = {
-        intensity: clamp(sceneState.intensity * currentPrefs.intensity, 0, 1.5),
-        paused: currentPrefs.pauseEffects || document.visibilityState === "hidden",
-        reducedMotion,
-        tint: currentState?.phenomenon === "sandstorm"
-          ? ([0.88, 0.67, 0.42] as const)
-          : resolveProceduralFogTint(sceneState.palette),
-      };
-      if (showBack) updateProceduralFog(backFx.root, fogOptions);
-      if (showFront) updateProceduralFog(frontFx.root, fogOptions);
-    }
+    applySceneState(backFx, sceneState, currentPrefs, reducedMotion, showBack, scheduleStormFlash);
+    applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, showFront, scheduleStormFlash);
     soundscape.sync(currentState, currentPrefs, showEffects);
     scheduleStormFlash();
   };

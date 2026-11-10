@@ -1655,6 +1655,24 @@ export const WEATHER_HUD_CSS = `
   display: none;
 }
 
+.weather-fx-shader-canvas,
+.weather-fx-particle-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.weather-fx-shader-canvas {
+  z-index: 1;
+}
+
+.weather-fx-particle-canvas {
+  z-index: 2;
+}
+
 .weather-fx-procedural-fog-layer {
   position: absolute;
   inset: 0;

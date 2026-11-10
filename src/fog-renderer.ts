@@ -140,7 +140,7 @@ class ProceduralFogRenderer {
       depth: false,
       stencil: false,
       premultipliedAlpha: false,
-      powerPreference: "high-performance",
+      powerPreference: "low-power",
     });
     if (!gl) throw new Error("WebGL is unavailable.");
     this.gl = gl;
@@ -188,18 +188,26 @@ class ProceduralFogRenderer {
   update(options: FogRendererOptions): void {
     this.options = options;
     this.dirty = true;
+    if (this.animationFrame === null && !this.destroyed) {
+      this.lastFrame = performance.now();
+      this.animationFrame = window.requestAnimationFrame(this.frame);
+    }
   }
 
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this.animationFrame !== null) window.cancelAnimationFrame(this.animationFrame);
+    if (this.animationFrame !== null) {
+      window.cancelAnimationFrame(this.animationFrame);
+      this.animationFrame = null;
+    }
     this.gl.deleteBuffer(this.buffer);
     this.gl.deleteProgram(this.program);
     fogRenderers.delete(this.canvas);
   }
 
   private frame(now: number): void {
+    this.animationFrame = null;
     if (this.destroyed) return;
     if (!this.canvas.isConnected) {
       this.destroy();
@@ -212,6 +220,7 @@ class ProceduralFogRenderer {
       this.root.classList.contains("weather-visible") &&
       !this.root.classList.contains("weather-hidden") &&
       document.visibilityState !== "hidden";
+    if (!visible) return;
     const animated = visible && !this.options.paused && !this.options.reducedMotion;
     const delta = Math.min(0.05, Math.max(0, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
@@ -223,7 +232,9 @@ class ProceduralFogRenderer {
       this.dirty = false;
       this.lastRender = now;
     }
-    this.animationFrame = window.requestAnimationFrame(this.frame);
+    if (animated) {
+      this.animationFrame = window.requestAnimationFrame(this.frame);
+    }
   }
 
   private render(time: number): void {
