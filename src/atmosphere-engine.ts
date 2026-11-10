@@ -241,7 +241,11 @@ export function resolveAtmosphereUniformTarget(
 ): AtmosphereUniforms {
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
-  const rainVector = resolveRainVector(state.wind, state.windDirection);
+  const effectiveWindDirection =
+    state.windDirection === "none" && !/\b(still|calm|hushed|none)\b/i.test(state.wind)
+      ? undefined
+      : state.windDirection;
+  const rainVector = resolveRainVector(state.wind, effectiveWindDirection);
   const solar = resolveSolarArc(state.date, state.time);
   const lunar = resolveLunarPhase(state.date, state.time);
   const exposure: WeatherExposure = state.exposure ?? "outdoor";
@@ -1800,25 +1804,36 @@ export class AtmosphereEngine {
     // 2. 5-stop longitudinal gradient raindrops + dual-ring ripples + parabolic splash crowns
     if (u.rainOpacity > 0.01 && u.rainDensity > 0.01 && exposure !== "underground") {
       const isStorm = condition === "storm";
-      const rad = (-u.windAngleDeg * Math.PI) / 180;
-      const sinA = Math.sin(rad);
+      // Trajectory angle from vertical in screen pixels:
+      // positive fallAngleRad = falling down-and-right; negative = falling down-and-left
+      const fallAngleRad = (-u.windAngleDeg * Math.PI) / 180;
+      const tanFallAngle = Math.tan(fallAngleRad);
       const fallVel = 1.12 / Math.max(0.52, u.rainSpeedScale);
       const visibleDensity = this.reducedMotion ? Math.min(u.rainDensity, 0.22) : u.rainDensity;
+      const safeClientW = Math.max(1, clientW);
+      const safeClientH = Math.max(1, clientH);
 
       for (let i = 0; i < this.rainDrops.length; i += 1) {
         const drop = this.rainDrops[i];
         const densityScale = clamp((visibleDensity - drop.threshold) / 0.09, 0, 1);
         if (densityScale <= 0.01) continue;
 
+        const vyNorm = drop.speed * fallVel;
+        const vyPx = vyNorm * safeClientH;
+        const vxPx = tanFallAngle * vyPx;
+        const vxNorm = vxPx / safeClientW;
+        // Align quad local +Y (v_uv.y = 1 droplet head) directly along pixel velocity (vxPx, vyPx)
+        const quadAngleRad = Math.atan2(-vxPx, vyPx);
+
         if (dt > 0) {
-          drop.y += drop.speed * fallVel * dt;
-          drop.x += sinA * drop.speed * fallVel * dt * 0.48;
+          drop.y += vyNorm * dt;
+          drop.x += vxNorm * dt;
           if (drop.y > 1.09) {
             drop.y = -0.09 - (drop.y % 0.08);
             drop.x = (((drop.x + 0.373) % 1) + 1) % 1;
           }
-          if (drop.x > 1.06) drop.x -= 1.12;
-          if (drop.x < -0.06) drop.x += 1.12;
+          if (drop.x > 1.12) drop.x -= 1.24;
+          if (drop.x < -0.12) drop.x += 1.24;
         }
 
         const alpha = clamp(
@@ -1832,7 +1847,7 @@ export class AtmosphereEngine {
           drop.y,
           drop.widthPx * 0.5,
           drop.lengthPx * 0.5,
-          rad,
+          quadAngleRad,
           clientW,
           clientH,
           PARTICLE_KIND.RAIN,

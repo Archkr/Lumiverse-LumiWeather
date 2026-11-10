@@ -1417,7 +1417,8 @@ function resolveCloudLightingPalette(palette, condition, bgStart, bgEnd, glow, c
 function resolveAtmosphereUniformTarget(state, tokens, prefs, kind) {
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
-  const rainVector = resolveRainVector(state.wind, state.windDirection);
+  const effectiveWindDirection = state.windDirection === "none" && !/\b(still|calm|hushed|none)\b/i.test(state.wind) ? undefined : state.windDirection;
+  const rainVector = resolveRainVector(state.wind, effectiveWindDirection);
   const solar = resolveSolarArc(state.date, state.time);
   const lunar = resolveLunarPhase(state.date, state.time);
   const exposure = state.exposure ?? "outdoor";
@@ -2579,29 +2580,36 @@ class AtmosphereEngine {
     }
     if (u.rainOpacity > 0.01 && u.rainDensity > 0.01 && exposure !== "underground") {
       const isStorm = condition === "storm";
-      const rad = -u.windAngleDeg * Math.PI / 180;
-      const sinA = Math.sin(rad);
+      const fallAngleRad = -u.windAngleDeg * Math.PI / 180;
+      const tanFallAngle = Math.tan(fallAngleRad);
       const fallVel = 1.12 / Math.max(0.52, u.rainSpeedScale);
       const visibleDensity = this.reducedMotion ? Math.min(u.rainDensity, 0.22) : u.rainDensity;
+      const safeClientW = Math.max(1, clientW);
+      const safeClientH = Math.max(1, clientH);
       for (let i = 0;i < this.rainDrops.length; i += 1) {
         const drop = this.rainDrops[i];
         const densityScale = clamp((visibleDensity - drop.threshold) / 0.09, 0, 1);
         if (densityScale <= 0.01)
           continue;
+        const vyNorm = drop.speed * fallVel;
+        const vyPx = vyNorm * safeClientH;
+        const vxPx = tanFallAngle * vyPx;
+        const vxNorm = vxPx / safeClientW;
+        const quadAngleRad = Math.atan2(-vxPx, vyPx);
         if (dt > 0) {
-          drop.y += drop.speed * fallVel * dt;
-          drop.x += sinA * drop.speed * fallVel * dt * 0.48;
+          drop.y += vyNorm * dt;
+          drop.x += vxNorm * dt;
           if (drop.y > 1.09) {
             drop.y = -0.09 - drop.y % 0.08;
             drop.x = ((drop.x + 0.373) % 1 + 1) % 1;
           }
-          if (drop.x > 1.06)
-            drop.x -= 1.12;
-          if (drop.x < -0.06)
-            drop.x += 1.12;
+          if (drop.x > 1.12)
+            drop.x -= 1.24;
+          if (drop.x < -0.12)
+            drop.x += 1.24;
         }
         const alpha = clamp(u.rainOpacity * densityScale * (0.38 + drop.depth * 0.58) * (this.reducedMotion ? 0.35 : 1), 0.02, 0.95);
-        this.pushOrientedQuad(drop.x, drop.y, drop.widthPx * 0.5, drop.lengthPx * 0.5, rad, clientW, clientH, PARTICLE_KIND.RAIN, drop.depth, isStorm ? 0.72 : 0.66, isStorm ? 0.84 : 0.8, 1, alpha, 0.92, 0.97, 1, alpha);
+        this.pushOrientedQuad(drop.x, drop.y, drop.widthPx * 0.5, drop.lengthPx * 0.5, quadAngleRad, clientW, clientH, PARTICLE_KIND.RAIN, drop.depth, isStorm ? 0.72 : 0.66, isStorm ? 0.84 : 0.8, 1, alpha, 0.92, 0.97, 1, alpha);
       }
       if (!this.reducedMotion) {
         for (let i = 0;i < this.ripples.length; i += 1) {

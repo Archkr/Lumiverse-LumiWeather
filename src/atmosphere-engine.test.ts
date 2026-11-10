@@ -155,4 +155,48 @@ describe("resolveAtmosphereUniformTarget", () => {
     expect(CLOUD_FRAGMENT_SHADER).toContain("u_underGlow");
     expect(PARTICLE_FRAGMENT_SHADER).toContain("kind == 16");
   });
+
+  test("resolves rain tilt angle from wind text when windDirection is none and from cardinal direction when set", () => {
+    const rainPresetState = {
+      ...makeDefaultWeatherState(),
+      condition: "rain" as const,
+      wind: "steady rainwind",
+      windDirection: "none" as const,
+      intensity: 0.74,
+    };
+    const rainPresetUniforms = resolveAtmosphereUniformTarget(
+      rainPresetState,
+      resolveSceneTokens(rainPresetState, 0.74),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(rainPresetUniforms.windAngleDeg).toBe(14);
+
+    const westGaleState = {
+      ...rainPresetState,
+      condition: "storm" as const,
+      wind: "hard gusts",
+      windDirection: "west" as const,
+    };
+    const westGaleUniforms = resolveAtmosphereUniformTarget(
+      westGaleState,
+      resolveSceneTokens(westGaleState, 0.94),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(westGaleUniforms.windAngleDeg).toBe(-20);
+
+    const calmState = {
+      ...rainPresetState,
+      wind: "still",
+      windDirection: "none" as const,
+    };
+    const calmUniforms = resolveAtmosphereUniformTarget(
+      calmState,
+      resolveSceneTokens(calmState, 0.74),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(calmUniforms.windAngleDeg).toBe(0);
+  });
 });
