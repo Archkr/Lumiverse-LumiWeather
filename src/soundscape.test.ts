@@ -96,4 +96,92 @@ describe("procedural weather soundscape profile", () => {
     expect(mutedMaster.active).toBe(false);
     expect(mutedMaster.masterGain).toBe(0);
   });
+
+  test("gusts, whistle, and droplet density scale with wind and rain strength", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.6 };
+    const base = makeDefaultWeatherState(0);
+    const calm = resolveSoundscapeProfile({ ...base, condition: "rain", wind: "calm", intensity: 0.3 }, prefs, true);
+    const gale = resolveSoundscapeProfile({ ...base, condition: "storm", wind: "gale", intensity: 1 }, prefs, true);
+
+    expect(gale.gustiness).toBeGreaterThan(calm.gustiness);
+    expect(gale.windWhistleGain).toBeGreaterThan(0);
+    expect(calm.windWhistleGain).toBe(0);
+    expect(gale.dropletRate).toBeGreaterThan(calm.dropletRate);
+    expect(calm.dropletRate).toBeGreaterThan(0);
+    expect(gale.thunderProximity).toBeGreaterThan(0);
+    expect(calm.thunderProximity).toBe(0);
+  });
+
+  test("keeps a quiet air bed and adds wildlife only in fitting calm scenes", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.6 };
+    const base = { ...makeDefaultWeatherState(0), wind: "light", intensity: 0.5 };
+
+    const summerNight = resolveSoundscapeProfile(
+      { ...base, condition: "clear", palette: "night", season: "summer" },
+      prefs,
+      true,
+    );
+    expect(summerNight.airBedGain).toBeGreaterThan(0);
+    expect(summerNight.cricketGain).toBeGreaterThan(0);
+    expect(summerNight.birdGain).toBe(0);
+
+    const springDawn = resolveSoundscapeProfile(
+      { ...base, condition: "clear", palette: "dawn", season: "spring" },
+      prefs,
+      true,
+    );
+    expect(springDawn.birdGain).toBeGreaterThan(0);
+    expect(springDawn.cricketGain).toBe(0);
+
+    const rainyDawn = resolveSoundscapeProfile(
+      { ...base, condition: "rain", palette: "dawn", season: "spring" },
+      prefs,
+      true,
+    );
+    expect(rainyDawn.birdGain).toBe(0);
+
+    const winterNight = resolveSoundscapeProfile(
+      { ...base, condition: "clear", palette: "night", season: "winter" },
+      prefs,
+      true,
+    );
+    expect(winterNight.cricketGain).toBe(0);
+
+    const silencedAmbience = resolveSoundscapeProfile(
+      { ...base, condition: "clear", palette: "night", season: "summer" },
+      { ...prefs, ambienceVolume: 0 },
+      true,
+    );
+    expect(silencedAmbience.cricketGain).toBe(0);
+    expect(silencedAmbience.airBedGain).toBe(0);
+  });
+
+  test("underground scenes swap weather for cave drips and a larger reverb", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.6 };
+    const base = { ...makeDefaultWeatherState(0), condition: "rain" as const, intensity: 0.8 };
+    const cave = resolveSoundscapeProfile({ ...base, exposure: "underground" }, prefs, true);
+    const outside = resolveSoundscapeProfile({ ...base, exposure: "outdoor" }, prefs, true);
+
+    expect(cave.caveDripGain).toBeGreaterThan(0);
+    expect(cave.dropletRate).toBe(0);
+    expect(outside.caveDripGain).toBe(0);
+    expect(cave.reverbWet).toBeGreaterThan(outside.reverbWet);
+  });
+
+  test("distinguishes aurora, firefly, and blossom shimmer styles and ashfall grit", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.6 };
+    const base = { ...makeDefaultWeatherState(0), condition: "clear" as const, palette: "night" as const };
+    const aurora = resolveSoundscapeProfile({ ...base, phenomenon: "aurora" }, prefs, true);
+    const fireflies = resolveSoundscapeProfile({ ...base, phenomenon: "fireflies" }, prefs, true);
+    const blossoms = resolveSoundscapeProfile({ ...base, phenomenon: "blossoms" }, prefs, true);
+    const ashfall = resolveSoundscapeProfile({ ...base, phenomenon: "ashfall" }, prefs, true);
+
+    expect(aurora.shimmerStyle).toBe("aurora");
+    expect(fireflies.shimmerStyle).toBe("fireflies");
+    expect(blossoms.shimmerStyle).toBe("blossoms");
+    expect(fireflies.sparkleRate).toBeGreaterThan(aurora.sparkleRate);
+    expect(blossoms.sparkleGain).toBeGreaterThan(0);
+    expect(aurora.shimmerDroneGain).toBeGreaterThan(fireflies.shimmerDroneGain);
+    expect(ashfall.sandGritGain).toBeGreaterThan(0);
+  });
 });

@@ -3401,6 +3401,24 @@ var EXPOSURE_LOWPASS_HZ = {
   indoor: 420,
   underground: 240
 };
+var EXPOSURE_REVERB_WET = {
+  outdoor: 0.12,
+  sheltered: 0.2,
+  indoor: 0.24,
+  underground: 0.5
+};
+function byExposure(exposure, outdoor, sheltered, indoor, underground) {
+  switch (exposure) {
+    case "sheltered":
+      return sheltered;
+    case "indoor":
+      return indoor;
+    case "underground":
+      return underground;
+    default:
+      return outdoor;
+  }
+}
 function resolveWindStrengthFactor(wind) {
   const normalized = wind.trim().toLowerCase();
   if (/hurricane|violent|gale|hard|strong|gust|howl/.test(normalized))
@@ -3413,6 +3431,39 @@ function resolveWindStrengthFactor(wind) {
     return 0.06;
   return 0.34;
 }
+function round3(value) {
+  return Number(value.toFixed(3));
+}
+function silentProfile(exposure) {
+  return {
+    active: false,
+    exposure,
+    masterGain: 0,
+    lowpassHz: EXPOSURE_LOWPASS_HZ[exposure],
+    reverbWet: 0,
+    rainWashGain: 0,
+    rainPatterGain: 0,
+    dropletRate: 0,
+    rainDensity: 0,
+    windGain: 0,
+    windCenterHz: 200,
+    gustiness: 0,
+    windWhistleGain: 0,
+    sandGritGain: 0,
+    airBedGain: 0,
+    airBedToneHz: 800,
+    emberCrackleGain: 0,
+    shimmerDroneGain: 0,
+    shimmerStyle: "none",
+    sparkleGain: 0,
+    sparkleRate: 0,
+    cricketGain: 0,
+    birdGain: 0,
+    caveDripGain: 0,
+    thunderGainScale: 0,
+    thunderProximity: 0
+  };
+}
 function resolveSoundscapeProfile(state, prefs, visible = true) {
   const soundEnabled = Boolean(prefs.soundEnabled);
   const volume = clamp(Number.isFinite(prefs.soundVolume) ? prefs.soundVolume : 0.45, 0, 1);
@@ -3423,46 +3474,76 @@ function resolveSoundscapeProfile(state, prefs, visible = true) {
   const exposure = state?.exposure ?? "outdoor";
   const lowpassHz = EXPOSURE_LOWPASS_HZ[exposure];
   if (!visible || !soundEnabled || prefs.pauseEffects || !state || volume <= 0) {
-    return {
-      active: false,
-      masterGain: 0,
-      lowpassHz,
-      rainWashGain: 0,
-      rainPatterGain: 0,
-      windGain: 0,
-      windCenterHz: 200,
-      emberCrackleGain: 0,
-      shimmerDroneGain: 0,
-      thunderGainScale: 0
-    };
+    return silentProfile(exposure);
   }
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const normalizedIntensity = clamp(effectiveIntensity / 1.2, 0, 1);
   const phenomenon = state.phenomenon ?? "none";
-  const rainLike = state.condition === "rain" || state.condition === "storm";
-  const rainWashBase = rainLike && exposure !== "underground" ? clamp(0.2 + normalizedIntensity * 0.52 + (state.condition === "storm" ? 0.14 : 0), 0.15, 0.92) : 0;
-  const rainPatterBase = rainLike && exposure !== "underground" ? clamp(0.14 + normalizedIntensity * 0.44 + (state.condition === "storm" ? 0.08 : 0), 0.1, 0.78) : 0;
-  const rainExposureScale = exposure === "indoor" ? 0.62 : exposure === "sheltered" ? 0.85 : exposure === "underground" ? 0 : 1;
-  const patterExposureScale = exposure === "indoor" ? 0.32 : exposure === "sheltered" ? 0.68 : exposure === "underground" ? 0 : 1;
+  const condition = state.condition;
+  const rainLike = condition === "rain" || condition === "storm";
+  const isStorm = condition === "storm";
+  const rainWashBase = rainLike && exposure !== "underground" ? clamp(0.2 + normalizedIntensity * 0.52 + (isStorm ? 0.14 : 0), 0.15, 0.92) : 0;
+  const rainPatterBase = rainLike && exposure !== "underground" ? clamp(0.14 + normalizedIntensity * 0.44 + (isStorm ? 0.08 : 0), 0.1, 0.78) : 0;
+  const rainExposureScale = byExposure(exposure, 1, 0.85, 0.62, 0);
+  const patterExposureScale = byExposure(exposure, 1, 0.68, 0.32, 0);
+  const dropletRate = rainLike && exposure !== "underground" && rainVolume > 0 ? (2 + normalizedIntensity * 9 + (isStorm ? 3 : 0)) * byExposure(exposure, 1, 0.75, 0.6, 0) : 0;
+  const rainDensity = rainLike ? clamp(normalizedIntensity * 0.85 + (isStorm ? 0.25 : 0), 0, 1) : 0;
   const windFactor = resolveWindStrengthFactor(state.wind);
-  const conditionWindBoost = state.condition === "storm" ? 0.28 : state.condition === "snow" ? 0.12 : phenomenon === "sandstorm" ? 0.34 : 0;
-  const windExposureScale = exposure === "indoor" ? 0.38 : exposure === "sheltered" ? 0.78 : exposure === "underground" ? 0.22 : 1;
+  const conditionWindBoost = isStorm ? 0.28 : condition === "snow" ? 0.12 : phenomenon === "sandstorm" ? 0.34 : 0;
+  const windExposureScale = byExposure(exposure, 1, 0.78, 0.38, 0.22);
   const windGain = clamp((0.04 + windFactor * 0.46 + conditionWindBoost + normalizedIntensity * 0.14) * windExposureScale, 0, 0.78);
-  const windCenterHz = Math.round(150 + windFactor * 220 + (phenomenon === "sandstorm" ? 90 : 0));
+  const windCenterHz = Math.round(150 + windFactor * 220 + (phenomenon === "sandstorm" ? 90 : 0) - (condition === "snow" ? 30 : 0));
+  const gustiness = clamp(0.12 + windFactor * 0.72 + (isStorm ? 0.2 : 0) + (phenomenon === "sandstorm" ? 0.15 : 0), 0.1, 1);
+  const whistleDrive = clamp((windFactor - 0.3) * 0.9 + (isStorm ? 0.12 : 0) + (phenomenon === "sandstorm" ? 0.1 : 0), 0, 0.55);
+  const windWhistleGain = windGain * whistleDrive;
+  const sandGritGain = phenomenon === "sandstorm" ? clamp(0.16 + normalizedIntensity * 0.36, 0, 0.5) * windExposureScale : phenomenon === "ashfall" ? clamp(0.05 + normalizedIntensity * 0.12, 0, 0.2) * windExposureScale : 0;
+  const airBedGain = byExposure(exposure, 0.05, 0.045, 0.032, 0.05) + (condition === "fog" ? 0.02 : 0) + (condition === "snow" ? 0.012 : 0) + (phenomenon === "ashfall" ? 0.03 : 0);
+  const airBedToneHz = exposure === "indoor" ? 210 : exposure === "underground" ? 130 : phenomenon === "ashfall" ? 280 : condition === "fog" ? 360 : condition === "snow" ? 480 : rainLike ? 700 : condition === "cloudy" ? 850 : 1050;
   const emberCrackleGain = phenomenon === "embers" ? clamp((0.18 + normalizedIntensity * 0.32) * (exposure === "indoor" ? 0.55 : 1), 0.12, 0.58) : 0;
-  const shimmerDroneGain = (phenomenon === "aurora" || phenomenon === "fireflies") && exposure !== "underground" ? clamp((0.07 + normalizedIntensity * 0.12) * (exposure === "indoor" ? 0.5 : 1), 0.04, 0.24) : 0;
-  const thunderGainScale = state.condition === "storm" ? clamp((0.45 + normalizedIntensity * 0.48) * (exposure === "indoor" ? 0.58 : exposure === "sheltered" ? 0.88 : exposure === "underground" ? 0.18 : 1), 0, 1) : 0;
+  const shimmerStyle = exposure !== "underground" && (phenomenon === "aurora" || phenomenon === "fireflies" || phenomenon === "blossoms") ? phenomenon : "none";
+  const shimmerDroneGain = shimmerStyle === "aurora" || shimmerStyle === "fireflies" ? clamp((0.07 + normalizedIntensity * 0.12) * (exposure === "indoor" ? 0.5 : 1), 0.04, 0.24) * (shimmerStyle === "fireflies" ? 0.55 : 1) : shimmerStyle === "blossoms" ? clamp((0.03 + normalizedIntensity * 0.05) * (exposure === "indoor" ? 0.45 : 1), 0.02, 0.1) : 0;
+  const sparkleGain = shimmerStyle === "fireflies" ? clamp(0.12 + normalizedIntensity * 0.1, 0, 0.24) * byExposure(exposure, 1, 0.8, 0.4, 0) : shimmerStyle === "aurora" ? clamp(0.06 + normalizedIntensity * 0.06, 0, 0.14) * byExposure(exposure, 1, 0.8, 0.4, 0) : shimmerStyle === "blossoms" ? clamp(0.07 + normalizedIntensity * 0.07, 0, 0.16) * byExposure(exposure, 1, 0.8, 0.4, 0) : 0;
+  const sparkleRate = shimmerStyle === "fireflies" ? 0.9 + normalizedIntensity * 2.2 : shimmerStyle === "aurora" ? 0.22 + normalizedIntensity * 0.35 : shimmerStyle === "blossoms" ? 0.45 + normalizedIntensity * 0.9 : 0;
+  const season = state.season;
+  const wildlifeBlocked = phenomenon === "sandstorm" || phenomenon === "ashfall" || windFactor > 0.8 || rainLike || condition === "snow";
+  const isNight = state.palette === "night" || state.palette === "dusk";
+  const isDay = state.palette === "dawn" || state.palette === "day";
+  const calmSkyScale = condition === "clear" ? 1 : condition === "cloudy" ? 0.85 : condition === "fog" ? 0.55 : 0;
+  const wildlifeExposure = byExposure(exposure, 1, 0.65, 0.2, 0);
+  const cricketSeason = season === "summer" ? 0.2 : season === "autumn" ? 0.15 : season === "spring" ? 0.1 : 0;
+  const cricketGain = !wildlifeBlocked && isNight ? cricketSeason * calmSkyScale * wildlifeExposure * (phenomenon === "fireflies" ? 1.3 : 1) : 0;
+  const birdSeason = season === "spring" ? 0.2 : season === "summer" ? 0.17 : season === "autumn" ? 0.09 : 0.04;
+  const birdGain = !wildlifeBlocked && isDay && phenomenon !== "embers" ? birdSeason * calmSkyScale * wildlifeExposure * (state.palette === "dawn" ? 1.35 : 1) : 0;
+  const caveDripGain = exposure === "underground" ? 0.22 + (rainLike ? 0.14 : 0) : 0;
+  const thunderGainScale = isStorm ? clamp((0.45 + normalizedIntensity * 0.48) * byExposure(exposure, 1, 0.88, 0.58, 0.18), 0, 1) : 0;
+  const thunderProximity = isStorm ? clamp(0.2 + normalizedIntensity * 0.6, 0, 1) : 0;
   return {
     active: true,
-    masterGain: Number(volume.toFixed(3)),
+    exposure,
+    masterGain: round3(volume),
     lowpassHz,
-    rainWashGain: Number((rainWashBase * rainExposureScale * rainVolume).toFixed(3)),
-    rainPatterGain: Number((rainPatterBase * patterExposureScale * rainVolume).toFixed(3)),
-    windGain: Number((windGain * windVolume).toFixed(3)),
+    reverbWet: EXPOSURE_REVERB_WET[exposure],
+    rainWashGain: round3(rainWashBase * rainExposureScale * rainVolume),
+    rainPatterGain: round3(rainPatterBase * patterExposureScale * rainVolume),
+    dropletRate: round3(dropletRate),
+    rainDensity: round3(rainDensity),
+    windGain: round3(windGain * windVolume),
     windCenterHz,
-    emberCrackleGain: Number((emberCrackleGain * ambienceVolume).toFixed(3)),
-    shimmerDroneGain: Number((shimmerDroneGain * ambienceVolume).toFixed(3)),
-    thunderGainScale: Number((thunderGainScale * thunderVolume).toFixed(3))
+    gustiness: round3(gustiness),
+    windWhistleGain: round3(windWhistleGain * windVolume),
+    sandGritGain: round3(sandGritGain * windVolume),
+    airBedGain: round3(airBedGain * ambienceVolume),
+    airBedToneHz,
+    emberCrackleGain: round3(emberCrackleGain * ambienceVolume),
+    shimmerDroneGain: round3(shimmerDroneGain * ambienceVolume),
+    shimmerStyle,
+    sparkleGain: round3(sparkleGain * ambienceVolume),
+    sparkleRate: round3(sparkleRate),
+    cricketGain: round3(cricketGain * ambienceVolume),
+    birdGain: round3(birdGain * ambienceVolume),
+    caveDripGain: round3(caveDripGain * ambienceVolume),
+    thunderGainScale: round3(thunderGainScale * thunderVolume),
+    thunderProximity: round3(thunderProximity)
   };
 }
 function resolveAudioContextConstructor() {
@@ -3471,10 +3552,13 @@ function resolveAudioContextConstructor() {
   const win = window;
   return win.AudioContext ?? win.webkitAudioContext ?? null;
 }
-function createNoiseBuffer(ctx, seconds, mode) {
-  const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
+function fillNoise(data, mode) {
+  const length = data.length;
+  if (mode === "white") {
+    for (let index = 0;index < length; index += 1)
+      data[index] = Math.random() * 2 - 1;
+    return;
+  }
   if (mode === "brown") {
     let last = 0;
     for (let index = 0;index < length; index += 1) {
@@ -3482,17 +3566,7 @@ function createNoiseBuffer(ctx, seconds, mode) {
       last = (last + 0.02 * white) / 1.02;
       data[index] = last * 3.2;
     }
-    return buffer;
-  }
-  if (mode === "crackle") {
-    let envelope = 0;
-    for (let index = 0;index < length; index += 1) {
-      if (Math.random() < 0.0045)
-        envelope = 0.65 + Math.random() * 0.35;
-      envelope *= 0.985;
-      data[index] = (Math.random() * 2 - 1) * envelope;
-    }
-    return buffer;
+    return;
   }
   let b0 = 0;
   let b1 = 0;
@@ -3512,25 +3586,335 @@ function createNoiseBuffer(ctx, seconds, mode) {
     data[index] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
     b6 = white * 0.115926;
   }
+}
+function createNoiseBuffer(ctx, seconds, mode, channels = 2) {
+  const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+  const fade = Math.min(Math.floor(ctx.sampleRate * 0.25), Math.floor(length / 4));
+  const buffer = ctx.createBuffer(channels, length, ctx.sampleRate);
+  const scratch = new Float32Array(length + fade);
+  for (let channel = 0;channel < channels; channel += 1) {
+    fillNoise(scratch, mode);
+    const data = buffer.getChannelData(channel);
+    data.set(scratch.subarray(0, length));
+    for (let index = 0;index < fade; index += 1) {
+      const mix = index / fade;
+      data[index] = scratch[index] * Math.sin(mix * Math.PI * 0.5) + scratch[length + index] * Math.cos(mix * Math.PI * 0.5);
+    }
+  }
   return buffer;
 }
+function createImpulseResponse(ctx, seconds) {
+  const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+  const buffer = ctx.createBuffer(2, length, ctx.sampleRate);
+  for (let channel = 0;channel < 2; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    let smoothed = 0;
+    let energy = 0;
+    for (let index = 0;index < length; index += 1) {
+      const t = index / length;
+      const alpha = 0.92 - 0.82 * t;
+      smoothed += alpha * (Math.random() * 2 - 1 - smoothed);
+      const value = smoothed * Math.pow(1 - t, 3.2);
+      data[index] = value;
+      energy += value * value;
+    }
+    for (let reflection = 0;reflection < 9; reflection += 1) {
+      const at = Math.floor(ctx.sampleRate * (0.008 + Math.random() * 0.075));
+      if (at < length)
+        data[at] = (data[at] ?? 0) + (Math.random() < 0.5 ? -1 : 1) * (0.25 + Math.random() * 0.35) * Math.sqrt(energy / length) * 20;
+    }
+    let total = 0;
+    for (let index = 0;index < length; index += 1)
+      total += data[index] * data[index];
+    const scale = total > 0 ? 1 / Math.sqrt(total) : 1;
+    for (let index = 0;index < length; index += 1)
+      data[index] = data[index] * scale;
+  }
+  return buffer;
+}
+function createRainTextureBuffer(ctx, seconds, dropsPerSecond) {
+  const sampleRate = ctx.sampleRate;
+  const length = Math.max(1, Math.floor(sampleRate * seconds));
+  const buffer = ctx.createBuffer(2, length, sampleRate);
+  const count = Math.floor(seconds * dropsPerSecond);
+  for (let channel = 0;channel < 2; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    for (let drop = 0;drop < count; drop += 1) {
+      const start = Math.floor(Math.random() * length);
+      const size = Math.random();
+      const centerHz = 5200 * Math.pow(600 / 5200, size * 0.85 + Math.random() * 0.15);
+      const tau = sampleRate * (0.0012 + size * 0.006 + Math.random() * 0.002);
+      const amp = Math.pow(Math.random(), 3.2) * (0.4 + size * 0.6);
+      const q = 0.7 + Math.random() * 1.3;
+      const w0 = 2 * Math.PI * centerHz / sampleRate;
+      const alpha = Math.sin(w0) / (2 * q);
+      const a0 = 1 + alpha;
+      const b0 = alpha / a0;
+      const b2 = -alpha / a0;
+      const a1 = -2 * Math.cos(w0) / a0;
+      const a2 = (1 - alpha) / a0;
+      let x1 = 0;
+      let x2 = 0;
+      let y1 = 0;
+      let y2 = 0;
+      let env = 1;
+      const decay = Math.exp(-1 / tau);
+      const grainLength = Math.min(length, Math.floor(tau * 6));
+      for (let index = 0;index < grainLength; index += 1) {
+        const x = (Math.random() * 2 - 1) * env;
+        const y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        env *= decay;
+        const at = (start + index) % length;
+        data[at] = data[at] + y * amp;
+      }
+    }
+    let energy = 0;
+    for (let index = 0;index < length; index += 1)
+      energy += data[index] * data[index];
+    const rms = Math.sqrt(energy / length);
+    const scale = rms > 0 ? 0.16 / rms : 1;
+    for (let index = 0;index < length; index += 1)
+      data[index] = clamp(data[index] * scale, -1, 1);
+  }
+  return buffer;
+}
+function createFireBedBuffer(ctx, seconds) {
+  const sampleRate = ctx.sampleRate;
+  const length = Math.max(1, Math.floor(sampleRate * seconds));
+  const buffer = ctx.createBuffer(2, length, sampleRate);
+  for (let channel = 0;channel < 2; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    const sizzles = Math.floor(seconds * 14);
+    for (let sizzle = 0;sizzle < sizzles; sizzle += 1) {
+      const start = Math.floor(Math.random() * length);
+      const dur = Math.floor(sampleRate * rand(0.025, 0.18));
+      const attack = Math.max(1, Math.floor(dur * 0.22));
+      const centerHz = rand(650, 2200);
+      const q = rand(0.6, 1.3);
+      const amp = Math.pow(Math.random(), 2) * 0.18;
+      const w0 = 2 * Math.PI * centerHz / sampleRate;
+      const alpha = Math.sin(w0) / (2 * q);
+      const a0 = 1 + alpha;
+      const b0 = alpha / a0;
+      const b2 = -alpha / a0;
+      const a1 = -2 * Math.cos(w0) / a0;
+      const a2 = (1 - alpha) / a0;
+      let x1 = 0;
+      let x2 = 0;
+      let y1 = 0;
+      let y2 = 0;
+      for (let index = 0;index < dur; index += 1) {
+        const env = index < attack ? index / attack : Math.exp(-(index - attack) / (dur * 0.35));
+        const x = (Math.random() * 2 - 1) * env;
+        const y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        const at = (start + index) % length;
+        data[at] = data[at] + y * amp;
+      }
+    }
+    const crackles = Math.floor(seconds * 28);
+    for (let crack = 0;crack < crackles; crack += 1) {
+      const start = Math.floor(Math.random() * length);
+      const centerHz = rand(280, 1450);
+      const tau = sampleRate * rand(0.0025, 0.012);
+      const amp = Math.pow(Math.random(), 3) * 0.38;
+      const q = rand(0.9, 2.1);
+      const w0 = 2 * Math.PI * centerHz / sampleRate;
+      const alpha = Math.sin(w0) / (2 * q);
+      const a0 = 1 + alpha;
+      const b0 = alpha / a0;
+      const b2 = -alpha / a0;
+      const a1 = -2 * Math.cos(w0) / a0;
+      const a2 = (1 - alpha) / a0;
+      let x1 = 0;
+      let x2 = 0;
+      let y1 = 0;
+      let y2 = 0;
+      let env = 1;
+      const decay = Math.exp(-1 / tau);
+      const grainLength = Math.min(length, Math.floor(tau * 6));
+      for (let index = 0;index < grainLength; index += 1) {
+        const x = (Math.random() * 2 - 1) * env;
+        const y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        env *= decay;
+        const at = (start + index) % length;
+        data[at] = data[at] + y * amp;
+      }
+    }
+    let energy = 0;
+    for (let index = 0;index < length; index += 1)
+      energy += data[index] * data[index];
+    const rms = Math.sqrt(energy / length);
+    const scale = rms > 0 ? 0.14 / rms : 1;
+    for (let index = 0;index < length; index += 1)
+      data[index] = clamp(data[index] * scale, -1, 1);
+  }
+  return buffer;
+}
+function renderThunderBuffer(ctx, distance) {
+  const sampleRate = 22050;
+  const close = 1 - distance;
+  const duration = 4.5 + Math.random() * 3 + distance * 2.5;
+  const length = Math.floor(sampleRate * duration);
+  const buffer = ctx.createBuffer(2, length, sampleRate);
+  const strokeTimes = [];
+  const strokes = 2 + Math.floor(Math.random() * 4);
+  let strokeAt = 0;
+  for (let index = 0;index < strokes; index += 1) {
+    strokeTimes.push(strokeAt);
+    strokeAt += 0.05 + Math.random() * 0.3;
+  }
+  const events = [];
+  const segments = 60 + Math.floor(Math.random() * 90);
+  for (let index = 0;index < segments; index += 1) {
+    const r1 = Math.random();
+    const r2 = Math.random();
+    const spread = close * Math.pow(r1, 1.8) + (1 - close) * ((r1 + r2) / 2);
+    const t = pick(strokeTimes) + 0.02 + spread * duration * 0.7;
+    const amp = (0.2 + 0.8 * Math.pow(Math.random(), 2)) * Math.exp(-t / (duration * 0.45));
+    events.push({ t, amp, seconds: 0.04 + Math.random() * (0.2 + distance * 0.35), tone: Math.random() });
+  }
+  for (const t of strokeTimes) {
+    events.push({ t: t + distance * 0.25 * Math.random(), amp: 0.9 + Math.random() * 0.5, seconds: 0.25 + Math.random() * 0.4, tone: 0.3 });
+  }
+  const cutoffStart = 260 + close * close * 2600;
+  const cutoffEnd = 85 + close * 80;
+  const crackWeight = clamp((close - 0.5) / 0.5, 0, 1);
+  const crackSeconds = 0.15 + Math.random() * 0.35;
+  const crackImpulses = Math.floor(120 + close * 520);
+  const fadeOut = Math.floor(sampleRate * 0.4);
+  let peak = 0;
+  for (let channel = 0;channel < 2; channel += 1) {
+    const rumble = new Float32Array(length);
+    for (const event of events) {
+      const start = Math.floor((event.t + Math.random() * 0.012) * sampleRate);
+      const samples = Math.floor(event.seconds * sampleRate);
+      const attack = Math.max(1, Math.floor(sampleRate * (0.004 + distance * 0.04)));
+      const tau = samples / 3;
+      const c = 0.015 + event.tone * 0.07;
+      const compensation = 1 / Math.sqrt(c / 2);
+      let brown = 0;
+      for (let index = 0;index < samples * 2 && start + index < length; index += 1) {
+        brown += c * (Math.random() * 2 - 1 - brown);
+        const env = index < attack ? index / attack : Math.exp(-(index - attack) / tau);
+        rumble[start + index] = rumble[start + index] + brown * compensation * env * event.amp * 0.3;
+      }
+    }
+    let bedNoise = 0;
+    let bedLevel = 0;
+    let bedTarget = 0.5;
+    const retarget = Math.floor(sampleRate * 0.12);
+    for (let index = 0;index < length; index += 1) {
+      if (index % retarget === 0)
+        bedTarget = Math.random();
+      bedLevel += 0.0004 * (bedTarget - bedLevel);
+      bedNoise += 0.02 * (Math.random() * 2 - 1 - bedNoise);
+      const t = index / sampleRate;
+      const bedEnv = Math.min(1, t / (0.15 + distance * 0.6)) * Math.exp(-t / (duration * 0.4));
+      rumble[index] = rumble[index] + bedNoise * 10 * bedLevel * bedEnv * 0.25;
+    }
+    let lp1 = 0;
+    let lp2 = 0;
+    let coefficient = 0;
+    for (let index = 0;index < length; index += 1) {
+      if (index % 32 === 0) {
+        const t = index / sampleRate;
+        const cutoff = cutoffEnd + (cutoffStart - cutoffEnd) * Math.exp(-t / 0.5);
+        coefficient = 1 - Math.exp(-2 * Math.PI * cutoff / sampleRate);
+      }
+      lp1 += coefficient * (rumble[index] - lp1);
+      lp2 += coefficient * (lp1 - lp2);
+      rumble[index] = lp2;
+    }
+    if (crackWeight > 0) {
+      const crack = new Float32Array(length);
+      for (let impulse = 0;impulse < crackImpulses; impulse += 1) {
+        const position = Math.pow(Math.random(), 1.6);
+        const start = Math.floor(position * crackSeconds * sampleRate);
+        const samples = Math.max(2, Math.floor(sampleRate * (0.0006 + Math.random() * 0.0035)));
+        const amp = (0.25 + 0.75 * Math.random()) * Math.pow(1 - position, 1.4) * (Math.random() < 0.5 ? -1 : 1);
+        for (let index = 0;index < samples && start + index < length; index += 1) {
+          crack[start + index] = crack[start + index] + amp * (1 - 2 * index / samples);
+        }
+      }
+      let soft = 0;
+      for (let index = 0;index < length; index += 1) {
+        soft += 0.6 * (crack[index] - soft);
+        rumble[index] = rumble[index] + soft * crackWeight * 0.35;
+      }
+    }
+    const hpCoefficient = Math.exp(-2 * Math.PI * 25 / sampleRate);
+    let hpOut = 0;
+    let hpIn = 0;
+    const data = buffer.getChannelData(channel);
+    for (let index = 0;index < length; index += 1) {
+      const x = rumble[index];
+      hpOut = hpCoefficient * (hpOut + x - hpIn);
+      hpIn = x;
+      const fade = index > length - fadeOut ? (length - index) / fadeOut : 1;
+      const value = hpOut * fade;
+      data[index] = value;
+      const magnitude = Math.abs(value);
+      if (magnitude > peak)
+        peak = magnitude;
+    }
+  }
+  const scale = peak > 0 ? 0.95 / peak : 1;
+  for (let channel = 0;channel < 2; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    for (let index = 0;index < length; index += 1)
+      data[index] = data[index] * scale;
+  }
+  return buffer;
+}
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+function pick(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+function poissonGap(rate) {
+  return -Math.log(1 - Math.random()) / Math.max(rate, 0.0001);
+}
+var PAD_FREQUENCIES = [110, 220, 277.18, 329.63, 493.88];
+var AURORA_SPARKLE_NOTES = [440, 554.37, 659.25, 830.61, 987.77, 1108.73];
+var FIREFLY_SPARKLE_NOTES = [1318.51, 1479.98, 1661.22, 1975.53, 2217.46, 2637.02, 2959.96];
+var BLOSSOM_SPARKLE_NOTES = [587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51];
+var SCHEDULER_INTERVAL_MS = 80;
+var LOOKAHEAD_SECONDS = 0.22;
+var GENERATOR_KEYS = ["gust", "rainSwell", "air", "flicker", "pad", "drops", "pops", "sparkle", "bird", "cave"];
 
 class WeatherSoundscape {
-  ctx = null;
-  masterGain = null;
-  occlusionFilter = null;
-  rainWashGain = null;
-  rainPatterGain = null;
-  windGain = null;
-  windFilter = null;
-  crackleGain = null;
-  shimmerGain = null;
-  pinkBuffer = null;
-  brownBuffer = null;
+  graph = null;
   sources = [];
-  thunderTimers = new Set;
+  schedulerTimer = null;
   suspendTimer = null;
   lastProfile = null;
+  appliedWindCenter = 0;
+  next = {
+    gust: 0,
+    rainSwell: 0,
+    air: 0,
+    flicker: 0,
+    pad: 0,
+    drops: 0,
+    pops: 0,
+    sparkle: 0,
+    bird: 0,
+    cave: 0
+  };
+  crickets = [];
   destroyed = false;
   sync(state, prefs, visible) {
     const profile = resolveSoundscapeProfile(state, prefs, visible);
@@ -3548,80 +3932,88 @@ class WeatherSoundscape {
     if (!this.ensureGraph()) {
       return profile;
     }
-    const ctx = this.ctx;
-    if (ctx.state === "suspended") {
-      ctx.resume().catch(() => {});
+    const g = this.graph;
+    if (g.ctx.state === "suspended") {
+      g.ctx.resume().catch(() => {});
     }
-    const now = ctx.currentTime;
-    const timeConstant = 0.28;
-    this.masterGain?.gain.setTargetAtTime(profile.masterGain * 0.36, now, timeConstant);
-    this.occlusionFilter?.frequency.setTargetAtTime(profile.lowpassHz, now, timeConstant);
-    this.rainWashGain?.gain.setTargetAtTime(profile.rainWashGain, now, timeConstant);
-    this.rainPatterGain?.gain.setTargetAtTime(profile.rainPatterGain * 0.55, now, timeConstant);
-    this.windGain?.gain.setTargetAtTime(profile.windGain, now, timeConstant);
-    this.windFilter?.frequency.setTargetAtTime(profile.windCenterHz, now, timeConstant);
-    this.crackleGain?.gain.setTargetAtTime(profile.emberCrackleGain * 0.65, now, timeConstant);
-    this.shimmerGain?.gain.setTargetAtTime(profile.shimmerDroneGain * 0.28, now, timeConstant);
+    try {
+      const now = g.ctx.currentTime;
+      const layer = 0.7;
+      const indoor = profile.exposure === "indoor";
+      g.master.gain.setTargetAtTime(profile.masterGain * 0.4, now, 0.25);
+      g.occlusion.frequency.setTargetAtTime(profile.lowpassHz, now, 0.45);
+      g.wetOcclusion.frequency.setTargetAtTime(profile.lowpassHz, now, 0.45);
+      g.reverbReturn.gain.setTargetAtTime(profile.reverbWet, now, layer);
+      g.rainGain.gain.setTargetAtTime(profile.rainWashGain, now, layer);
+      g.patterGain.gain.setTargetAtTime(profile.rainPatterGain * 0.72, now, layer);
+      g.patterLightGain.gain.setTargetAtTime(1 - profile.rainDensity * 0.55, now, layer);
+      g.patterDenseGain.gain.setTargetAtTime(profile.rainDensity, now, layer);
+      g.dropsGain.gain.setTargetAtTime(indoor ? 0 : profile.rainPatterGain * 0.45, now, layer);
+      g.glassDropsGain.gain.setTargetAtTime(indoor ? profile.rainPatterGain * 1.15 : 0, now, layer);
+      g.windGain.gain.setTargetAtTime(profile.windGain, now, layer);
+      g.whistleGain.gain.setTargetAtTime(profile.windWhistleGain * 3, now, layer);
+      g.gritGain.gain.setTargetAtTime(profile.sandGritGain, now, layer);
+      if (Math.abs(this.appliedWindCenter - profile.windCenterHz) > 1) {
+        this.appliedWindCenter = profile.windCenterHz;
+        g.windFilter.frequency.setTargetAtTime(profile.windCenterHz, now, layer);
+        g.whistleFilter.frequency.setTargetAtTime(profile.windCenterHz * 3.2, now, layer);
+      }
+      g.airGain.gain.setTargetAtTime(profile.airBedGain, now, layer);
+      g.airFilter.frequency.setTargetAtTime(profile.airBedToneHz, now, layer);
+      g.emberGain.gain.setTargetAtTime(profile.emberCrackleGain * 0.65, now, layer);
+      g.padGain.gain.setTargetAtTime(profile.shimmerDroneGain * 0.3, now, 1.2);
+      g.sparkleGain.gain.setTargetAtTime(profile.sparkleGain, now, layer);
+      g.cricketGain.gain.setTargetAtTime(profile.cricketGain, now, 1.2);
+      g.birdGain.gain.setTargetAtTime(profile.birdGain, now, 1.2);
+      g.caveGain.gain.setTargetAtTime(profile.caveDripGain, now, layer);
+    } catch {}
+    this.startScheduler();
     return profile;
   }
   triggerThunder(boltPositionPercent = 50) {
     const profile = this.lastProfile;
     if (this.destroyed || !profile || !profile.active || profile.thunderGainScale <= 0)
       return;
-    if (!this.ensureGraph() || !this.ctx || !this.occlusionFilter)
+    if (!this.ensureGraph() || !this.graph)
       return;
-    const ctx = this.ctx;
+    const g = this.graph;
+    const ctx = g.ctx;
     if (ctx.state === "suspended") {
       ctx.resume().catch(() => {});
     }
-    const delayMs = 110 + Math.round(Math.random() * 240);
-    const timer = window.setTimeout(() => {
-      this.thunderTimers.delete(timer);
-      if (this.destroyed || !this.ctx || !this.occlusionFilter || !this.brownBuffer)
-        return;
-      try {
-        const now = this.ctx.currentTime;
-        const source = this.ctx.createBufferSource();
-        source.buffer = this.brownBuffer;
-        source.loop = true;
-        source.playbackRate.value = 0.58 + Math.random() * 0.28;
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.setValueAtTime(165, now);
-        filter.frequency.exponentialRampToValueAtTime(52, now + 2.1);
-        const gain = this.ctx.createGain();
-        const peak = clamp(profile.thunderGainScale * 0.72, 0.08, 0.85);
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.linearRampToValueAtTime(peak, now + 0.06);
-        gain.gain.exponentialRampToValueAtTime(peak * 0.48, now + 0.38);
-        gain.gain.exponentialRampToValueAtTime(0.0008, now + 2.35);
-        source.connect(filter);
-        if (typeof this.ctx.createStereoPanner === "function") {
-          const panner = this.ctx.createStereoPanner();
-          panner.pan.value = clamp((boltPositionPercent - 50) / 65, -0.75, 0.75);
-          filter.connect(panner);
-          panner.connect(gain);
-        } else {
-          filter.connect(gain);
-        }
-        gain.connect(this.occlusionFilter);
-        source.start(now);
-        source.stop(now + 2.45);
-      } catch {}
-    }, delayMs);
-    this.thunderTimers.add(timer);
+    try {
+      const distance = clamp(Math.random() * (1.15 - profile.thunderProximity * 0.7), 0, 1);
+      const t0 = ctx.currentTime + 0.12 + distance * 2.4 + Math.random() * 0.18;
+      const loudness = profile.thunderGainScale * (1 - distance * 0.52);
+      const basePan = clamp((boltPositionPercent - 50) / 65, -0.75, 0.75);
+      const strikeBuffer = renderThunderBuffer(ctx, distance);
+      const duration = strikeBuffer.duration;
+      const source = ctx.createBufferSource();
+      source.buffer = strikeBuffer;
+      const out = ctx.createGain();
+      out.gain.value = loudness;
+      const panner = this.createPanner(basePan);
+      if (panner.pan) {
+        panner.pan.setValueAtTime(basePan, t0);
+        panner.pan.linearRampToValueAtTime(clamp(basePan + rand(-0.45, 0.45), -0.85, 0.85), t0 + duration);
+      }
+      source.connect(panner.node);
+      panner.node.connect(out);
+      out.connect(g.wetBus);
+      source.start(t0);
+      source.stop(t0 + duration + 0.05);
+      this.disposeOnEnd(source, [panner.node, out]);
+    } catch {}
   }
   destroy() {
     if (this.destroyed)
       return;
     this.destroyed = true;
+    this.stopScheduler();
     if (this.suspendTimer !== null) {
       window.clearTimeout(this.suspendTimer);
       this.suspendTimer = null;
     }
-    for (const timer of this.thunderTimers)
-      window.clearTimeout(timer);
-    this.thunderTimers.clear();
     for (const source of this.sources) {
       try {
         source.stop();
@@ -3629,123 +4021,644 @@ class WeatherSoundscape {
       } catch {}
     }
     this.sources = [];
-    if (this.ctx) {
-      this.ctx.close().catch(() => {});
-      this.ctx = null;
+    if (this.graph) {
+      this.graph.ctx.close().catch(() => {});
+      this.graph = null;
     }
   }
   rampToSilence() {
-    if (!this.ctx || !this.masterGain)
+    this.stopScheduler();
+    const g = this.graph;
+    if (!g)
       return;
     try {
-      this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
-      if (this.suspendTimer === null && this.ctx.state === "running") {
+      g.master.gain.setTargetAtTime(0, g.ctx.currentTime, 0.08);
+      if (this.suspendTimer === null && g.ctx.state === "running") {
         this.suspendTimer = window.setTimeout(() => {
           this.suspendTimer = null;
-          if (!this.destroyed && this.ctx && !this.lastProfile?.active && this.ctx.state === "running") {
-            this.ctx.suspend().catch(() => {});
+          if (!this.destroyed && this.graph && !this.lastProfile?.active && this.graph.ctx.state === "running") {
+            this.graph.ctx.suspend().catch(() => {});
           }
         }, 260);
       }
     } catch {}
   }
+  startScheduler() {
+    if (this.schedulerTimer !== null || !this.graph)
+      return;
+    const now = this.graph.ctx.currentTime;
+    for (const key of GENERATOR_KEYS)
+      this.next[key] = now + Math.random() * 0.4;
+    for (const cricket of this.crickets) {
+      cricket.next = now + Math.random() * cricket.period;
+      cricket.restUntil = 0;
+    }
+    this.schedulerTimer = window.setInterval(() => this.tick(), SCHEDULER_INTERVAL_MS);
+    this.tick();
+  }
+  stopScheduler() {
+    if (this.schedulerTimer === null)
+      return;
+    window.clearInterval(this.schedulerTimer);
+    this.schedulerTimer = null;
+  }
+  tick() {
+    const g = this.graph;
+    const p = this.lastProfile;
+    if (this.destroyed || !g || !p || !p.active || g.ctx.state !== "running")
+      return;
+    const now = g.ctx.currentTime;
+    const horizon = now + LOOKAHEAD_SECONDS;
+    try {
+      if (p.windGain > 0 || p.sandGritGain > 0) {
+        this.runInterval("gust", now, horizon, (t) => this.scheduleGust(t, p));
+      }
+      if (p.rainWashGain > 0) {
+        this.runInterval("rainSwell", now, horizon, (t) => {
+          g.rainSwell.gain.setTargetAtTime(rand(0.76, 1.15), t, rand(0.8, 2.2));
+          g.rainWashFilter.frequency.setTargetAtTime(rand(1100, 1700), t, rand(1.5, 3));
+          g.patterFilter.frequency.setTargetAtTime(rand(1500, 2600), t, rand(1.2, 2.8));
+          return rand(1.5, 4.5);
+        });
+      }
+      if (p.airBedGain > 0) {
+        this.runInterval("air", now, horizon, (t) => {
+          g.airDrift.gain.setTargetAtTime(rand(0.6, 1.3), t, rand(1.5, 3.5));
+          return rand(2.5, 6.5);
+        });
+      }
+      if (p.emberCrackleGain > 0) {
+        this.runInterval("flicker", now, horizon, (t) => {
+          g.fireFlicker.gain.setTargetAtTime(rand(0.68, 1.28), t, rand(0.14, 0.45));
+          return rand(0.22, 0.75);
+        });
+        this.runPoisson("pops", 0.45 + p.emberCrackleGain * 2.8, now, horizon, (t) => this.spawnPop(t));
+      }
+      if (p.shimmerDroneGain > 0) {
+        this.runInterval("pad", now, horizon, (t) => {
+          for (const voice of g.padVoices) {
+            voice.gain.gain.setTargetAtTime(rand(0.02, 0.32), t, rand(1.8, 4.5));
+            voice.osc.detune.setTargetAtTime(rand(-9, 9), t, rand(2, 5));
+          }
+          g.padFilter.frequency.setTargetAtTime(rand(650, 2400), t, rand(2.5, 5));
+          return rand(2.5, 6);
+        });
+      }
+      if (p.sparkleGain > 0 && p.sparkleRate > 0) {
+        this.runPoisson("sparkle", p.sparkleRate, now, horizon, (t) => this.spawnSparkle(t, p.shimmerStyle));
+      }
+      if (p.dropletRate > 0 && p.rainPatterGain > 0) {
+        const indoor = p.exposure === "indoor";
+        const plinkChance = p.exposure === "sheltered" ? 0.08 : 0.015;
+        this.runPoisson("drops", p.dropletRate, now, horizon, (t) => {
+          if (indoor)
+            this.spawnDrop(t, "glass", g.glassDropsGain);
+          else
+            this.spawnDrop(t, Math.random() < plinkChance ? "plink" : "tick", g.dropsGain);
+        });
+      }
+      if (p.caveDripGain > 0) {
+        this.runPoisson("cave", 0.25 + p.caveDripGain * 1.2, now, horizon, (t) => this.spawnDrop(t, "cave", g.caveGain));
+      }
+      if (p.birdGain > 0) {
+        this.runInterval("bird", now, horizon, (t) => this.spawnBirdPhrase(t));
+      }
+      if (p.cricketGain > 0) {
+        this.runCrickets(now, horizon);
+      }
+    } catch {}
+  }
+  runInterval(key, now, horizon, step) {
+    let t = this.next[key];
+    if (t < now - 0.5)
+      t = now;
+    let guard = 0;
+    while (t < horizon && guard < 16) {
+      t = Math.max(t, now) + step(Math.max(t, now));
+      guard += 1;
+    }
+    this.next[key] = t;
+  }
+  runPoisson(key, rate, now, horizon, spawn) {
+    let t = this.next[key];
+    if (t < now - 0.25)
+      t = now + poissonGap(rate);
+    let guard = 0;
+    while (t < horizon && guard < 48) {
+      spawn(Math.max(t, now));
+      t += poissonGap(rate);
+      guard += 1;
+    }
+    this.next[key] = t;
+  }
+  scheduleGust(t, p) {
+    const g = this.graph;
+    const gust = p.gustiness;
+    const level = 1 - gust * 0.7 + Math.random() * gust * 0.95;
+    const rise = rand(0.4, 2.6 - gust * 1.4);
+    const tc = rise / 3;
+    g.windGust.gain.setTargetAtTime(level, t, tc);
+    g.whistleGust.gain.setTargetAtTime(clamp((level - 0.7) * 2.8, 0, 1.5), t, tc);
+    g.gritGust.gain.setTargetAtTime(Math.pow(Math.max(level, 0.05), 1.6), t, tc);
+    g.windFilter.frequency.setTargetAtTime(p.windCenterHz * (0.72 + level * 0.45), t, tc);
+    g.whistleFilter.frequency.setTargetAtTime(p.windCenterHz * 3.2 * (0.8 + level * 0.45), t, tc * 1.5);
+    g.windPan?.setTargetAtTime(rand(-0.45, 0.45), t, rise);
+    return rise * rand(0.8, 2) + (1 - gust) * 2;
+  }
+  runCrickets(now, horizon) {
+    if (this.crickets.length === 0) {
+      const count = 3;
+      for (let index = 0;index < count; index += 1) {
+        const period = rand(0.55, 1.2);
+        this.crickets.push({
+          pitch: rand(4100, 5200),
+          pan: rand(-0.8, 0.8),
+          period,
+          pulses: 2 + Math.floor(Math.random() * 3),
+          level: rand(0.35, 1),
+          next: now + Math.random() * period,
+          restUntil: 0
+        });
+      }
+    }
+    for (const cricket of this.crickets) {
+      if (cricket.next < now - 0.5)
+        cricket.next = now + Math.random() * cricket.period;
+      let guard = 0;
+      while (cricket.next < horizon && guard < 4) {
+        guard += 1;
+        if (cricket.next < cricket.restUntil) {
+          cricket.next = cricket.restUntil;
+          continue;
+        }
+        this.spawnChirp(Math.max(cricket.next, now), cricket);
+        cricket.next += cricket.period * rand(0.94, 1.06);
+        if (Math.random() < 0.035)
+          cricket.restUntil = cricket.next + rand(2.5, 11);
+      }
+    }
+  }
+  createPanner(pan) {
+    return this.createPannerFor(this.graph.ctx, pan);
+  }
+  disposeOnEnd(source, nodes) {
+    source.onended = () => {
+      for (const node of [source, ...nodes]) {
+        try {
+          node.disconnect();
+        } catch {}
+      }
+    };
+  }
+  spawnNoiseGrain(t, destination, options) {
+    const ctx = this.graph.ctx;
+    const source = ctx.createBufferSource();
+    source.buffer = this.graph.white;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = options.freq;
+    filter.Q.value = options.q;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(options.peak, t + 0.0015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + options.decay);
+    const panner = this.createPanner(options.pan);
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(panner.node);
+    panner.node.connect(destination);
+    source.start(t, Math.random() * 1.5);
+    source.stop(t + options.decay + 0.02);
+    this.disposeOnEnd(source, [filter, gain, panner.node]);
+  }
+  spawnPlink(t, destination, f0, peak, decay, pan) {
+    const ctx = this.graph.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f0 * rand(1.3, 1.9), t + decay * 0.6);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(peak, t + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+    const panner = this.createPanner(pan);
+    osc.connect(gain);
+    gain.connect(panner.node);
+    panner.node.connect(destination);
+    osc.start(t);
+    osc.stop(t + decay + 0.02);
+    this.disposeOnEnd(osc, [gain, panner.node]);
+  }
+  spawnDrop(t, kind, destination) {
+    switch (kind) {
+      case "tick":
+        this.spawnNoiseGrain(t, destination, {
+          freq: rand(950, 3200),
+          q: rand(0.65, 1.45),
+          peak: rand(0.18, 0.55),
+          decay: rand(0.004, 0.014),
+          pan: rand(-0.9, 0.9)
+        });
+        return;
+      case "glass":
+        this.spawnNoiseGrain(t, destination, {
+          freq: rand(850, 2150),
+          q: rand(0.8, 1.75),
+          peak: rand(0.22, 0.68),
+          decay: rand(0.004, 0.011),
+          pan: rand(-0.7, 0.7)
+        });
+        return;
+      case "plink":
+        this.spawnPlink(t, destination, rand(780, 1850), rand(0.018, 0.055), rand(0.028, 0.06), rand(-0.85, 0.85));
+        return;
+      case "cave":
+        this.spawnPlink(t, destination, rand(500, 1400), rand(0.15, 0.4), rand(0.08, 0.16), rand(-0.8, 0.8));
+        return;
+    }
+  }
+  spawnPop(t) {
+    const g = this.graph;
+    const ctx = g.ctx;
+    const pan = rand(-0.55, 0.55);
+    const kind = Math.random();
+    if (kind < 0.35) {
+      const dur = rand(0.06, 0.22);
+      const attack = dur * 0.28;
+      const source = ctx.createBufferSource();
+      source.buffer = g.pink;
+      const filter = ctx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.value = rand(650, 1650);
+      filter.Q.value = rand(0.7, 1.4);
+      const gain = ctx.createGain();
+      const peak = rand(0.08, 0.2);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(peak, t + attack);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      const panner = this.createPanner(pan);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(panner.node);
+      panner.node.connect(g.emberGain);
+      source.start(t, Math.random() * 4);
+      source.stop(t + dur + 0.02);
+      this.disposeOnEnd(source, [filter, gain, panner.node]);
+      return;
+    }
+    const big = kind > 0.82;
+    this.spawnNoiseGrain(t, g.emberGain, {
+      freq: big ? rand(320, 780) : rand(480, 1250),
+      q: rand(1.1, 2.2),
+      peak: big ? rand(0.32, 0.58) : rand(0.14, 0.32),
+      decay: big ? rand(0.014, 0.032) : rand(0.007, 0.018),
+      pan
+    });
+    if (big && Math.random() < 0.5) {
+      this.spawnNoiseGrain(t + rand(0.025, 0.07), g.emberGain, {
+        freq: rand(420, 1100),
+        q: rand(1, 1.8),
+        peak: rand(0.1, 0.22),
+        decay: rand(0.006, 0.015),
+        pan: clamp(pan + rand(-0.1, 0.1), -0.7, 0.7)
+      });
+    }
+  }
+  spawnSparkle(t, style) {
+    const g = this.graph;
+    const ctx = g.ctx;
+    const aurora = style === "aurora";
+    const blossom = style === "blossoms";
+    const freq = pick(aurora ? AURORA_SPARKLE_NOTES : blossom ? BLOSSOM_SPARKLE_NOTES : FIREFLY_SPARKLE_NOTES);
+    const attack = aurora ? rand(0.25, 0.7) : blossom ? rand(0.015, 0.045) : rand(0.003, 0.01);
+    const decay = aurora ? rand(2.5, 4.5) : blossom ? rand(0.9, 2.1) : rand(0.5, 1.5);
+    const peak = aurora ? rand(0.12, 0.28) : blossom ? rand(0.06, 0.15) : rand(0.08, 0.22);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(peak, t + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+    const panner = this.createPanner(rand(-0.85, 0.85));
+    gain.connect(panner.node);
+    panner.node.connect(g.sparkleGain);
+    const fundamental = ctx.createOscillator();
+    fundamental.type = "sine";
+    fundamental.frequency.value = freq;
+    fundamental.detune.value = rand(-6, 6);
+    const partial = ctx.createOscillator();
+    partial.type = "sine";
+    partial.frequency.value = freq * (aurora ? 2 : 2.76);
+    const partialGain = ctx.createGain();
+    partialGain.gain.value = aurora ? 0.18 : 0.3;
+    fundamental.connect(gain);
+    partial.connect(partialGain);
+    partialGain.connect(gain);
+    const end = t + attack + decay + 0.05;
+    fundamental.start(t);
+    partial.start(t);
+    fundamental.stop(end);
+    partial.stop(end);
+    this.disposeOnEnd(partial, [partialGain]);
+    this.disposeOnEnd(fundamental, [gain, panner.node]);
+  }
+  spawnChirp(t, cricket) {
+    const g = this.graph;
+    const ctx = g.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = cricket.pitch * rand(0.995, 1.005);
+    const gain = ctx.createGain();
+    const peak = 0.22 * cricket.level;
+    const spacing = 0.032;
+    gain.gain.setValueAtTime(0, t);
+    for (let pulse = 0;pulse < cricket.pulses; pulse += 1) {
+      const start = t + pulse * spacing;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(peak, start + 0.004);
+      gain.gain.linearRampToValueAtTime(0, start + 0.017);
+    }
+    const panner = this.createPanner(cricket.pan);
+    osc.connect(gain);
+    gain.connect(panner.node);
+    panner.node.connect(g.cricketGain);
+    osc.start(t);
+    osc.stop(t + cricket.pulses * spacing + 0.03);
+    this.disposeOnEnd(osc, [gain, panner.node]);
+  }
+  spawnBirdPhrase(t) {
+    const g = this.graph;
+    const ctx = g.ctx;
+    const distance = rand(0.35, 1);
+    const panner = this.createPanner(rand(-0.8, 0.8));
+    panner.node.connect(g.birdGain);
+    const species = Math.random();
+    let notes;
+    let base;
+    let noteDuration;
+    let gap;
+    let glide;
+    if (species < 0.45) {
+      notes = 4 + Math.floor(Math.random() * 6);
+      base = rand(2800, 4600);
+      noteDuration = () => rand(0.04, 0.09);
+      gap = () => rand(0.02, 0.05);
+      glide = (f0) => f0 * rand(0.7, 1.4);
+    } else if (species < 0.8) {
+      notes = 2 + Math.floor(Math.random() * 2);
+      base = rand(1700, 2600);
+      noteDuration = () => rand(0.18, 0.35);
+      gap = () => rand(0.08, 0.16);
+      const direction = Math.random() < 0.5 ? 1.25 : 0.8;
+      glide = (f0) => f0 * direction;
+    } else {
+      notes = 1 + Math.floor(Math.random() * 3);
+      base = rand(4500, 6000);
+      noteDuration = () => rand(0.015, 0.03);
+      gap = () => rand(0.08, 0.2);
+      glide = (f0) => f0 * 0.75;
+    }
+    let at = t;
+    let lastOsc = null;
+    for (let index = 0;index < notes; index += 1) {
+      const duration = noteDuration();
+      const f0 = base * rand(0.85, 1.15);
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(f0, at);
+      osc.frequency.exponentialRampToValueAtTime(glide(f0), at + duration);
+      const gain = ctx.createGain();
+      const peak = 0.16 * distance;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(peak, at + Math.min(0.012, duration * 0.3));
+      gain.gain.setValueAtTime(peak, at + duration * 0.7);
+      gain.gain.linearRampToValueAtTime(0, at + duration);
+      osc.connect(gain);
+      gain.connect(panner.node);
+      osc.start(at);
+      osc.stop(at + duration + 0.01);
+      this.disposeOnEnd(osc, [gain]);
+      lastOsc = osc;
+      at += duration + gap();
+    }
+    if (lastOsc) {
+      const previous = lastOsc.onended;
+      lastOsc.onended = (event) => {
+        if (typeof previous === "function")
+          previous.call(lastOsc, event);
+        try {
+          panner.node.disconnect();
+        } catch {}
+      };
+    }
+    return at - t + rand(1.8, 8);
+  }
   ensureGraph() {
-    if (this.ctx)
+    if (this.graph)
       return true;
     const Ctor = resolveAudioContextConstructor();
     if (!Ctor)
       return false;
+    let ctx = null;
     try {
-      const ctx = new Ctor;
-      this.ctx = ctx;
-      this.pinkBuffer = createNoiseBuffer(ctx, 4, "pink");
-      this.brownBuffer = createNoiseBuffer(ctx, 4, "brown");
-      const crackleBuffer = createNoiseBuffer(ctx, 3.5, "crackle");
-      const masterGain = ctx.createGain();
-      masterGain.gain.value = 0;
-      const occlusionFilter = ctx.createBiquadFilter();
-      occlusionFilter.type = "lowpass";
-      occlusionFilter.frequency.value = 16000;
-      occlusionFilter.Q.value = 0.5;
-      occlusionFilter.connect(masterGain);
-      masterGain.connect(ctx.destination);
-      const rainWashSource = ctx.createBufferSource();
-      rainWashSource.buffer = this.pinkBuffer;
-      rainWashSource.loop = true;
-      const rainWashFilter = ctx.createBiquadFilter();
-      rainWashFilter.type = "bandpass";
-      rainWashFilter.frequency.value = 1350;
-      rainWashFilter.Q.value = 0.65;
-      const rainWashGain = ctx.createGain();
-      rainWashGain.gain.value = 0;
-      rainWashSource.connect(rainWashFilter);
-      rainWashFilter.connect(rainWashGain);
-      rainWashGain.connect(occlusionFilter);
-      const rainPatterSource = ctx.createBufferSource();
-      rainPatterSource.buffer = crackleBuffer;
-      rainPatterSource.loop = true;
-      const rainPatterFilter = ctx.createBiquadFilter();
-      rainPatterFilter.type = "bandpass";
-      rainPatterFilter.frequency.value = 2850;
-      rainPatterFilter.Q.value = 1.1;
-      const rainPatterGain = ctx.createGain();
-      rainPatterGain.gain.value = 0;
-      rainPatterSource.connect(rainPatterFilter);
-      rainPatterFilter.connect(rainPatterGain);
-      rainPatterGain.connect(occlusionFilter);
-      const windSource = ctx.createBufferSource();
-      windSource.buffer = this.brownBuffer;
-      windSource.loop = true;
-      const windFilter = ctx.createBiquadFilter();
-      windFilter.type = "bandpass";
-      windFilter.frequency.value = 220;
-      windFilter.Q.value = 2.4;
-      const windGain = ctx.createGain();
-      windGain.gain.value = 0;
-      windSource.connect(windFilter);
-      windFilter.connect(windGain);
-      windGain.connect(occlusionFilter);
-      const crackleSource = ctx.createBufferSource();
-      crackleSource.buffer = crackleBuffer;
-      crackleSource.loop = true;
-      crackleSource.playbackRate.value = 0.84;
-      const crackleFilter = ctx.createBiquadFilter();
-      crackleFilter.type = "bandpass";
-      crackleFilter.frequency.value = 1950;
-      crackleFilter.Q.value = 1.4;
-      const crackleGain = ctx.createGain();
-      crackleGain.gain.value = 0;
-      crackleSource.connect(crackleFilter);
-      crackleFilter.connect(crackleGain);
-      crackleGain.connect(occlusionFilter);
-      const oscA = ctx.createOscillator();
-      oscA.type = "sine";
-      oscA.frequency.value = 220;
-      const oscB = ctx.createOscillator();
-      oscB.type = "sine";
-      oscB.frequency.value = 329.63;
-      const shimmerGain = ctx.createGain();
-      shimmerGain.gain.value = 0;
-      oscA.connect(shimmerGain);
-      oscB.connect(shimmerGain);
-      shimmerGain.connect(occlusionFilter);
-      for (const source of [rainWashSource, rainPatterSource, windSource, crackleSource, oscA, oscB]) {
-        source.start(0);
+      ctx = new Ctor;
+      const audio = ctx;
+      const pink = createNoiseBuffer(audio, 11.3, "pink");
+      const brown = createNoiseBuffer(audio, 9.7, "brown");
+      const white = createNoiseBuffer(audio, 2.5, "white", 1);
+      const rainLight = createRainTextureBuffer(audio, 6.7, 260);
+      const rainDense = createRainTextureBuffer(audio, 5.9, 1350);
+      const fireBed = createFireBedBuffer(audio, 7.3);
+      const gainNode = (value = 0) => {
+        const node = audio.createGain();
+        node.gain.value = value;
+        return node;
+      };
+      const filterNode = (type, frequency, q = 0.707) => {
+        const node = audio.createBiquadFilter();
+        node.type = type;
+        node.frequency.value = frequency;
+        node.Q.value = q;
+        return node;
+      };
+      const loop = (buffer, rate = 1) => {
+        const node = audio.createBufferSource();
+        node.buffer = buffer;
+        node.loop = true;
+        node.playbackRate.value = rate;
+        return node;
+      };
+      const chain = (...nodes) => {
+        for (let index = 0;index < nodes.length - 1; index += 1)
+          nodes[index].connect(nodes[index + 1]);
+      };
+      const master = gainNode(0);
+      const compressor = audio.createDynamicsCompressor();
+      compressor.threshold.value = -16;
+      compressor.knee.value = 10;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.004;
+      compressor.release.value = 0.3;
+      chain(master, compressor, audio.destination);
+      const occlusion = filterNode("lowpass", 16000, 0.5);
+      const wetOcclusion = filterNode("lowpass", 16000, 0.5);
+      const reverbSend = gainNode(1);
+      const convolver = audio.createConvolver();
+      convolver.normalize = false;
+      convolver.buffer = createImpulseResponse(audio, 3.2);
+      const reverbReturn = gainNode(0.12);
+      chain(reverbSend, convolver, reverbReturn, master);
+      const bus = gainNode(1);
+      const wetBus = gainNode(1);
+      const nearBus = gainNode(1);
+      const wetBoost = gainNode(2.5);
+      bus.connect(occlusion);
+      wetBus.connect(occlusion);
+      wetBus.connect(wetOcclusion);
+      occlusion.connect(master);
+      occlusion.connect(reverbSend);
+      chain(wetOcclusion, wetBoost, reverbSend);
+      nearBus.connect(master);
+      nearBus.connect(reverbSend);
+      const startables = [];
+      const loopStarts = new Map;
+      const addLoop = (source) => {
+        startables.push(source);
+        loopStarts.set(source, Math.random() * (source.buffer?.duration ?? 1));
+        return source;
+      };
+      const rainGain = gainNode(0);
+      const rainSwell = gainNode(1);
+      const rainWashFilter = filterNode("bandpass", 1350, 0.55);
+      chain(addLoop(loop(pink)), rainWashFilter, rainSwell);
+      chain(addLoop(loop(brown, 1.05)), filterNode("lowpass", 520), gainNode(0.55), rainSwell);
+      chain(addLoop(loop(pink, 0.93)), filterNode("highpass", 4800), gainNode(0.22), rainSwell);
+      chain(rainSwell, rainGain, bus);
+      const patterGain = gainNode(0);
+      const patterLightGain = gainNode(1);
+      const patterDenseGain = gainNode(0);
+      const patterFilter = filterNode("bandpass", 1950, 0.65);
+      chain(addLoop(loop(rainLight)), patterLightGain, patterFilter);
+      chain(addLoop(loop(rainDense)), patterDenseGain, patterFilter);
+      chain(patterFilter, patterGain, bus);
+      const dropsGain = gainNode(0);
+      dropsGain.connect(bus);
+      const glassDropsGain = gainNode(0);
+      chain(glassDropsGain, filterNode("lowpass", 2200), master);
+      const windGain = gainNode(0);
+      const windGust = gainNode(1);
+      const windFilter = filterNode("bandpass", 220, 1.4);
+      const windPanNode = this.createPannerFor(audio, 0);
+      chain(addLoop(loop(brown)), windFilter, windGust, windPanNode.node, windGain, bus);
+      const whistleGain = gainNode(0);
+      const whistleGust = gainNode(0);
+      const whistleFilter = filterNode("bandpass", 700, 9);
+      chain(addLoop(loop(pink, 1.07)), whistleFilter, whistleGust, whistleGain, bus);
+      const gritGain = gainNode(0);
+      const gritGust = gainNode(1);
+      chain(addLoop(loop(pink, 1.13)), filterNode("highpass", 2600), gritGust, gritGain, bus);
+      const airGain = gainNode(0);
+      const airDrift = gainNode(1);
+      const airFilter = filterNode("lowpass", 900, 0.3);
+      chain(addLoop(loop(pink, 0.81)), airFilter, airDrift, airGain, bus);
+      const emberGain = gainNode(0);
+      const fireFlicker = gainNode(1);
+      chain(addLoop(loop(brown, 0.88)), filterNode("lowpass", 220), gainNode(0.95), fireFlicker);
+      chain(addLoop(loop(pink, 0.94)), filterNode("bandpass", 420, 0.75), gainNode(0.42), fireFlicker);
+      chain(fireFlicker, emberGain);
+      chain(addLoop(loop(fireBed, 0.96)), filterNode("lowpass", 2400), gainNode(0.65), emberGain);
+      emberGain.connect(bus);
+      const padGain = gainNode(0);
+      const padFilter = filterNode("lowpass", 1400, 0.4);
+      const padVoices = PAD_FREQUENCIES.map((frequency, index) => {
+        const osc = audio.createOscillator();
+        osc.type = index === 0 ? "triangle" : "sine";
+        osc.frequency.value = frequency;
+        const gain = gainNode(0.15);
+        chain(osc, gain, padFilter);
+        startables.push(osc);
+        return { osc, gain };
+      });
+      chain(padFilter, padGain, wetBus);
+      const sparkleGain = gainNode(0);
+      sparkleGain.connect(wetBus);
+      const cricketGain = gainNode(0);
+      cricketGain.connect(bus);
+      const birdGain = gainNode(0);
+      birdGain.connect(wetBus);
+      const caveGain = gainNode(0);
+      caveGain.connect(nearBus);
+      for (const source of startables) {
+        const offset = loopStarts.get(source);
+        if (offset !== undefined)
+          source.start(0, offset);
+        else
+          source.start(0);
         this.sources.push(source);
       }
-      this.masterGain = masterGain;
-      this.occlusionFilter = occlusionFilter;
-      this.rainWashGain = rainWashGain;
-      this.rainPatterGain = rainPatterGain;
-      this.windGain = windGain;
-      this.windFilter = windFilter;
-      this.crackleGain = crackleGain;
-      this.shimmerGain = shimmerGain;
+      this.graph = {
+        ctx: audio,
+        master,
+        occlusion,
+        wetOcclusion,
+        reverbReturn,
+        bus,
+        wetBus,
+        nearBus,
+        white,
+        brown,
+        pink,
+        rainGain,
+        rainSwell,
+        rainWashFilter,
+        patterGain,
+        patterLightGain,
+        patterDenseGain,
+        patterFilter,
+        dropsGain,
+        glassDropsGain,
+        windGain,
+        windGust,
+        windFilter,
+        windPan: windPanNode.pan,
+        whistleGain,
+        whistleGust,
+        whistleFilter,
+        gritGain,
+        gritGust,
+        airGain,
+        airDrift,
+        airFilter,
+        emberGain,
+        fireFlicker,
+        padGain,
+        padFilter,
+        padVoices,
+        sparkleGain,
+        cricketGain,
+        birdGain,
+        caveGain
+      };
+      this.appliedWindCenter = 0;
       return true;
     } catch {
-      this.ctx = null;
+      for (const source of this.sources) {
+        try {
+          source.stop();
+        } catch {}
+      }
+      this.sources = [];
+      if (ctx)
+        ctx.close().catch(() => {});
+      this.graph = null;
       return false;
     }
+  }
+  createPannerFor(ctx, pan) {
+    if (typeof ctx.createStereoPanner === "function") {
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = clamp(pan, -1, 1);
+      return { node: panner, pan: panner.pan };
+    }
+    return { node: ctx.createGain(), pan: null };
   }
 }
 
@@ -4554,6 +5467,8 @@ function createSettingsUI(sendToBackend) {
       status.dataset.mode = stateMode;
       preview.dataset.mode = stateMode;
       preview.dataset.condition = state?.condition ?? "waiting";
+      preview.dataset.phenomenon = state?.phenomenon ?? "none";
+      root.dataset.phenomenon = state?.phenomenon ?? "none";
       status.textContent = statusOverride ?? (state ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}` : "Waiting for LumiWeather");
       const lunar = state ? resolveLunarPhase(state.date, state.time) : null;
       previewValue.textContent = state ? [
@@ -5273,6 +6188,36 @@ var WEATHER_HUD_CSS = `
   --lumi-scene-glow: rgba(208, 225, 233, 0.3);
 }
 
+.weather-settings-scene-hero[data-phenomenon="aurora"] {
+  --lumi-scene-glow: rgba(94, 242, 198, 0.42);
+  border-color: color-mix(in srgb, rgba(114, 245, 206, 0.55) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="blossoms"] {
+  --lumi-scene-glow: rgba(255, 178, 214, 0.42);
+  border-color: color-mix(in srgb, rgba(255, 184, 218, 0.55) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="embers"] {
+  --lumi-scene-glow: rgba(255, 132, 64, 0.44);
+  border-color: color-mix(in srgb, rgba(255, 148, 82, 0.58) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="ashfall"] {
+  --lumi-scene-glow: rgba(196, 202, 214, 0.34);
+  border-color: color-mix(in srgb, rgba(208, 214, 226, 0.48) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="fireflies"] {
+  --lumi-scene-glow: rgba(206, 248, 112, 0.4);
+  border-color: color-mix(in srgb, rgba(212, 252, 124, 0.52) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="sandstorm"] {
+  --lumi-scene-glow: rgba(238, 188, 118, 0.44);
+  border-color: color-mix(in srgb, rgba(238, 192, 126, 0.56) 60%, var(--lumi-glass-line));
+}
+
 .weather-settings-glass-panel {
   position: relative;
   overflow: hidden;
@@ -5469,6 +6414,7 @@ var WEATHER_HUD_CSS = `
   overflow: hidden;
   backdrop-filter: blur(18px) saturate(132%);
   background:
+    var(--weather-hud-phenomenon-overlay, linear-gradient(transparent, transparent)),
     radial-gradient(circle at 84% 16%, var(--weather-hud-aura-primary), transparent 30%),
     radial-gradient(circle at 18% 112%, var(--weather-hud-aura-secondary), transparent 44%),
     linear-gradient(162deg, var(--weather-hud-shell-top) 0%, var(--weather-hud-shell-mid) 48%, var(--weather-hud-shell-bottom) 100%);
@@ -5711,10 +6657,116 @@ var WEATHER_HUD_CSS = `
 
 .weather-hud-widget[data-source="manual"] {
   background:
+    var(--weather-hud-phenomenon-overlay, linear-gradient(transparent, transparent)),
     radial-gradient(circle at 84% 16%, color-mix(in srgb, var(--weather-hud-aura-primary) 90%, rgba(198, 226, 255, 0.26)) 0%, transparent 30%),
     radial-gradient(circle at 18% 112%, var(--weather-hud-aura-secondary), transparent 44%),
     linear-gradient(162deg, color-mix(in srgb, var(--weather-hud-shell-top) 90%, rgba(24, 49, 87, 0.7)) 0%, var(--weather-hud-shell-mid) 48%, var(--weather-hud-shell-bottom) 100%);
   border-color: color-mix(in srgb, var(--weather-hud-accent) 34%, rgba(255, 255, 255, 0.16));
+}
+
+/* Phenomenon-specific UI themes and ambient overlays on the HUD card. */
+.weather-hud-widget[data-phenomenon="aurora"] {
+  --weather-hud-shell-top: color-mix(in srgb, #122d38 62%, #142238);
+  --weather-hud-shell-mid: color-mix(in srgb, #1b434b 58%, #28244d);
+  --weather-hud-shell-bottom: #0d1a2c;
+  --weather-hud-aura-primary: rgba(96, 247, 198, 0.34);
+  --weather-hud-aura-secondary: rgba(176, 124, 255, 0.3);
+  --weather-hud-aura-soft: rgba(142, 255, 222, 0.13);
+  --weather-hud-accent: #7df5d0;
+  --weather-hud-icon-bg: rgba(125, 245, 208, 0.16);
+  --weather-hud-icon-color: #c8ffee;
+  --weather-hud-line: rgba(132, 245, 212, 0.24);
+  --weather-hud-phenomenon-overlay:
+    linear-gradient(122deg, transparent 12%, rgba(92, 245, 196, 0.16) 36%, rgba(168, 122, 255, 0.15) 64%, transparent 88%),
+    radial-gradient(ellipse at 26% 0%, rgba(102, 250, 205, 0.22), transparent 52%);
+}
+
+.weather-hud-widget[data-phenomenon="blossoms"] {
+  --weather-hud-shell-top: #34243c;
+  --weather-hud-shell-mid: #4b314c;
+  --weather-hud-shell-bottom: #1f192c;
+  --weather-hud-aura-primary: rgba(255, 178, 214, 0.36);
+  --weather-hud-aura-secondary: rgba(255, 212, 232, 0.24);
+  --weather-hud-aura-soft: rgba(255, 224, 238, 0.14);
+  --weather-hud-accent: #ffb5d6;
+  --weather-hud-icon-bg: rgba(255, 192, 220, 0.17);
+  --weather-hud-icon-color: #ffe3f0;
+  --weather-hud-line: rgba(255, 196, 224, 0.24);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(ellipse 6px 4px at 18% 24%, rgba(255, 210, 230, 0.42) 0 60%, transparent 100%),
+    radial-gradient(ellipse 7px 4px at 74% 18%, rgba(255, 184, 216, 0.38) 0 60%, transparent 100%),
+    radial-gradient(ellipse 5px 3px at 62% 76%, rgba(255, 218, 235, 0.34) 0 60%, transparent 100%),
+    radial-gradient(ellipse 6px 3.5px at 88% 64%, rgba(255, 176, 212, 0.32) 0 60%, transparent 100%),
+    radial-gradient(circle at 82% 14%, rgba(255, 182, 216, 0.24), transparent 44%);
+}
+
+.weather-hud-widget[data-phenomenon="embers"] {
+  --weather-hud-shell-top: #341d1c;
+  --weather-hud-shell-mid: #4b261f;
+  --weather-hud-shell-bottom: #1e1112;
+  --weather-hud-aura-primary: rgba(255, 134, 62, 0.38);
+  --weather-hud-aura-secondary: rgba(255, 82, 36, 0.28);
+  --weather-hud-aura-soft: rgba(255, 196, 132, 0.13);
+  --weather-hud-accent: #ff9d66;
+  --weather-hud-icon-bg: rgba(255, 146, 78, 0.17);
+  --weather-hud-icon-color: #ffd9b8;
+  --weather-hud-line: rgba(255, 152, 92, 0.24);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(circle 2.2px at 22% 78%, rgba(255, 214, 142, 0.62) 0 55%, transparent 100%),
+    radial-gradient(circle 1.8px at 68% 84%, rgba(255, 148, 72, 0.56) 0 55%, transparent 100%),
+    radial-gradient(circle 2px at 84% 58%, rgba(255, 196, 118, 0.48) 0 55%, transparent 100%),
+    radial-gradient(ellipse at 50% 108%, rgba(255, 106, 38, 0.32), transparent 56%);
+}
+
+.weather-hud-widget[data-phenomenon="ashfall"] {
+  --weather-hud-shell-top: #262930;
+  --weather-hud-shell-mid: #343842;
+  --weather-hud-shell-bottom: #181a20;
+  --weather-hud-aura-primary: rgba(204, 210, 222, 0.22);
+  --weather-hud-aura-secondary: rgba(144, 152, 168, 0.2);
+  --weather-hud-aura-soft: rgba(228, 232, 240, 0.09);
+  --weather-hud-accent: #cbd2e0;
+  --weather-hud-icon-bg: rgba(210, 216, 226, 0.13);
+  --weather-hud-icon-color: #eef1f6;
+  --weather-hud-line: rgba(206, 212, 224, 0.2);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(circle 1.8px at 28% 30%, rgba(226, 230, 238, 0.36) 0 60%, transparent 100%),
+    radial-gradient(circle 1.5px at 72% 42%, rgba(204, 210, 220, 0.32) 0 60%, transparent 100%),
+    radial-gradient(circle 1.8px at 54% 78%, rgba(218, 222, 232, 0.28) 0 60%, transparent 100%),
+    linear-gradient(180deg, rgba(210, 215, 224, 0.1), transparent 46%);
+}
+
+.weather-hud-widget[data-phenomenon="fireflies"] {
+  --weather-hud-shell-top: #172a28;
+  --weather-hud-shell-mid: #203b32;
+  --weather-hud-shell-bottom: #0f1c1b;
+  --weather-hud-aura-primary: rgba(208, 250, 110, 0.32);
+  --weather-hud-aura-secondary: rgba(108, 222, 148, 0.24);
+  --weather-hud-aura-soft: rgba(232, 255, 164, 0.12);
+  --weather-hud-accent: #d4fb7c;
+  --weather-hud-icon-bg: rgba(210, 250, 118, 0.16);
+  --weather-hud-icon-color: #efffbf;
+  --weather-hud-line: rgba(208, 248, 122, 0.23);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(circle 9px at 20% 32%, rgba(226, 255, 138, 0.34), transparent 70%),
+    radial-gradient(circle 11px at 76% 68%, rgba(196, 252, 112, 0.32), transparent 72%),
+    radial-gradient(circle 8px at 62% 22%, rgba(234, 255, 156, 0.28), transparent 70%);
+}
+
+.weather-hud-widget[data-phenomenon="sandstorm"] {
+  --weather-hud-shell-top: #3b2c1d;
+  --weather-hud-shell-mid: #563e27;
+  --weather-hud-shell-bottom: #261b12;
+  --weather-hud-aura-primary: rgba(242, 192, 120, 0.36);
+  --weather-hud-aura-secondary: rgba(206, 144, 78, 0.28);
+  --weather-hud-aura-soft: rgba(252, 218, 164, 0.13);
+  --weather-hud-accent: #f3c482;
+  --weather-hud-icon-bg: rgba(242, 196, 128, 0.17);
+  --weather-hud-icon-color: #ffebc8;
+  --weather-hud-line: rgba(240, 194, 128, 0.24);
+  --weather-hud-phenomenon-overlay:
+    repeating-linear-gradient(-14deg, transparent 0 14px, rgba(242, 196, 128, 0.055) 14px 18px, transparent 18px 34px),
+    linear-gradient(108deg, rgba(238, 184, 110, 0.2), transparent 52%, rgba(214, 154, 84, 0.16) 100%);
 }
 
 .weather-hud-header,
@@ -5740,6 +6792,13 @@ var WEATHER_HUD_CSS = `
   gap: 6px;
 }
 
+.weather-hud-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .weather-hud-eyebrow {
   font-size: 9px;
   letter-spacing: 0.2em;
@@ -5747,7 +6806,8 @@ var WEATHER_HUD_CSS = `
   color: var(--weather-hud-text-muted);
 }
 
-.weather-hud-source {
+.weather-hud-source,
+.weather-hud-phenomenon-badge {
   display: inline-flex;
   align-items: center;
   width: fit-content;
@@ -5760,6 +6820,26 @@ var WEATHER_HUD_CSS = `
   letter-spacing: 0.12em;
   text-transform: uppercase;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.weather-hud-phenomenon-badge[hidden] {
+  display: none;
+}
+
+.weather-hud-phenomenon-badge {
+  gap: 5px;
+  border-color: color-mix(in srgb, var(--weather-hud-accent) 44%, var(--weather-hud-line));
+  background: color-mix(in srgb, var(--weather-hud-accent) 18%, var(--weather-hud-surface));
+  color: var(--weather-hud-icon-color);
+}
+
+.weather-hud-phenomenon-badge::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--weather-hud-accent);
+  box-shadow: 0 0 8px var(--weather-hud-accent);
 }
 
 .weather-hud-actions {
@@ -7486,10 +8566,17 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
   const eyebrow = document.createElement("div");
   eyebrow.className = "weather-hud-eyebrow";
   eyebrow.textContent = "LumiWeather";
+  const badgeRow = document.createElement("div");
+  badgeRow.className = "weather-hud-badges";
   const source = document.createElement("span");
   source.className = "weather-hud-source";
+  const phenomenonBadge = document.createElement("span");
+  phenomenonBadge.className = "weather-hud-phenomenon-badge";
+  phenomenonBadge.hidden = true;
+  badgeRow.appendChild(source);
+  badgeRow.appendChild(phenomenonBadge);
   titleWrap.appendChild(eyebrow);
-  titleWrap.appendChild(source);
+  titleWrap.appendChild(badgeRow);
   const headerActions = document.createElement("div");
   headerActions.className = "weather-hud-actions";
   const drawerToggle = document.createElement("button");
@@ -7828,6 +8915,7 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     temp,
     summary,
     source,
+    phenomenonBadge,
     drawerToggle,
     drawerToggleLabel,
     drawerToggleIcon,
@@ -7953,6 +9041,15 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   hud.root.dataset.exposure = exposure;
   hud.root.dataset.phenomenon = phenomenon;
   hud.root.dataset.lunarPhase = lunar.phase;
+  const hasPhenomenon = Boolean(state && phenomenon !== "none");
+  hud.phenomenonBadge.hidden = !hasPhenomenon;
+  if (hasPhenomenon) {
+    hud.phenomenonBadge.textContent = phenomenon;
+    hud.phenomenonBadge.dataset.phenomenon = phenomenon;
+  } else {
+    hud.phenomenonBadge.textContent = "";
+    delete hud.phenomenonBadge.dataset.phenomenon;
+  }
   const iconMarkup = conditionIcon(displayState.condition, phase);
   hud.icon.innerHTML = iconMarkup;
   const iconLabel = conditionIconLabel(displayState.condition, phase);

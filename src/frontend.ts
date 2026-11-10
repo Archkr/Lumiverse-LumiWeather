@@ -105,6 +105,7 @@ type HudElements = {
   temp: HTMLDivElement;
   summary: HTMLDivElement;
   source: HTMLSpanElement;
+  phenomenonBadge: HTMLSpanElement;
   drawerToggle: HTMLButtonElement;
   drawerToggleLabel: HTMLSpanElement;
   drawerToggleIcon: HTMLSpanElement;
@@ -261,10 +262,17 @@ function createHudWidget(
   const eyebrow = document.createElement("div");
   eyebrow.className = "weather-hud-eyebrow";
   eyebrow.textContent = "LumiWeather";
+  const badgeRow = document.createElement("div");
+  badgeRow.className = "weather-hud-badges";
   const source = document.createElement("span");
   source.className = "weather-hud-source";
+  const phenomenonBadge = document.createElement("span");
+  phenomenonBadge.className = "weather-hud-phenomenon-badge";
+  phenomenonBadge.hidden = true;
+  badgeRow.appendChild(source);
+  badgeRow.appendChild(phenomenonBadge);
   titleWrap.appendChild(eyebrow);
-  titleWrap.appendChild(source);
+  titleWrap.appendChild(badgeRow);
 
   const headerActions = document.createElement("div");
   headerActions.className = "weather-hud-actions";
@@ -652,6 +660,7 @@ function createHudWidget(
     temp,
     summary,
     source,
+    phenomenonBadge,
     drawerToggle,
     drawerToggleLabel,
     drawerToggleIcon,
@@ -806,6 +815,16 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.root.dataset.exposure = exposure;
   hud.root.dataset.phenomenon = phenomenon;
   hud.root.dataset.lunarPhase = lunar.phase;
+
+  const hasPhenomenon = Boolean(state && phenomenon !== "none");
+  hud.phenomenonBadge.hidden = !hasPhenomenon;
+  if (hasPhenomenon) {
+    hud.phenomenonBadge.textContent = phenomenon;
+    hud.phenomenonBadge.dataset.phenomenon = phenomenon;
+  } else {
+    hud.phenomenonBadge.textContent = "";
+    delete hud.phenomenonBadge.dataset.phenomenon;
+  }
 
   const iconMarkup = conditionIcon(displayState.condition, phase);
   hud.icon.innerHTML = iconMarkup;

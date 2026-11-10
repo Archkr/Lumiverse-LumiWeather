@@ -665,6 +665,36 @@ export const WEATHER_HUD_CSS = `
   --lumi-scene-glow: rgba(208, 225, 233, 0.3);
 }
 
+.weather-settings-scene-hero[data-phenomenon="aurora"] {
+  --lumi-scene-glow: rgba(94, 242, 198, 0.42);
+  border-color: color-mix(in srgb, rgba(114, 245, 206, 0.55) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="blossoms"] {
+  --lumi-scene-glow: rgba(255, 178, 214, 0.42);
+  border-color: color-mix(in srgb, rgba(255, 184, 218, 0.55) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="embers"] {
+  --lumi-scene-glow: rgba(255, 132, 64, 0.44);
+  border-color: color-mix(in srgb, rgba(255, 148, 82, 0.58) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="ashfall"] {
+  --lumi-scene-glow: rgba(196, 202, 214, 0.34);
+  border-color: color-mix(in srgb, rgba(208, 214, 226, 0.48) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="fireflies"] {
+  --lumi-scene-glow: rgba(206, 248, 112, 0.4);
+  border-color: color-mix(in srgb, rgba(212, 252, 124, 0.52) 60%, var(--lumi-glass-line));
+}
+
+.weather-settings-scene-hero[data-phenomenon="sandstorm"] {
+  --lumi-scene-glow: rgba(238, 188, 118, 0.44);
+  border-color: color-mix(in srgb, rgba(238, 192, 126, 0.56) 60%, var(--lumi-glass-line));
+}
+
 .weather-settings-glass-panel {
   position: relative;
   overflow: hidden;
@@ -861,6 +891,7 @@ export const WEATHER_HUD_CSS = `
   overflow: hidden;
   backdrop-filter: blur(18px) saturate(132%);
   background:
+    var(--weather-hud-phenomenon-overlay, linear-gradient(transparent, transparent)),
     radial-gradient(circle at 84% 16%, var(--weather-hud-aura-primary), transparent 30%),
     radial-gradient(circle at 18% 112%, var(--weather-hud-aura-secondary), transparent 44%),
     linear-gradient(162deg, var(--weather-hud-shell-top) 0%, var(--weather-hud-shell-mid) 48%, var(--weather-hud-shell-bottom) 100%);
@@ -1103,10 +1134,116 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-widget[data-source="manual"] {
   background:
+    var(--weather-hud-phenomenon-overlay, linear-gradient(transparent, transparent)),
     radial-gradient(circle at 84% 16%, color-mix(in srgb, var(--weather-hud-aura-primary) 90%, rgba(198, 226, 255, 0.26)) 0%, transparent 30%),
     radial-gradient(circle at 18% 112%, var(--weather-hud-aura-secondary), transparent 44%),
     linear-gradient(162deg, color-mix(in srgb, var(--weather-hud-shell-top) 90%, rgba(24, 49, 87, 0.7)) 0%, var(--weather-hud-shell-mid) 48%, var(--weather-hud-shell-bottom) 100%);
   border-color: color-mix(in srgb, var(--weather-hud-accent) 34%, rgba(255, 255, 255, 0.16));
+}
+
+/* Phenomenon-specific UI themes and ambient overlays on the HUD card. */
+.weather-hud-widget[data-phenomenon="aurora"] {
+  --weather-hud-shell-top: color-mix(in srgb, #122d38 62%, #142238);
+  --weather-hud-shell-mid: color-mix(in srgb, #1b434b 58%, #28244d);
+  --weather-hud-shell-bottom: #0d1a2c;
+  --weather-hud-aura-primary: rgba(96, 247, 198, 0.34);
+  --weather-hud-aura-secondary: rgba(176, 124, 255, 0.3);
+  --weather-hud-aura-soft: rgba(142, 255, 222, 0.13);
+  --weather-hud-accent: #7df5d0;
+  --weather-hud-icon-bg: rgba(125, 245, 208, 0.16);
+  --weather-hud-icon-color: #c8ffee;
+  --weather-hud-line: rgba(132, 245, 212, 0.24);
+  --weather-hud-phenomenon-overlay:
+    linear-gradient(122deg, transparent 12%, rgba(92, 245, 196, 0.16) 36%, rgba(168, 122, 255, 0.15) 64%, transparent 88%),
+    radial-gradient(ellipse at 26% 0%, rgba(102, 250, 205, 0.22), transparent 52%);
+}
+
+.weather-hud-widget[data-phenomenon="blossoms"] {
+  --weather-hud-shell-top: #34243c;
+  --weather-hud-shell-mid: #4b314c;
+  --weather-hud-shell-bottom: #1f192c;
+  --weather-hud-aura-primary: rgba(255, 178, 214, 0.36);
+  --weather-hud-aura-secondary: rgba(255, 212, 232, 0.24);
+  --weather-hud-aura-soft: rgba(255, 224, 238, 0.14);
+  --weather-hud-accent: #ffb5d6;
+  --weather-hud-icon-bg: rgba(255, 192, 220, 0.17);
+  --weather-hud-icon-color: #ffe3f0;
+  --weather-hud-line: rgba(255, 196, 224, 0.24);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(ellipse 6px 4px at 18% 24%, rgba(255, 210, 230, 0.42) 0 60%, transparent 100%),
+    radial-gradient(ellipse 7px 4px at 74% 18%, rgba(255, 184, 216, 0.38) 0 60%, transparent 100%),
+    radial-gradient(ellipse 5px 3px at 62% 76%, rgba(255, 218, 235, 0.34) 0 60%, transparent 100%),
+    radial-gradient(ellipse 6px 3.5px at 88% 64%, rgba(255, 176, 212, 0.32) 0 60%, transparent 100%),
+    radial-gradient(circle at 82% 14%, rgba(255, 182, 216, 0.24), transparent 44%);
+}
+
+.weather-hud-widget[data-phenomenon="embers"] {
+  --weather-hud-shell-top: #341d1c;
+  --weather-hud-shell-mid: #4b261f;
+  --weather-hud-shell-bottom: #1e1112;
+  --weather-hud-aura-primary: rgba(255, 134, 62, 0.38);
+  --weather-hud-aura-secondary: rgba(255, 82, 36, 0.28);
+  --weather-hud-aura-soft: rgba(255, 196, 132, 0.13);
+  --weather-hud-accent: #ff9d66;
+  --weather-hud-icon-bg: rgba(255, 146, 78, 0.17);
+  --weather-hud-icon-color: #ffd9b8;
+  --weather-hud-line: rgba(255, 152, 92, 0.24);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(circle 2.2px at 22% 78%, rgba(255, 214, 142, 0.62) 0 55%, transparent 100%),
+    radial-gradient(circle 1.8px at 68% 84%, rgba(255, 148, 72, 0.56) 0 55%, transparent 100%),
+    radial-gradient(circle 2px at 84% 58%, rgba(255, 196, 118, 0.48) 0 55%, transparent 100%),
+    radial-gradient(ellipse at 50% 108%, rgba(255, 106, 38, 0.32), transparent 56%);
+}
+
+.weather-hud-widget[data-phenomenon="ashfall"] {
+  --weather-hud-shell-top: #262930;
+  --weather-hud-shell-mid: #343842;
+  --weather-hud-shell-bottom: #181a20;
+  --weather-hud-aura-primary: rgba(204, 210, 222, 0.22);
+  --weather-hud-aura-secondary: rgba(144, 152, 168, 0.2);
+  --weather-hud-aura-soft: rgba(228, 232, 240, 0.09);
+  --weather-hud-accent: #cbd2e0;
+  --weather-hud-icon-bg: rgba(210, 216, 226, 0.13);
+  --weather-hud-icon-color: #eef1f6;
+  --weather-hud-line: rgba(206, 212, 224, 0.2);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(circle 1.8px at 28% 30%, rgba(226, 230, 238, 0.36) 0 60%, transparent 100%),
+    radial-gradient(circle 1.5px at 72% 42%, rgba(204, 210, 220, 0.32) 0 60%, transparent 100%),
+    radial-gradient(circle 1.8px at 54% 78%, rgba(218, 222, 232, 0.28) 0 60%, transparent 100%),
+    linear-gradient(180deg, rgba(210, 215, 224, 0.1), transparent 46%);
+}
+
+.weather-hud-widget[data-phenomenon="fireflies"] {
+  --weather-hud-shell-top: #172a28;
+  --weather-hud-shell-mid: #203b32;
+  --weather-hud-shell-bottom: #0f1c1b;
+  --weather-hud-aura-primary: rgba(208, 250, 110, 0.32);
+  --weather-hud-aura-secondary: rgba(108, 222, 148, 0.24);
+  --weather-hud-aura-soft: rgba(232, 255, 164, 0.12);
+  --weather-hud-accent: #d4fb7c;
+  --weather-hud-icon-bg: rgba(210, 250, 118, 0.16);
+  --weather-hud-icon-color: #efffbf;
+  --weather-hud-line: rgba(208, 248, 122, 0.23);
+  --weather-hud-phenomenon-overlay:
+    radial-gradient(circle 9px at 20% 32%, rgba(226, 255, 138, 0.34), transparent 70%),
+    radial-gradient(circle 11px at 76% 68%, rgba(196, 252, 112, 0.32), transparent 72%),
+    radial-gradient(circle 8px at 62% 22%, rgba(234, 255, 156, 0.28), transparent 70%);
+}
+
+.weather-hud-widget[data-phenomenon="sandstorm"] {
+  --weather-hud-shell-top: #3b2c1d;
+  --weather-hud-shell-mid: #563e27;
+  --weather-hud-shell-bottom: #261b12;
+  --weather-hud-aura-primary: rgba(242, 192, 120, 0.36);
+  --weather-hud-aura-secondary: rgba(206, 144, 78, 0.28);
+  --weather-hud-aura-soft: rgba(252, 218, 164, 0.13);
+  --weather-hud-accent: #f3c482;
+  --weather-hud-icon-bg: rgba(242, 196, 128, 0.17);
+  --weather-hud-icon-color: #ffebc8;
+  --weather-hud-line: rgba(240, 194, 128, 0.24);
+  --weather-hud-phenomenon-overlay:
+    repeating-linear-gradient(-14deg, transparent 0 14px, rgba(242, 196, 128, 0.055) 14px 18px, transparent 18px 34px),
+    linear-gradient(108deg, rgba(238, 184, 110, 0.2), transparent 52%, rgba(214, 154, 84, 0.16) 100%);
 }
 
 .weather-hud-header,
@@ -1132,6 +1269,13 @@ export const WEATHER_HUD_CSS = `
   gap: 6px;
 }
 
+.weather-hud-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .weather-hud-eyebrow {
   font-size: 9px;
   letter-spacing: 0.2em;
@@ -1139,7 +1283,8 @@ export const WEATHER_HUD_CSS = `
   color: var(--weather-hud-text-muted);
 }
 
-.weather-hud-source {
+.weather-hud-source,
+.weather-hud-phenomenon-badge {
   display: inline-flex;
   align-items: center;
   width: fit-content;
@@ -1152,6 +1297,26 @@ export const WEATHER_HUD_CSS = `
   letter-spacing: 0.12em;
   text-transform: uppercase;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.weather-hud-phenomenon-badge[hidden] {
+  display: none;
+}
+
+.weather-hud-phenomenon-badge {
+  gap: 5px;
+  border-color: color-mix(in srgb, var(--weather-hud-accent) 44%, var(--weather-hud-line));
+  background: color-mix(in srgb, var(--weather-hud-accent) 18%, var(--weather-hud-surface));
+  color: var(--weather-hud-icon-color);
+}
+
+.weather-hud-phenomenon-badge::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--weather-hud-accent);
+  box-shadow: 0 0 8px var(--weather-hud-accent);
 }
 
 .weather-hud-actions {

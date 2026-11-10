@@ -902,6 +902,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       status.dataset.mode = stateMode;
       preview.dataset.mode = stateMode;
       preview.dataset.condition = state?.condition ?? "waiting";
+      preview.dataset.phenomenon = state?.phenomenon ?? "none";
+      root.dataset.phenomenon = state?.phenomenon ?? "none";
 
       status.textContent = statusOverride ?? (state
         ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}`

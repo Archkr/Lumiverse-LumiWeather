@@ -17,7 +17,7 @@ It is built for story-driven use, not live forecast data. The model controls the
 - Indoor, sheltered, and underground **exposure awareness** with windowpane condensation & rain rivulets when indoors
 - Secondary **atmospheric phenomena** (`aurora`, `blossoms`, `embers`, `ashfall`, `fireflies`, `sandstorm`)
 - Astronomical **lunar phase model** calculated from the story calendar date (`new`, `waxing-crescent`, `first-quarter`, `waxing-gibbous`, `full`, `waning-gibbous`, `last-quarter`, `waning-crescent`) that modulates night starlight and moonbeams
-- Zero-asset **procedural WebAudio soundscape synthesizer** with rain, wind, crackle, harmonic shimmer, lightning-synced stereo thunder rumbles, and automatic low-pass wall/shelter occlusion
+- Zero-asset **procedural WebAudio soundscape synthesizer** with living, never-looping layers: gusting wind with whistle and sand grit, swelling rain with individually synthesized droplets and window taps, ember pops, aurora/firefly chimes, crickets and birdsong, cave drips, distance-modelled thunder (crack, rolling rumble), convolution reverb, and automatic low-pass wall/shelter occlusion
 - Image-generation **visual prompt macro** (`{{weather_visual_tags}}`)
 - Scene changes blend between palettes and effects instead of swapping instantly
 - Per-chat persistence for story state and manual overrides
@@ -89,7 +89,7 @@ Condition and attribute names are case-insensitive. Common condition aliases suc
 - `exposure` is one of `outdoor` (default), `sheltered`, `indoor`, or `underground`. Common aliases such as `inside`, `tavern`, `cabin`, `porch`, `balcony`, `cave`, and `dungeon` are normalized automatically. When `indoor` or `sheltered` is active during rain or storm, direct precipitation is softened and a windowpane condensation/rivulet layer renders; when `underground` is active, sky and precipitation layers are suppressed in favor of deep subterranean mist and dust motes.
 - `phenomenon` is one of `none` (default), `aurora`, `blossoms`, `embers`, `ashfall`, `fireflies`, or `sandstorm`. Common aliases such as `northern-lights`, `sakura`, `petals`, `cinders`, `ash`, `lightning-bugs`, and `dust-storm` are normalized automatically.
 - **Astronomical lunar phase**: Computed automatically from the story date (`YYYY-MM-DD`) across the 29.53-day synodic cycle. Clear nights scale moonbeam glow and starlight contrast with the moon's disc illumination (`0..1`).
-- **Procedural WebAudio soundscape**: Optional zero-asset synthesizer in the HUD and settings panel. Synthesizes rain, wind, hearth/ember crackle, aurora/firefly harmonic shimmer, and stereo-panned thunder rumbles timed to lightning strikes. Moving from `outdoor` to `sheltered`, `indoor`, or `underground` applies a real-time low-pass acoustic wall occlusion filter.
+- **Procedural WebAudio soundscape**: Optional zero-asset synthesizer in the HUD and settings panel. Synthesizes decorrelated stereo rain beds with granular droplets (window taps indoors, puddle plinks under shelter), gusting wind whose filter, whistle, and stereo position surge and lull, hearth/ember roar with discrete pops, drifting aurora pads and firefly chimes, season/time-aware crickets and birdsong in calm scenes, underground cave drips, and thunder whose delay, crack, and rumble length follow the strike distance, all inside a procedural reverb sized to the exposure. Moving from `outdoor` to `sheltered`, `indoor`, or `underground` applies a real-time low-pass acoustic wall occlusion filter.
 
 Effect placement is user-controlled in settings:
 
