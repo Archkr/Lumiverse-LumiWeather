@@ -708,7 +708,7 @@ export const WEATHER_HUD_CSS = `
   min-width: 0;
 }
 
-.weather-settings-control-deck .weather-settings-section:nth-child(3) {
+.weather-settings-control-deck .weather-settings-section:nth-child(odd):last-child {
   grid-column: span 2;
 }
 
@@ -1507,6 +1507,16 @@ export const WEATHER_HUD_CSS = `
 .weather-hud-control-grid {
   display: grid;
   gap: 10px;
+}
+
+.weather-hud-volume-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 10px;
+}
+
+.weather-hud-field-wide {
+  grid-column: 1 / -1;
 }
 
 .weather-hud-field {

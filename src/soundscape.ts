@@ -41,11 +41,19 @@ export function resolveSoundscapeProfile(
   visible = true,
 ): SoundscapeProfile {
   const soundEnabled = Boolean(prefs.soundEnabled);
-  const volume = clamp(Number.isFinite(prefs.soundVolume) ? (prefs.soundVolume as number) : 0.45, 0.05, 1);
+  const volume = clamp(Number.isFinite(prefs.soundVolume) ? (prefs.soundVolume as number) : 0.45, 0, 1);
+  const rainVolume = clamp(Number.isFinite(prefs.rainVolume) ? (prefs.rainVolume as number) : 1, 0, 1);
+  const windVolume = clamp(Number.isFinite(prefs.windVolume) ? (prefs.windVolume as number) : 1, 0, 1);
+  const thunderVolume = clamp(Number.isFinite(prefs.thunderVolume) ? (prefs.thunderVolume as number) : 1, 0, 1);
+  const ambienceVolume = clamp(
+    Number.isFinite(prefs.ambienceVolume) ? (prefs.ambienceVolume as number) : 1,
+    0,
+    1,
+  );
   const exposure: WeatherExposure = state?.exposure ?? "outdoor";
   const lowpassHz = EXPOSURE_LOWPASS_HZ[exposure];
 
-  if (!visible || !soundEnabled || prefs.pauseEffects || !state) {
+  if (!visible || !soundEnabled || prefs.pauseEffects || !state || volume <= 0) {
     return {
       active: false,
       masterGain: 0,
@@ -121,13 +129,13 @@ export function resolveSoundscapeProfile(
     active: true,
     masterGain: Number(volume.toFixed(3)),
     lowpassHz,
-    rainWashGain: Number((rainWashBase * rainExposureScale).toFixed(3)),
-    rainPatterGain: Number((rainPatterBase * patterExposureScale).toFixed(3)),
-    windGain: Number(windGain.toFixed(3)),
+    rainWashGain: Number((rainWashBase * rainExposureScale * rainVolume).toFixed(3)),
+    rainPatterGain: Number((rainPatterBase * patterExposureScale * rainVolume).toFixed(3)),
+    windGain: Number((windGain * windVolume).toFixed(3)),
     windCenterHz,
-    emberCrackleGain: Number(emberCrackleGain.toFixed(3)),
-    shimmerDroneGain: Number(shimmerDroneGain.toFixed(3)),
-    thunderGainScale: Number(thunderGainScale.toFixed(3)),
+    emberCrackleGain: Number((emberCrackleGain * ambienceVolume).toFixed(3)),
+    shimmerDroneGain: Number((shimmerDroneGain * ambienceVolume).toFixed(3)),
+    thunderGainScale: Number((thunderGainScale * thunderVolume).toFixed(3)),
   };
 }
 

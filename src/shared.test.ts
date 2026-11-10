@@ -133,10 +133,25 @@ describe("story weather normalization", () => {
     expect(normalizePrefs({ clockMode: "sideways" }).clockMode).toBe("auto");
     expect(legacy.soundEnabled).toBe(false);
     expect(legacy.soundVolume).toBe(0.45);
+    expect(legacy.rainVolume).toBe(1);
+    expect(legacy.windVolume).toBe(1);
+    expect(legacy.thunderVolume).toBe(1);
+    expect(legacy.ambienceVolume).toBe(1);
 
-    const audioPrefs = normalizePrefs({ soundEnabled: true, soundVolume: 0.8 });
+    const audioPrefs = normalizePrefs({
+      soundEnabled: true,
+      soundVolume: 0.8,
+      rainVolume: 0.65,
+      windVolume: 0.4,
+      thunderVolume: 0,
+      ambienceVolume: 1.4,
+    });
     expect(audioPrefs.soundEnabled).toBe(true);
     expect(audioPrefs.soundVolume).toBe(0.8);
+    expect(audioPrefs.rainVolume).toBe(0.65);
+    expect(audioPrefs.windVolume).toBe(0.4);
+    expect(audioPrefs.thunderVolume).toBe(0);
+    expect(audioPrefs.ambienceVolume).toBe(1);
   });
 
   test("normalizes exposure and phenomenon tag aliases", () => {

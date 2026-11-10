@@ -11,6 +11,7 @@ import {
   resolveLunarPhase,
 } from "../shared";
 import type {
+  SoundVolumeChannel,
   WeatherCondition,
   WeatherExposure,
   WeatherPalette,
@@ -188,6 +189,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   const effectsSection = createSection("Effects", "Overall ambience, density, and motion.");
   const placementSection = createSection("Placement", "Control whether the weather stays behind the chat, in front, or both.");
   const motionSection = createSection("Motion", "Fine-tune animation pacing without breaking story sync.");
+  const soundSection = createSection("Soundscape mixer", "Balance master volume and individual procedural audio layers.");
 
   const promptRecommended = document.createElement("div");
   promptRecommended.className = "weather-settings-copy-group";
@@ -258,34 +260,48 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   });
   soundLabel.appendChild(soundToggle);
 
-  const soundVolumeLabel = document.createElement("label");
-  soundVolumeLabel.className = "weather-settings-label";
-  soundVolumeLabel.textContent = "Soundscape volume";
+  const settingsVolumeControls: Partial<
+    Record<SoundVolumeChannel, { slider: HTMLInputElement; value: HTMLSpanElement }>
+  > = {};
 
-  const soundVolumeRow = document.createElement("div");
-  soundVolumeRow.className = "weather-settings-row";
+  const createSettingsVolumeRow = (channel: SoundVolumeChannel, labelText: string): HTMLLabelElement => {
+    const label = document.createElement("label");
+    label.className = "weather-settings-label";
+    label.textContent = labelText;
 
-  const soundVolumeSlider = document.createElement("input");
-  soundVolumeSlider.type = "range";
-  soundVolumeSlider.className = "weather-settings-range";
-  soundVolumeSlider.setAttribute("aria-label", "Soundscape volume");
-  soundVolumeSlider.min = "0.05";
-  soundVolumeSlider.max = "1.00";
-  soundVolumeSlider.step = "0.05";
+    const row = document.createElement("div");
+    row.className = "weather-settings-row";
 
-  const soundVolumeValue = document.createElement("span");
-  soundVolumeValue.className = "weather-settings-value";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "weather-settings-range";
+    slider.setAttribute("aria-label", labelText);
+    slider.min = "0.00";
+    slider.max = "1.00";
+    slider.step = "0.05";
 
-  soundVolumeSlider.addEventListener("input", () => {
-    const soundVolume = Number.parseFloat(soundVolumeSlider.value);
-    soundVolumeValue.textContent = `${Math.round(soundVolume * 100)}%`;
-    soundVolumeSlider.setAttribute("aria-valuetext", soundVolumeValue.textContent);
-    sendToBackend({ type: "save_prefs", prefs: { soundVolume } });
-  });
+    const value = document.createElement("span");
+    value.className = "weather-settings-value";
 
-  soundVolumeRow.appendChild(soundVolumeSlider);
-  soundVolumeRow.appendChild(soundVolumeValue);
-  soundVolumeLabel.appendChild(soundVolumeRow);
+    slider.addEventListener("input", () => {
+      const nextVol = Number.parseFloat(slider.value);
+      value.textContent = `${Math.round(nextVol * 100)}%`;
+      slider.setAttribute("aria-valuetext", value.textContent);
+      sendToBackend({ type: "save_prefs", prefs: { [channel]: nextVol } });
+    });
+
+    row.appendChild(slider);
+    row.appendChild(value);
+    label.appendChild(row);
+    settingsVolumeControls[channel] = { slider, value };
+    return label;
+  };
+
+  const soundVolumeLabel = createSettingsVolumeRow("soundVolume", "Master volume");
+  const rainVolumeLabel = createSettingsVolumeRow("rainVolume", "Rain volume");
+  const windVolumeLabel = createSettingsVolumeRow("windVolume", "Wind volume");
+  const thunderVolumeLabel = createSettingsVolumeRow("thunderVolume", "Thunder volume");
+  const ambienceVolumeLabel = createSettingsVolumeRow("ambienceVolume", "Ambience & phenomena volume");
 
   const layerLabel = document.createElement("label");
   layerLabel.className = "weather-settings-label";
@@ -423,8 +439,12 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   effectsSection.body.appendChild(effectsLabel);
   effectsSection.body.appendChild(lightningLabel);
-  effectsSection.body.appendChild(soundLabel);
-  effectsSection.body.appendChild(soundVolumeLabel);
+  soundSection.body.appendChild(soundLabel);
+  soundSection.body.appendChild(soundVolumeLabel);
+  soundSection.body.appendChild(rainVolumeLabel);
+  soundSection.body.appendChild(windVolumeLabel);
+  soundSection.body.appendChild(thunderVolumeLabel);
+  soundSection.body.appendChild(ambienceVolumeLabel);
   placementSection.body.appendChild(layerLabel);
   placementSection.body.appendChild(temperatureUnitLabel);
   motionSection.body.appendChild(intensityLabel);
@@ -819,6 +839,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   controlDeck.appendChild(effectsSection.section);
   controlDeck.appendChild(placementSection.section);
   controlDeck.appendChild(motionSection.section);
+  controlDeck.appendChild(soundSection.section);
 
   body.appendChild(preview);
   body.appendChild(promptSection.section);
@@ -841,10 +862,20 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       soundToggle.checked = Boolean(prefs.soundEnabled);
-      const soundVolume = prefs.soundVolume ?? 0.45;
-      soundVolumeSlider.value = soundVolume.toFixed(2);
-      soundVolumeValue.textContent = `${Math.round(soundVolume * 100)}%`;
-      soundVolumeSlider.setAttribute("aria-valuetext", soundVolumeValue.textContent);
+      const volumeChannels: Record<SoundVolumeChannel, number> = {
+        soundVolume: prefs.soundVolume ?? 0.45,
+        rainVolume: prefs.rainVolume ?? 1,
+        windVolume: prefs.windVolume ?? 1,
+        thunderVolume: prefs.thunderVolume ?? 1,
+        ambienceVolume: prefs.ambienceVolume ?? 1,
+      };
+      for (const [channel, vol] of Object.entries(volumeChannels) as Array<[SoundVolumeChannel, number]>) {
+        const ctrl = settingsVolumeControls[channel];
+        if (!ctrl) continue;
+        ctrl.slider.value = vol.toFixed(2);
+        ctrl.value.textContent = `${Math.round(vol * 100)}%`;
+        ctrl.slider.setAttribute("aria-valuetext", ctrl.value.textContent);
+      }
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
       if (pendingIntensity === null) {

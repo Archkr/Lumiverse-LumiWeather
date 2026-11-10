@@ -1189,7 +1189,11 @@ var DEFAULT_PREFS = {
   showForecast: true,
   transitionsEnabled: true,
   soundEnabled: false,
-  soundVolume: 0.45
+  soundVolume: 0.45,
+  rainVolume: 1,
+  windVolume: 1,
+  thunderVolume: 1,
+  ambienceVolume: 1
 };
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -3403,10 +3407,14 @@ function resolveWindStrengthFactor(wind) {
 }
 function resolveSoundscapeProfile(state, prefs, visible = true) {
   const soundEnabled = Boolean(prefs.soundEnabled);
-  const volume = clamp(Number.isFinite(prefs.soundVolume) ? prefs.soundVolume : 0.45, 0.05, 1);
+  const volume = clamp(Number.isFinite(prefs.soundVolume) ? prefs.soundVolume : 0.45, 0, 1);
+  const rainVolume = clamp(Number.isFinite(prefs.rainVolume) ? prefs.rainVolume : 1, 0, 1);
+  const windVolume = clamp(Number.isFinite(prefs.windVolume) ? prefs.windVolume : 1, 0, 1);
+  const thunderVolume = clamp(Number.isFinite(prefs.thunderVolume) ? prefs.thunderVolume : 1, 0, 1);
+  const ambienceVolume = clamp(Number.isFinite(prefs.ambienceVolume) ? prefs.ambienceVolume : 1, 0, 1);
   const exposure = state?.exposure ?? "outdoor";
   const lowpassHz = EXPOSURE_LOWPASS_HZ[exposure];
-  if (!visible || !soundEnabled || prefs.pauseEffects || !state) {
+  if (!visible || !soundEnabled || prefs.pauseEffects || !state || volume <= 0) {
     return {
       active: false,
       masterGain: 0,
@@ -3440,13 +3448,13 @@ function resolveSoundscapeProfile(state, prefs, visible = true) {
     active: true,
     masterGain: Number(volume.toFixed(3)),
     lowpassHz,
-    rainWashGain: Number((rainWashBase * rainExposureScale).toFixed(3)),
-    rainPatterGain: Number((rainPatterBase * patterExposureScale).toFixed(3)),
-    windGain: Number(windGain.toFixed(3)),
+    rainWashGain: Number((rainWashBase * rainExposureScale * rainVolume).toFixed(3)),
+    rainPatterGain: Number((rainPatterBase * patterExposureScale * rainVolume).toFixed(3)),
+    windGain: Number((windGain * windVolume).toFixed(3)),
     windCenterHz,
-    emberCrackleGain: Number(emberCrackleGain.toFixed(3)),
-    shimmerDroneGain: Number(shimmerDroneGain.toFixed(3)),
-    thunderGainScale: Number(thunderGainScale.toFixed(3))
+    emberCrackleGain: Number((emberCrackleGain * ambienceVolume).toFixed(3)),
+    shimmerDroneGain: Number((shimmerDroneGain * ambienceVolume).toFixed(3)),
+    thunderGainScale: Number((thunderGainScale * thunderVolume).toFixed(3))
   };
 }
 function resolveAudioContextConstructor() {
@@ -3929,6 +3937,7 @@ function createSettingsUI(sendToBackend) {
   const effectsSection = createSection("Effects", "Overall ambience, density, and motion.");
   const placementSection = createSection("Placement", "Control whether the weather stays behind the chat, in front, or both.");
   const motionSection = createSection("Motion", "Fine-tune animation pacing without breaking story sync.");
+  const soundSection = createSection("Soundscape mixer", "Balance master volume and individual procedural audio layers.");
   const promptRecommended = document.createElement("div");
   promptRecommended.className = "weather-settings-copy-group";
   const promptRecommendedLabel = document.createElement("strong");
@@ -3985,29 +3994,39 @@ function createSettingsUI(sendToBackend) {
     sendToBackend({ type: "save_prefs", prefs: { soundEnabled: soundToggle.checked } });
   });
   soundLabel.appendChild(soundToggle);
-  const soundVolumeLabel = document.createElement("label");
-  soundVolumeLabel.className = "weather-settings-label";
-  soundVolumeLabel.textContent = "Soundscape volume";
-  const soundVolumeRow = document.createElement("div");
-  soundVolumeRow.className = "weather-settings-row";
-  const soundVolumeSlider = document.createElement("input");
-  soundVolumeSlider.type = "range";
-  soundVolumeSlider.className = "weather-settings-range";
-  soundVolumeSlider.setAttribute("aria-label", "Soundscape volume");
-  soundVolumeSlider.min = "0.05";
-  soundVolumeSlider.max = "1.00";
-  soundVolumeSlider.step = "0.05";
-  const soundVolumeValue = document.createElement("span");
-  soundVolumeValue.className = "weather-settings-value";
-  soundVolumeSlider.addEventListener("input", () => {
-    const soundVolume = Number.parseFloat(soundVolumeSlider.value);
-    soundVolumeValue.textContent = `${Math.round(soundVolume * 100)}%`;
-    soundVolumeSlider.setAttribute("aria-valuetext", soundVolumeValue.textContent);
-    sendToBackend({ type: "save_prefs", prefs: { soundVolume } });
-  });
-  soundVolumeRow.appendChild(soundVolumeSlider);
-  soundVolumeRow.appendChild(soundVolumeValue);
-  soundVolumeLabel.appendChild(soundVolumeRow);
+  const settingsVolumeControls = {};
+  const createSettingsVolumeRow = (channel, labelText) => {
+    const label = document.createElement("label");
+    label.className = "weather-settings-label";
+    label.textContent = labelText;
+    const row = document.createElement("div");
+    row.className = "weather-settings-row";
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "weather-settings-range";
+    slider.setAttribute("aria-label", labelText);
+    slider.min = "0.00";
+    slider.max = "1.00";
+    slider.step = "0.05";
+    const value = document.createElement("span");
+    value.className = "weather-settings-value";
+    slider.addEventListener("input", () => {
+      const nextVol = Number.parseFloat(slider.value);
+      value.textContent = `${Math.round(nextVol * 100)}%`;
+      slider.setAttribute("aria-valuetext", value.textContent);
+      sendToBackend({ type: "save_prefs", prefs: { [channel]: nextVol } });
+    });
+    row.appendChild(slider);
+    row.appendChild(value);
+    label.appendChild(row);
+    settingsVolumeControls[channel] = { slider, value };
+    return label;
+  };
+  const soundVolumeLabel = createSettingsVolumeRow("soundVolume", "Master volume");
+  const rainVolumeLabel = createSettingsVolumeRow("rainVolume", "Rain volume");
+  const windVolumeLabel = createSettingsVolumeRow("windVolume", "Wind volume");
+  const thunderVolumeLabel = createSettingsVolumeRow("thunderVolume", "Thunder volume");
+  const ambienceVolumeLabel = createSettingsVolumeRow("ambienceVolume", "Ambience & phenomena volume");
   const layerLabel = document.createElement("label");
   layerLabel.className = "weather-settings-label";
   layerLabel.textContent = "Effect placement";
@@ -4126,8 +4145,12 @@ function createSettingsUI(sendToBackend) {
   transitionsLabel.appendChild(transitionsToggle);
   effectsSection.body.appendChild(effectsLabel);
   effectsSection.body.appendChild(lightningLabel);
-  effectsSection.body.appendChild(soundLabel);
-  effectsSection.body.appendChild(soundVolumeLabel);
+  soundSection.body.appendChild(soundLabel);
+  soundSection.body.appendChild(soundVolumeLabel);
+  soundSection.body.appendChild(rainVolumeLabel);
+  soundSection.body.appendChild(windVolumeLabel);
+  soundSection.body.appendChild(thunderVolumeLabel);
+  soundSection.body.appendChild(ambienceVolumeLabel);
   placementSection.body.appendChild(layerLabel);
   placementSection.body.appendChild(temperatureUnitLabel);
   motionSection.body.appendChild(intensityLabel);
@@ -4463,6 +4486,7 @@ function createSettingsUI(sendToBackend) {
   controlDeck.appendChild(effectsSection.section);
   controlDeck.appendChild(placementSection.section);
   controlDeck.appendChild(motionSection.section);
+  controlDeck.appendChild(soundSection.section);
   body.appendChild(preview);
   body.appendChild(promptSection.section);
   body.appendChild(controlDeck);
@@ -4482,10 +4506,21 @@ function createSettingsUI(sendToBackend) {
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       soundToggle.checked = Boolean(prefs.soundEnabled);
-      const soundVolume = prefs.soundVolume ?? 0.45;
-      soundVolumeSlider.value = soundVolume.toFixed(2);
-      soundVolumeValue.textContent = `${Math.round(soundVolume * 100)}%`;
-      soundVolumeSlider.setAttribute("aria-valuetext", soundVolumeValue.textContent);
+      const volumeChannels = {
+        soundVolume: prefs.soundVolume ?? 0.45,
+        rainVolume: prefs.rainVolume ?? 1,
+        windVolume: prefs.windVolume ?? 1,
+        thunderVolume: prefs.thunderVolume ?? 1,
+        ambienceVolume: prefs.ambienceVolume ?? 1
+      };
+      for (const [channel, vol] of Object.entries(volumeChannels)) {
+        const ctrl = settingsVolumeControls[channel];
+        if (!ctrl)
+          continue;
+        ctrl.slider.value = vol.toFixed(2);
+        ctrl.value.textContent = `${Math.round(vol * 100)}%`;
+        ctrl.slider.setAttribute("aria-valuetext", ctrl.value.textContent);
+      }
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
       if (pendingIntensity === null) {
@@ -5273,7 +5308,7 @@ var WEATHER_HUD_CSS = `
   min-width: 0;
 }
 
-.weather-settings-control-deck .weather-settings-section:nth-child(3) {
+.weather-settings-control-deck .weather-settings-section:nth-child(odd):last-child {
   grid-column: span 2;
 }
 
@@ -6072,6 +6107,16 @@ var WEATHER_HUD_CSS = `
 .weather-hud-control-grid {
   display: grid;
   gap: 10px;
+}
+
+.weather-hud-volume-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 10px;
+}
+
+.weather-hud-field-wide {
+  grid-column: 1 / -1;
 }
 
 .weather-hud-field {
@@ -7506,6 +7551,7 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
   root.appendChild(header);
   root.appendChild(body);
   const presetButtons = new Map;
+  const volumeControls = {};
   let storyButton;
   let manualButton;
   let layerSelect;
@@ -7679,6 +7725,48 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     controlGrid.appendChild(phenomenonWrap);
     controlsSection.appendChild(controlsLabel);
     controlsSection.appendChild(controlGrid);
+    const soundSection = document.createElement("div");
+    soundSection.className = "weather-hud-drawer-section";
+    const soundLabel = document.createElement("span");
+    soundLabel.className = "weather-hud-section-label";
+    soundLabel.textContent = "Soundscape volume";
+    const soundGrid = document.createElement("div");
+    soundGrid.className = "weather-hud-volume-grid";
+    const createHudVolumeSlider = (channel, label, wide = false) => {
+      const wrap = document.createElement("label");
+      wrap.className = wide ? "weather-hud-field weather-hud-field-wide" : "weather-hud-field";
+      const headerRow = document.createElement("div");
+      headerRow.className = "weather-hud-field-row";
+      const text = document.createElement("span");
+      text.textContent = label;
+      const valueLabel = document.createElement("span");
+      valueLabel.className = "weather-hud-inline-value";
+      headerRow.appendChild(text);
+      headerRow.appendChild(valueLabel);
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.className = "weather-hud-range";
+      slider.min = "0.00";
+      slider.max = "1.00";
+      slider.step = "0.05";
+      slider.setAttribute("aria-label", `${label} volume`);
+      protectInteractive(slider);
+      slider.addEventListener("input", (event) => {
+        event.stopPropagation();
+        callbacks.onChangeSoundVolume(channel, Number.parseFloat(slider.value));
+      });
+      wrap.appendChild(headerRow);
+      wrap.appendChild(slider);
+      volumeControls[channel] = { slider, valueLabel };
+      return wrap;
+    };
+    soundGrid.appendChild(createHudVolumeSlider("soundVolume", "Master", true));
+    soundGrid.appendChild(createHudVolumeSlider("rainVolume", "Rain"));
+    soundGrid.appendChild(createHudVolumeSlider("windVolume", "Wind"));
+    soundGrid.appendChild(createHudVolumeSlider("thunderVolume", "Thunder"));
+    soundGrid.appendChild(createHudVolumeSlider("ambienceVolume", "Ambience"));
+    soundSection.appendChild(soundLabel);
+    soundSection.appendChild(soundGrid);
     const actionsSection = document.createElement("div");
     actionsSection.className = "weather-hud-drawer-section";
     const actionRow = document.createElement("div");
@@ -7716,6 +7804,7 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     drawer.appendChild(presetsSection);
     drawer.appendChild(forecastSection);
     drawer.appendChild(controlsSection);
+    drawer.appendChild(soundSection);
     drawer.appendChild(actionsSection);
     root.appendChild(drawer);
   }
@@ -7744,6 +7833,7 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     phenomenonSelect,
     intensitySlider,
     intensityValue,
+    volumeControls,
     pauseButton,
     soundButton,
     resumeButton,
@@ -7918,6 +8008,22 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   if (hud.intensitySlider && hud.intensityValue) {
     hud.intensitySlider.value = prefs.intensity.toFixed(2);
     hud.intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
+  }
+  const volumeChannelValues = {
+    soundVolume: prefs.soundVolume ?? 0.45,
+    rainVolume: prefs.rainVolume ?? 1,
+    windVolume: prefs.windVolume ?? 1,
+    thunderVolume: prefs.thunderVolume ?? 1,
+    ambienceVolume: prefs.ambienceVolume ?? 1
+  };
+  for (const [channel, val] of Object.entries(volumeChannelValues)) {
+    const control = hud.volumeControls[channel];
+    if (!control)
+      continue;
+    const clamped = clamp(val, 0, 1);
+    control.slider.value = clamped.toFixed(2);
+    control.valueLabel.textContent = `${Math.round(clamped * 100)}%`;
+    control.slider.setAttribute("aria-valuetext", control.valueLabel.textContent);
   }
   if (hud.pauseButton) {
     hud.pauseButton.textContent = prefs.pauseEffects ? "Resume motion" : "Pause motion";
@@ -8221,7 +8327,19 @@ function setup(ctx) {
         sendManualState({ ...state, phenomenon, source: "manual" });
       },
       onChangeIntensity: (intensity) => {
+        currentPrefs = { ...currentPrefs, intensity };
+        updateScene();
         sendToBackend(ctx, { type: "save_prefs", prefs: { intensity } });
+      },
+      onChangeSoundVolume: (channel, volume) => {
+        const clamped = clamp(volume, 0, 1);
+        currentPrefs = { ...currentPrefs, [channel]: clamped };
+        if (hud) {
+          syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
+        }
+        const showEffects = currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId && !!currentState;
+        soundscape.sync(currentState, currentPrefs, showEffects);
+        sendToBackend(ctx, { type: "save_prefs", prefs: { [channel]: clamped } });
       },
       onTogglePause: () => {
         sendToBackend(ctx, { type: "save_prefs", prefs: { pauseEffects: !currentPrefs.pauseEffects } });

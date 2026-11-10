@@ -44,4 +44,56 @@ describe("procedural weather soundscape profile", () => {
     );
     expect(embers.emberCrackleGain).toBeGreaterThan(0);
   });
+
+  test("scales individual soundscape channels and mutes when master volume is 0", () => {
+    const stormScene = {
+      ...makeDefaultWeatherState(0),
+      condition: "storm" as const,
+      wind: "gale",
+      phenomenon: "embers" as const,
+      intensity: 0.9,
+    };
+
+    const fullMix = resolveSoundscapeProfile(
+      stormScene,
+      {
+        ...DEFAULT_PREFS,
+        soundEnabled: true,
+        soundVolume: 0.8,
+        rainVolume: 1,
+        windVolume: 1,
+        thunderVolume: 1,
+        ambienceVolume: 1,
+      },
+      true,
+    );
+
+    const halfMix = resolveSoundscapeProfile(
+      stormScene,
+      {
+        ...DEFAULT_PREFS,
+        soundEnabled: true,
+        soundVolume: 0.8,
+        rainVolume: 0.5,
+        windVolume: 0.25,
+        thunderVolume: 0,
+        ambienceVolume: 0.5,
+      },
+      true,
+    );
+
+    expect(halfMix.rainWashGain).toBeCloseTo(fullMix.rainWashGain * 0.5, 2);
+    expect(halfMix.rainPatterGain).toBeCloseTo(fullMix.rainPatterGain * 0.5, 2);
+    expect(halfMix.windGain).toBeCloseTo(fullMix.windGain * 0.25, 2);
+    expect(halfMix.thunderGainScale).toBe(0);
+    expect(halfMix.emberCrackleGain).toBeCloseTo(fullMix.emberCrackleGain * 0.5, 2);
+
+    const mutedMaster = resolveSoundscapeProfile(
+      stormScene,
+      { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0 },
+      true,
+    );
+    expect(mutedMaster.active).toBe(false);
+    expect(mutedMaster.masterGain).toBe(0);
+  });
 });

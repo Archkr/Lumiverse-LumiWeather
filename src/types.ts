@@ -90,6 +90,13 @@ export interface WeatherState {
   source: WeatherSourceMode;
 }
 
+export type SoundVolumeChannel =
+  | "soundVolume"
+  | "rainVolume"
+  | "windVolume"
+  | "thunderVolume"
+  | "ambienceVolume";
+
 export interface WeatherPrefs {
   effectsEnabled: boolean;
   lightningFlashEnabled: boolean;
@@ -104,6 +111,10 @@ export interface WeatherPrefs {
   transitionsEnabled: boolean;
   soundEnabled?: boolean;
   soundVolume?: number;
+  rainVolume?: number;
+  windVolume?: number;
+  thunderVolume?: number;
+  ambienceVolume?: number;
 }
 
 export type FrontendToBackend =

@@ -383,7 +383,11 @@ var DEFAULT_PREFS = {
   showForecast: true,
   transitionsEnabled: true,
   soundEnabled: false,
-  soundVolume: 0.45
+  soundVolume: 0.45,
+  rainVolume: 1,
+  windVolume: 1,
+  thunderVolume: 1,
+  ambienceVolume: 1
 };
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -686,7 +690,11 @@ function normalizePrefs(input) {
     showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
     transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
     soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
-    soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0.05, 1)
+    soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
+    rainVolume: clamp(parseNumeric(source.rainVolume) ?? (DEFAULT_PREFS.rainVolume ?? 1), 0, 1),
+    windVolume: clamp(parseNumeric(source.windVolume) ?? (DEFAULT_PREFS.windVolume ?? 1), 0, 1),
+    thunderVolume: clamp(parseNumeric(source.thunderVolume) ?? (DEFAULT_PREFS.thunderVolume ?? 1), 0, 1),
+    ambienceVolume: clamp(parseNumeric(source.ambienceVolume) ?? (DEFAULT_PREFS.ambienceVolume ?? 1), 0, 1)
   };
 }
 
