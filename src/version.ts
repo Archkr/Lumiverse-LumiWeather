@@ -6,7 +6,7 @@
  * consumer. Keeping it in a side-effect-free module lets the guard test read it
  * without booting the backend, which calls `spindle.*` at import time.
  */
-export const EXTENSION_VERSION = "1.4.2";
+export const EXTENSION_VERSION = "1.5.0";
 export const EXTENSION_ID = "lumi_weather";
 export const LUMI_STATE_CONTRACT_CHANNEL = "contract.v1";
 export const LUMI_STATE_ENDPOINT_CHANNEL = "state.current";
@@ -19,4 +19,9 @@ export const LUMI_STATE_CAPABILITIES = [
   "manual_override",
   "forecast",
   "solar_time",
+  "lunar_phase",
+  "exposure",
+  "phenomenon",
+  "visual_tags",
+  "ambient_audio",
 ] as const;

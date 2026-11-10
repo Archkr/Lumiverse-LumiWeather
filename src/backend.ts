@@ -36,6 +36,7 @@ import { hasSameStoryScene, rebuildStoryWeatherState } from "./story-history";
 import { buildTagDedupeKey } from "./tag-dedupe";
 import { extractLastWeatherTag } from "./tag-utils";
 import { EXTENSION_VERSION, LUMI_STATE_CAPABILITIES } from "./version";
+import { buildWeatherVisualTags } from "./visual-tags";
 import {
   buildPromptInstruction,
   buildStaticStateMacro,
@@ -48,6 +49,7 @@ const WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
 const WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"] as const;
 const WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"] as const;
 const WEATHER_STATE_MACROS = ["story_weather_state", "weather_state"] as const;
+const WEATHER_VISUAL_TAGS_MACROS = ["story_weather_visual_tags", "weather_visual_tags"] as const;
 const TAG_DEDUPE_TTL_MS = 10 * 60 * 1000;
 const HISTORY_RECONCILE_DELAY_MS = 150;
 
@@ -118,6 +120,7 @@ function pushMacroValues(): void {
   for (const macroName of WEATHER_FORMAT_MACROS) spindle.updateMacroValue(macroName, formatValue);
   for (const macroName of WEATHER_TRACKER_MACROS) spindle.updateMacroValue(macroName, trackerValue);
   for (const macroName of WEATHER_STATE_MACROS) spindle.updateMacroValue(macroName, stateValue);
+  for (const macroName of WEATHER_VISUAL_TAGS_MACROS) spindle.updateMacroValue(macroName, "");
 }
 
 function extractChatId(payload: unknown): string | null {
@@ -224,6 +227,10 @@ async function publishWeatherState(
     const session = getSession(userId);
     if (session.activeChatId !== chatId) return;
     if (activeChatRequest !== undefined && session.activeChatRequest !== activeChatRequest) return;
+  }
+  const visualTags = buildWeatherVisualTags(resolvedState);
+  for (const macroName of WEATHER_VISUAL_TAGS_MACROS) {
+    spindle.updateMacroValue(macroName, visualTags);
   }
   spindle.rpcPool.sync(
     "state.current",
@@ -382,6 +389,16 @@ for (const name of WEATHER_STATE_MACROS) {
     name,
     category: "extension:lumiweather",
     description: "Current LumiWeather scene state summary",
+    returnType: "string",
+    handler: "",
+  });
+}
+
+for (const name of WEATHER_VISUAL_TAGS_MACROS) {
+  spindle.registerMacro({
+    name,
+    category: "extension:lumiweather",
+    description: "Comma-separated visual art descriptors for the active weather scene",
     returnType: "string",
     handler: "",
   });

@@ -8,6 +8,7 @@ import {
   resolveDayHalfAngle,
   resolveDayOfYear,
   resolveHudTimePhase,
+  resolveLunarPhase,
   resolveSeasonFromDayOfYear,
   resolveSolarArc,
   resolveSolarDeclination,
@@ -154,5 +155,24 @@ describe("weather time model", () => {
     expect(arc.sunAltitude).toBeGreaterThan(55);
     expect(seasonFromStoryDate("2026-01-15", "1:00 PM")).toBe("winter");
     expect(seasonFromStoryDate("2026-01-15", "bad time")).toBeNull();
+  });
+
+  test("computes astronomical lunar phases across the synodic cycle", () => {
+    const newMoon = resolveLunarPhase("2000-01-06", "6:14 PM");
+    expect(newMoon.phase).toBe("new");
+    expect(newMoon.illumination).toBeLessThan(0.02);
+
+    const firstQuarter = resolveLunarPhase("2000-01-14", "12:00 PM");
+    expect(firstQuarter.phase).toBe("first-quarter");
+    expect(firstQuarter.illumination).toBeGreaterThan(0.4);
+    expect(firstQuarter.illumination).toBeLessThan(0.65);
+
+    const fullMoon = resolveLunarPhase("2000-01-21", "4:00 AM");
+    expect(fullMoon.phase).toBe("full");
+    expect(fullMoon.illumination).toBeGreaterThan(0.95);
+
+    const fallback = resolveLunarPhase("not-a-date", "12:00 PM");
+    expect(fallback.phase).toBe("full");
+    expect(fallback.illumination).toBe(1);
   });
 });

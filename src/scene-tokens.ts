@@ -1,4 +1,5 @@
 import { clamp } from "./shared";
+import { resolveLunarPhase } from "./time-utils";
 import type { SceneTokens, WeatherPalette, WeatherState } from "./types";
 
 export function resolveSceneTokens(state: WeatherState, intensity: number): SceneTokens {
@@ -116,7 +117,14 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
     starOpacity: 0,
     moonlightOpacity: 0,
     flashOpacity: 0.26,
+    auroraOpacity: 0,
+    windowDropletOpacity: 0,
+    phenomenonOpacity: 0,
   };
+
+  const lunar = resolveLunarPhase(state.date, state.time);
+  const exposure = state.exposure ?? "outdoor";
+  const phenomenon = state.phenomenon ?? "none";
 
   switch (state.condition) {
     case "cloudy":
@@ -204,10 +212,65 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
         values.beamOpacity = 0.03;
         values.cloudOpacity = 0.02;
         values.moteOpacity = 0;
-        values.starOpacity = 0.66;
-        values.moonlightOpacity = 0.48;
+        values.starOpacity = Number((0.72 - lunar.illumination * 0.08).toFixed(3));
+        values.moonlightOpacity = Number((0.45 + lunar.illumination * 0.08).toFixed(3));
       }
       break;
+  }
+
+  if (phenomenon === "aurora" && exposure !== "underground") {
+    values.auroraOpacity = 0.56;
+    values.glowOpacity = Math.max(values.glowOpacity, 0.16);
+  } else if (phenomenon === "sandstorm") {
+    values.fogOpacity = Math.max(values.fogOpacity, 0.46);
+    values.mistOpacity = Math.max(values.mistOpacity, 0.34);
+    values.phenomenonOpacity = 0.78;
+    fogColor = "rgba(214, 168, 112, 0.32)";
+    mistColor = "rgba(204, 154, 98, 0.34)";
+  } else if (phenomenon !== "none") {
+    values.phenomenonOpacity = 0.68;
+  }
+
+  if (exposure === "sheltered") {
+    values.rainOpacity *= 0.62;
+    values.snowOpacity *= 0.65;
+    values.skyOpacity *= 0.86;
+    values.beamOpacity *= 0.78;
+    values.phenomenonOpacity *= 0.8;
+  } else if (exposure === "indoor") {
+    const rainLike = state.condition === "rain" || state.condition === "storm";
+    const frostLike = state.condition === "snow" || state.condition === "fog";
+    values.windowDropletOpacity = rainLike ? 0.68 : frostLike ? 0.28 : 0;
+    values.rainOpacity *= 0.22;
+    values.snowOpacity *= 0.26;
+    values.cloudOpacity *= 0.42;
+    values.skyOpacity *= 0.52;
+    values.fogOpacity *= 0.32;
+    values.mistOpacity *= 0.28;
+    values.starOpacity *= 0.45;
+    values.moonlightOpacity *= 0.62;
+    values.flashOpacity *= 0.45;
+    values.auroraOpacity *= 0.5;
+    values.phenomenonOpacity *= 0.32;
+  } else if (exposure === "underground") {
+    values.skyOpacity = 0.04;
+    values.glowOpacity = 0.04;
+    values.beamOpacity = 0;
+    values.cloudOpacity = 0;
+    values.horizonOpacity = 0.08;
+    values.mistOpacity = Math.max(values.mistOpacity * 0.6, 0.16);
+    values.fogOpacity = Math.max(values.fogOpacity * 0.45, 0.12);
+    values.rainOpacity = 0;
+    values.snowOpacity = 0;
+    values.moteOpacity = Math.max(values.moteOpacity, 0.12);
+    values.starOpacity = 0;
+    values.moonlightOpacity = 0;
+    values.flashOpacity = 0;
+    values.auroraOpacity = 0;
+    values.windowDropletOpacity = 0;
+    values.phenomenonOpacity = phenomenon === "embers" || phenomenon === "fireflies" || phenomenon === "ashfall"
+      ? values.phenomenonOpacity * 0.85
+      : 0;
   }
 
   const detailScale = clamp(0.82 + baseIntensity * 0.28, 0.75, 1.18);
@@ -233,9 +296,17 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
     fogOpacity: values.fogOpacity * detailScale,
     rainOpacity: values.rainOpacity * detailScale,
     snowOpacity: values.snowOpacity * detailScale,
-    moteOpacity: state.condition === "clear" && baseIntensity > 0.48 ? values.moteOpacity * detailScale : values.moteOpacity * 0.4,
+    moteOpacity:
+      exposure === "underground"
+        ? values.moteOpacity * detailScale
+        : state.condition === "clear" && baseIntensity > 0.48
+          ? values.moteOpacity * detailScale
+          : values.moteOpacity * 0.4,
     starOpacity: values.starOpacity * detailScale,
     moonlightOpacity: values.moonlightOpacity * atmosphereScale,
     flashOpacity: values.flashOpacity,
+    auroraOpacity: clamp(values.auroraOpacity * atmosphereScale, 0, 1.2),
+    windowDropletOpacity: clamp(values.windowDropletOpacity * detailScale, 0, 1.2),
+    phenomenonOpacity: clamp(values.phenomenonOpacity * detailScale, 0, 1.2),
   };
 }

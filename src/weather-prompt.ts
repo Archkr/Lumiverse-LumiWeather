@@ -1,13 +1,21 @@
-import { WEATHER_CONDITIONS, WEATHER_PALETTES, WEATHER_SEASONS } from "./shared";
+import {
+  WEATHER_CONDITIONS,
+  WEATHER_EXPOSURES,
+  WEATHER_PALETTES,
+  WEATHER_PHENOMENA,
+  WEATHER_SEASONS,
+} from "./shared";
 import { formatForecastEntry } from "./forecast-utils";
+import { resolveLunarPhase } from "./time-utils";
 import type { WeatherState } from "./types";
 
 export function buildWeatherTagExample(): string {
-  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>';
+  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" exposure="outdoor" phenomenon="none" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>';
 }
 
 export function summarizeWeatherState(state: WeatherState | null): string {
   if (!state) return "No saved weather state yet.";
+  const lunar = resolveLunarPhase(state.date, state.time);
   const lines = [
     `Location: ${state.location}`,
     `Date: ${state.date}`,
@@ -20,6 +28,9 @@ export function summarizeWeatherState(state: WeatherState | null): string {
     `Wind direction: ${state.windDirection}`,
     `Palette: ${state.palette}`,
     `Season: ${state.season}`,
+    `Exposure: ${state.exposure ?? "outdoor"}`,
+    `Phenomenon: ${state.phenomenon ?? "none"}`,
+    `Lunar phase: ${lunar.label} (${Math.round(lunar.illumination * 100)}% illuminated)`,
   ];
   const forecast = state.forecast.length > 0
     ? state.forecast.map(formatForecastEntry).join(" | ")
@@ -46,9 +57,13 @@ export function buildTrackerMacro(): string {
     `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
     `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
     `Allowed seasons: ${WEATHER_SEASONS.join(", ")}`,
+    `Allowed exposures: ${WEATHER_EXPOSURES.join(", ")}`,
+    `Allowed phenomena: ${WEATHER_PHENOMENA.join(", ")}`,
     "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, palette, and forecast.",
     "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
     "season is optional and, when present, is one of: spring, summer, autumn, winter.",
+    "exposure is optional (outdoor, sheltered, indoor, underground) and tracks whether the active scene is in open air, under cover/porch/canopy, inside a building looking through windows, or underground.",
+    "phenomenon is optional (none, aurora, blossoms, embers, ashfall, fireflies, sandstorm) for special atmospheric effects.",
     "Include a non-empty forecast attribute in every weather-state tag, even when the visible narrative does not discuss future weather.",
     "Project the next three story calendar days by default, with at most five future days total. Use real YYYY-MM-DD calendar dates strictly after the date in this tag, in chronological order with no duplicate days.",
     "Separate forecast entries with a pipe and format each as date: condition, temperature, summary. Include a supported condition, a temperature with an F or C suffix, and a brief summary for each day; keep the scene's temperature unit.",

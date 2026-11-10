@@ -2,12 +2,24 @@ import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS
 import { decodeForecastText, encodeForecastText, forecastTextHint } from "../forecast-text";
 import { formatForecastEntry, MAX_FORECAST_DAYS, normalizeTemperatureToken } from "../forecast-utils";
 import {
+  WEATHER_EXPOSURES,
+  WEATHER_PHENOMENA,
   WEATHER_SEASONS,
   WEATHER_WIND_DIRECTIONS,
   formatTemperatureForUnit,
   parseStoryDateTime,
+  resolveLunarPhase,
 } from "../shared";
-import type { WeatherCondition, WeatherPalette, WeatherPrefs, WeatherSeason, WeatherState, WeatherWindDirection } from "../types";
+import type {
+  WeatherCondition,
+  WeatherExposure,
+  WeatherPalette,
+  WeatherPhenomenon,
+  WeatherPrefs,
+  WeatherSeason,
+  WeatherState,
+  WeatherWindDirection,
+} from "../types";
 
 const CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 const PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
@@ -78,6 +90,8 @@ function applyStateToInputs(
     conditionSelect: HTMLSelectElement;
     paletteSelect: HTMLSelectElement;
     seasonSelect: HTMLSelectElement;
+    exposureSelect: HTMLSelectElement;
+    phenomenonSelect: HTMLSelectElement;
     locationInput: HTMLInputElement;
     dateInput: HTMLInputElement;
     timeInput: HTMLInputElement;
@@ -92,6 +106,8 @@ function applyStateToInputs(
 ): void {
   if (state.condition) fields.conditionSelect.value = state.condition;
   if (state.palette) fields.paletteSelect.value = state.palette;
+  if (state.exposure) fields.exposureSelect.value = state.exposure;
+  if (state.phenomenon) fields.phenomenonSelect.value = state.phenomenon;
   if (state.location !== undefined) fields.locationInput.value = state.location;
   if (state.date !== undefined) fields.dateInput.value = /^\d{4}-\d{2}-\d{2}$/.test(state.date) ? state.date : "";
   if (state.time !== undefined) fields.timeInput.value = state.time;
@@ -201,7 +217,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   promptOptional.appendChild(promptOptionalLabel);
   promptOptional.appendChild(promptOptionalCopy);
-  promptOptional.appendChild(createCodeBlock("{{weather_state}}\n{{weather_format}}"));
+  promptOptional.appendChild(createCodeBlock("{{weather_visual_tags}}\n{{weather_state}}\n{{weather_format}}"));
 
   promptSection.body.appendChild(promptRecommended);
   promptSection.body.appendChild(promptOptional);
@@ -229,6 +245,47 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     sendToBackend({ type: "save_prefs", prefs: { lightningFlashEnabled: lightningToggle.checked } });
   });
   lightningLabel.appendChild(lightningToggle);
+
+  const soundLabel = document.createElement("label");
+  soundLabel.className = "weather-settings-label";
+  soundLabel.textContent = "Procedural soundscape";
+
+  const soundToggle = document.createElement("input");
+  soundToggle.type = "checkbox";
+  soundToggle.className = "weather-settings-checkbox";
+  soundToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { soundEnabled: soundToggle.checked } });
+  });
+  soundLabel.appendChild(soundToggle);
+
+  const soundVolumeLabel = document.createElement("label");
+  soundVolumeLabel.className = "weather-settings-label";
+  soundVolumeLabel.textContent = "Soundscape volume";
+
+  const soundVolumeRow = document.createElement("div");
+  soundVolumeRow.className = "weather-settings-row";
+
+  const soundVolumeSlider = document.createElement("input");
+  soundVolumeSlider.type = "range";
+  soundVolumeSlider.className = "weather-settings-range";
+  soundVolumeSlider.setAttribute("aria-label", "Soundscape volume");
+  soundVolumeSlider.min = "0.05";
+  soundVolumeSlider.max = "1.00";
+  soundVolumeSlider.step = "0.05";
+
+  const soundVolumeValue = document.createElement("span");
+  soundVolumeValue.className = "weather-settings-value";
+
+  soundVolumeSlider.addEventListener("input", () => {
+    const soundVolume = Number.parseFloat(soundVolumeSlider.value);
+    soundVolumeValue.textContent = `${Math.round(soundVolume * 100)}%`;
+    soundVolumeSlider.setAttribute("aria-valuetext", soundVolumeValue.textContent);
+    sendToBackend({ type: "save_prefs", prefs: { soundVolume } });
+  });
+
+  soundVolumeRow.appendChild(soundVolumeSlider);
+  soundVolumeRow.appendChild(soundVolumeValue);
+  soundVolumeLabel.appendChild(soundVolumeRow);
 
   const layerLabel = document.createElement("label");
   layerLabel.className = "weather-settings-label";
@@ -366,6 +423,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   effectsSection.body.appendChild(effectsLabel);
   effectsSection.body.appendChild(lightningLabel);
+  effectsSection.body.appendChild(soundLabel);
+  effectsSection.body.appendChild(soundVolumeLabel);
   placementSection.body.appendChild(layerLabel);
   placementSection.body.appendChild(temperatureUnitLabel);
   motionSection.body.appendChild(intensityLabel);
@@ -467,6 +526,18 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     ...WEATHER_SEASONS.map((season) => `<option value="${season}">${season.charAt(0).toUpperCase()}${season.slice(1)}</option>`),
   ].join("");
 
+  const exposureSelect = document.createElement("select");
+  exposureSelect.className = "weather-settings-select";
+  exposureSelect.innerHTML = WEATHER_EXPOSURES.map(
+    (exposure) => `<option value="${exposure}">${exposure.charAt(0).toUpperCase()}${exposure.slice(1)}</option>`,
+  ).join("");
+
+  const phenomenonSelect = document.createElement("select");
+  phenomenonSelect.className = "weather-settings-select";
+  phenomenonSelect.innerHTML = WEATHER_PHENOMENA.map(
+    (phenomenon) => `<option value="${phenomenon}">${phenomenon.charAt(0).toUpperCase()}${phenomenon.slice(1)}</option>`,
+  ).join("");
+
   const windControls = document.createElement("div");
   windControls.className = "weather-settings-wind-controls";
   windControls.appendChild(windInput);
@@ -518,6 +589,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     conditionSelect,
     paletteSelect,
     seasonSelect,
+    exposureSelect,
+    phenomenonSelect,
     locationInput,
     dateInput,
     timeInput,
@@ -536,7 +609,22 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   let intensitySaveTimer: number | null = null;
   let pendingIntensity: number | null = null;
 
-  const manualFields = [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput, sceneIntensity];
+  const manualFields = [
+    conditionSelect,
+    paletteSelect,
+    seasonSelect,
+    exposureSelect,
+    phenomenonSelect,
+    dateInput,
+    locationInput,
+    timeInput,
+    temperatureInput,
+    windInput,
+    windDirectionSelect,
+    summaryInput,
+    forecastInput,
+    sceneIntensity,
+  ];
 
   const clearManualError = () => {
     manualError.hidden = true;
@@ -549,7 +637,21 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     clearManualError();
   };
 
-  for (const field of [conditionSelect, paletteSelect, seasonSelect, dateInput, locationInput, timeInput, temperatureInput, windInput, windDirectionSelect, summaryInput, forecastInput]) {
+  for (const field of [
+    conditionSelect,
+    paletteSelect,
+    seasonSelect,
+    exposureSelect,
+    phenomenonSelect,
+    dateInput,
+    locationInput,
+    timeInput,
+    temperatureInput,
+    windInput,
+    windDirectionSelect,
+    summaryInput,
+    forecastInput,
+  ]) {
     field.addEventListener("input", markManualDraftDirty);
     field.addEventListener("change", markManualDraftDirty);
   }
@@ -567,6 +669,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
     palette: paletteSelect.value as WeatherPalette,
     // Null survives JSON transport and explicitly clears the previous override.
     seasonOverride: (seasonSelect.value || null) as WeatherSeason | null,
+    exposure: exposureSelect.value as WeatherExposure,
+    phenomenon: phenomenonSelect.value as WeatherPhenomenon,
     forecast: decodeForecastText(forecastInput.value).entries,
     intensity: Number.parseFloat(sceneIntensity.value),
     source: "manual",
@@ -653,6 +757,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   manualGrid.appendChild(createLabeledInput("Condition", conditionSelect));
   manualGrid.appendChild(createLabeledInput("Palette", paletteSelect));
   manualGrid.appendChild(createLabeledInput("Season", seasonSelect));
+  manualGrid.appendChild(createLabeledInput("Exposure", exposureSelect));
+  manualGrid.appendChild(createLabeledInput("Phenomenon", phenomenonSelect));
   manualGrid.appendChild(createLabeledInput("Location", locationInput));
   manualGrid.appendChild(createLabeledInput("Story date", dateInput));
   manualGrid.appendChild(createLabeledInput("Story time", timeInput));
@@ -734,6 +840,11 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       currentState = state;
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
+      soundToggle.checked = Boolean(prefs.soundEnabled);
+      const soundVolume = prefs.soundVolume ?? 0.45;
+      soundVolumeSlider.value = soundVolume.toFixed(2);
+      soundVolumeValue.textContent = `${Math.round(soundVolume * 100)}%`;
+      soundVolumeSlider.setAttribute("aria-valuetext", soundVolumeValue.textContent);
       layerSelect.value = prefs.layerMode;
       temperatureUnitSelect.value = prefs.temperatureUnit;
       if (pendingIntensity === null) {
@@ -765,9 +876,10 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         ? `${state.source === "manual" ? "manual" : "story"} / ${state.condition} ${displayTemperature} · synced ${formatRelativeTime(state.updatedAt)}`
         : "Waiting for LumiWeather");
 
+      const lunar = state ? resolveLunarPhase(state.date, state.time) : null;
       previewValue.textContent = state
         ? [
-            `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | placement ${prefs.layerMode}`,
+            `${state.location} | ${state.date} at ${state.time} | ${displayTemperature} | ${state.summary} | ${state.wind}${state.windDirection === "none" ? "" : ` from ${state.windDirection}`} | ${state.exposure ?? "outdoor"}${state.phenomenon && state.phenomenon !== "none" ? ` · ${state.phenomenon}` : ""}${lunar ? ` | ${lunar.label}` : ""} | placement ${prefs.layerMode}`,
             state.forecast.length > 0
               ? `Outlook: ${state.forecast.map((entry) => formatForecastEntry({ ...entry, temperature: formatTemperatureForUnit(entry.temperature, prefs.temperatureUnit) })).join(" | ")}`
               : "",
@@ -790,6 +902,8 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
         conditionSelect.value = "clear";
         paletteSelect.value = "day";
         seasonSelect.value = "";
+        exposureSelect.value = "outdoor";
+        phenomenonSelect.value = "none";
         locationInput.value = "";
         dateInput.value = "";
         timeInput.value = "";

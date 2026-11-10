@@ -10,7 +10,10 @@ export interface WeatherScenePreset {
   state: Pick<
     WeatherState,
     "time" | "condition" | "summary" | "temperature" | "wind" | "palette" | "intensity"
-  >;
+  > & {
+    exposure?: WeatherState["exposure"];
+    phenomenon?: WeatherState["phenomenon"];
+  };
 }
 
 export const WEATHER_SCENE_PRESETS: WeatherScenePreset[] = [
@@ -119,6 +122,74 @@ export const WEATHER_SCENE_PRESETS: WeatherScenePreset[] = [
       intensity: 0.24,
     },
   },
+  {
+    id: "aurora-night",
+    label: "Aurora night",
+    shortLabel: "Aurora",
+    description: "Polar ribbons dancing across a crisp starlit sky.",
+    state: {
+      time: "11:12 PM",
+      condition: "clear",
+      summary: "Aurora ribbons overhead",
+      temperature: "26F",
+      wind: "still polar air",
+      palette: "night",
+      intensity: 0.72,
+      exposure: "outdoor",
+      phenomenon: "aurora",
+    },
+  },
+  {
+    id: "cozy-indoors",
+    label: "Indoor rain",
+    shortLabel: "Indoors",
+    description: "Warm interior shelter with rain streaking down the windowpane.",
+    state: {
+      time: "9:24 PM",
+      condition: "rain",
+      summary: "Rain against the windowpane",
+      temperature: "59F",
+      wind: "muffled gusts",
+      palette: "night",
+      intensity: 0.76,
+      exposure: "indoor",
+      phenomenon: "none",
+    },
+  },
+  {
+    id: "sakura-breeze",
+    label: "Blossom drift",
+    shortLabel: "Blossoms",
+    description: "Spring petals riding a warm afternoon breeze.",
+    state: {
+      time: "3:40 PM",
+      condition: "clear",
+      summary: "Petals drifting on the breeze",
+      temperature: "69F",
+      wind: "breezy",
+      palette: "day",
+      intensity: 0.62,
+      exposure: "outdoor",
+      phenomenon: "blossoms",
+    },
+  },
+  {
+    id: "ember-dusk",
+    label: "Ember dusk",
+    shortLabel: "Embers",
+    description: "Glowing cinders rising into a dramatic twilight sky.",
+    state: {
+      time: "7:35 PM",
+      condition: "cloudy",
+      summary: "Cinders rising through dusk",
+      temperature: "66F",
+      wind: "warm updraft",
+      palette: "dusk",
+      intensity: 0.78,
+      exposure: "outdoor",
+      phenomenon: "embers",
+    },
+  },
 ];
 
 export function getWeatherScenePreset(presetId: string): WeatherScenePreset | null {
@@ -140,6 +211,8 @@ export function buildPresetWeatherState(
   return {
     location: baseState.location,
     date: fallbackDate,
+    exposure: preset.state.exposure ?? "outdoor",
+    phenomenon: preset.state.phenomenon ?? "none",
     ...preset.state,
     source: "manual",
   };
@@ -155,6 +228,8 @@ export function matchWeatherScenePreset(state?: WeatherState | null): string | n
     preset.state.summary === state.summary &&
     preset.state.temperature === state.temperature &&
     preset.state.wind === state.wind &&
+    (preset.state.exposure ?? "outdoor") === (state.exposure ?? "outdoor") &&
+    (preset.state.phenomenon ?? "none") === (state.phenomenon ?? "none") &&
     Math.abs(preset.state.intensity - state.intensity) < 0.001,
   );
 

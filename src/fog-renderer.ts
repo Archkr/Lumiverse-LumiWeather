@@ -206,15 +206,16 @@ class ProceduralFogRenderer {
       return;
     }
 
+    const isSandstorm = this.root.dataset.phenomenon === "sandstorm";
     const visible =
-      this.root.dataset.condition === "fog" &&
+      (this.root.dataset.condition === "fog" || isSandstorm) &&
       this.root.classList.contains("weather-visible") &&
       !this.root.classList.contains("weather-hidden") &&
       document.visibilityState !== "hidden";
     const animated = visible && !this.options.paused && !this.options.reducedMotion;
     const delta = Math.min(0.05, Math.max(0, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
-    if (animated) this.elapsed += delta;
+    if (animated) this.elapsed += delta * (isSandstorm ? 2.1 : 1);
 
     const renderDue = now - this.lastRender >= 1000 / 24;
     if (visible && (this.dirty || (animated && renderDue))) {

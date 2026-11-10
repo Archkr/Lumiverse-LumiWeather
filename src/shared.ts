@@ -12,8 +12,10 @@ import type {
   TemperatureUnit,
   WeatherClockMode,
   WeatherCondition,
+  WeatherExposure,
   WeatherLayerMode,
   WeatherPalette,
+  WeatherPhenomenon,
   WeatherPrefs,
   WeatherSeason,
   WeatherSourceMode,
@@ -26,6 +28,7 @@ export {
   formatTime,
   parseHourFromTimeString,
   parseStoryDateTime,
+  resolveLunarPhase,
 } from "./time-utils";
 
 export const WEATHER_STATE_VAR = "weather_state_json";
@@ -35,6 +38,16 @@ export const WEATHER_TAG_NAME = "weather-state";
 export const WEATHER_CONDITIONS: WeatherCondition[] = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 export const WEATHER_LAYERS: WeatherLayerMode[] = ["back", "front", "both"];
 export const WEATHER_PALETTES: WeatherPalette[] = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
+export const WEATHER_EXPOSURES: WeatherExposure[] = ["outdoor", "sheltered", "indoor", "underground"];
+export const WEATHER_PHENOMENA: WeatherPhenomenon[] = [
+  "none",
+  "aurora",
+  "blossoms",
+  "embers",
+  "ashfall",
+  "fireflies",
+  "sandstorm",
+];
 export const WEATHER_WIND_DIRECTIONS: WeatherWindDirection[] = [
   "none",
   "north",
@@ -63,6 +76,8 @@ export const DEFAULT_PREFS: WeatherPrefs = {
   clockMode: "auto",
   showForecast: true,
   transitionsEnabled: true,
+  soundEnabled: false,
+  soundVolume: 0.45,
 };
 
 export function clamp(value: number, min: number, max: number): number {
@@ -184,6 +199,103 @@ function normalizeClockMode(value: unknown, fallback: WeatherClockMode): Weather
     : fallback;
 }
 
+const EXPOSURE_ALIASES: Record<string, WeatherExposure> = {
+  outdoor: "outdoor",
+  outdoors: "outdoor",
+  outside: "outdoor",
+  exterior: "outdoor",
+  open: "outdoor",
+  exposed: "outdoor",
+  "open air": "outdoor",
+  sheltered: "sheltered",
+  porch: "sheltered",
+  canopy: "sheltered",
+  awning: "sheltered",
+  covered: "sheltered",
+  veranda: "sheltered",
+  balcony: "sheltered",
+  gazebo: "sheltered",
+  eaves: "sheltered",
+  overhang: "sheltered",
+  indoor: "indoor",
+  indoors: "indoor",
+  inside: "indoor",
+  interior: "indoor",
+  room: "indoor",
+  cabin: "indoor",
+  house: "indoor",
+  building: "indoor",
+  tavern: "indoor",
+  hall: "indoor",
+  underground: "underground",
+  subterranean: "underground",
+  cave: "underground",
+  cavern: "underground",
+  dungeon: "underground",
+  cellar: "underground",
+  tunnel: "underground",
+  bunker: "underground",
+  basement: "underground",
+  crypt: "underground",
+  mine: "underground",
+};
+
+export function normalizeExposure(value: unknown, fallback: WeatherExposure = "outdoor"): WeatherExposure {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return EXPOSURE_ALIASES[normalized] ?? fallback;
+}
+
+const PHENOMENON_ALIASES: Record<string, WeatherPhenomenon> = {
+  none: "none",
+  normal: "none",
+  off: "none",
+  clear: "none",
+  aurora: "aurora",
+  "aurora borealis": "aurora",
+  "northern lights": "aurora",
+  "polar lights": "aurora",
+  "southern lights": "aurora",
+  aether: "aurora",
+  blossoms: "blossoms",
+  blossom: "blossoms",
+  "cherry blossoms": "blossoms",
+  petals: "blossoms",
+  sakura: "blossoms",
+  "flower petals": "blossoms",
+  floral: "blossoms",
+  embers: "embers",
+  ember: "embers",
+  cinders: "embers",
+  sparks: "embers",
+  wildfire: "embers",
+  ashfall: "ashfall",
+  ash: "ashfall",
+  "volcanic ash": "ashfall",
+  soot: "ashfall",
+  fallout: "ashfall",
+  fireflies: "fireflies",
+  firefly: "fireflies",
+  "lightning bugs": "fireflies",
+  bioluminescence: "fireflies",
+  glowworms: "fireflies",
+  wisps: "fireflies",
+  spores: "fireflies",
+  sandstorm: "sandstorm",
+  "dust storm": "sandstorm",
+  duststorm: "sandstorm",
+  dust: "sandstorm",
+  haboob: "sandstorm",
+  sand: "sandstorm",
+  grit: "sandstorm",
+};
+
+export function normalizePhenomenon(value: unknown, fallback: WeatherPhenomenon = "none"): WeatherPhenomenon {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return PHENOMENON_ALIASES[normalized] ?? fallback;
+}
+
 function parseNumeric(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -210,6 +322,8 @@ export function makeDefaultWeatherState(now = Date.now()): WeatherState {
     palette: derivePalette("clear", dateValue, timeValue),
     season: seasonFromStoryDate(dateValue, timeValue) ?? "spring",
     seasonOverride: null,
+    exposure: "outdoor",
+    phenomenon: "none",
     forecast: [],
     updatedAt: now,
     source: "story",
@@ -229,6 +343,8 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
   const windDirectionValue = source.windDirection ?? source.winddirection ?? source.wind_direction ?? source["wind-direction"];
+  const exposureValue = source.exposure ?? source.shelter ?? source.setting;
+  const phenomenonValue = source.phenomenon ?? source.phenomena ?? source.anomaly;
 
   // A tag that omits the projection keeps the one already in play, so a single
   // day-to-day tag does not erase a multi-day outlook.
@@ -253,6 +369,8 @@ export function normalizeWeatherState(input: unknown, previous?: WeatherState | 
     palette,
     season: seasonOverride ?? derivedSeason ?? fallback.season,
     seasonOverride,
+    exposure: normalizeExposure(exposureValue, fallback.exposure ?? "outdoor"),
+    phenomenon: normalizePhenomenon(phenomenonValue, fallback.phenomenon ?? "none"),
     forecast,
     updatedAt,
     source: normalizeSource(source.source, fallback.source),
@@ -330,5 +448,8 @@ export function normalizePrefs(input: unknown): WeatherPrefs {
     showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
     transitionsEnabled:
       typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
+    soundEnabled:
+      typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
+    soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0.05, 1),
   };
 }

@@ -14,6 +14,11 @@ It is built for story-driven use, not live forecast data. The model controls the
 - Story sync mode driven by hidden inline weather tags
 - Manual lock mode for overriding the current scene per chat
 - Optional multi-day forecast strip projected from the hidden weather tag
+- Indoor, sheltered, and underground **exposure awareness** with windowpane condensation & rain rivulets when indoors
+- Secondary **atmospheric phenomena** (`aurora`, `blossoms`, `embers`, `ashfall`, `fireflies`, `sandstorm`)
+- Astronomical **lunar phase model** calculated from the story calendar date (`new`, `waxing-crescent`, `first-quarter`, `waxing-gibbous`, `full`, `waning-gibbous`, `last-quarter`, `waning-crescent`) that modulates night starlight and moonbeams
+- Zero-asset **procedural WebAudio soundscape synthesizer** with rain, wind, crackle, harmonic shimmer, lightning-synced stereo thunder rumbles, and automatic low-pass wall/shelter occlusion
+- Image-generation **visual prompt macro** (`{{weather_visual_tags}}`)
 - Scene changes blend between palettes and effects instead of swapping instantly
 - Per-chat persistence for story state and manual overrides
 - Prompt macros for reliable prompt-side weather tag generation
@@ -32,9 +37,10 @@ Optional reference macros:
 ```text
 {{weather_state}}
 {{weather_format}}
+{{weather_visual_tags}}
 ```
 
-`{{weather_tracker}}` is the canonical integration macro. The older aliases remain available for existing prompts; the current state is injected directly into generation, so `{{weather_state}}` is retained only as a compatibility marker. LumiWeather no longer makes extra generation calls when a tag is missing.
+`{{weather_tracker}}` is the canonical integration macro. `{{weather_visual_tags}}` (and `{{story_weather_visual_tags}}`) expands to comma-separated lighting, sky, weather, lunar, exposure, and phenomenon art descriptors for image generation prompts. The older aliases remain available for existing prompts; the current state is injected directly into generation, so `{{weather_state}}` is retained only as a compatibility marker. LumiWeather no longer makes extra generation calls when a tag is missing.
 
 Supported aliases:
 
@@ -45,6 +51,8 @@ Supported aliases:
 - `{{story_weather_state}}`
 - `{{weather_format}}`
 - `{{story_weather_format}}`
+- `{{weather_visual_tags}}`
+- `{{story_weather_visual_tags}}`
 
 The legacy `story_weather_*` aliases and technical extension ID remain in place so existing installs and prompts update cleanly under the LumiWeather name.
 
@@ -53,7 +61,7 @@ The legacy `story_weather_*` aliases and technical extension ID remain in place 
 The assistant should keep all visible prose natural, then end the message with exactly one hidden weather tag:
 
 ```html
-<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>
+<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" exposure="outdoor" phenomenon="none" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>
 ```
 
 Supported conditions:
@@ -75,6 +83,13 @@ Condition and attribute names are case-insensitive. Common condition aliases suc
 - `forecast` projects the next three story calendar days by default, with at most five future days total, using dates strictly after the tag's story date. Separate entries with a pipe and format each as `date: condition, temperature, summary`. New generated entries should include all three details. The parser still accepts sparse legacy entries such as `2026-01-17`, drops unparseable entries rather than failing the whole tag, and sorts the projection by date.
 - The model uses story-established future weather when available and otherwise projects a plausible outlook from the location, season, current conditions, and temperature. Existing future entries are retained unless the narrative changes the outlook. As the story date advances, elapsed dates are removed and missing days are added to restore the three-day horizon. Stable weather is a valid projection; the model need not invent weather changes or narrate future events. Forecasts describe fictional story weather and do not use live weather data.
 - When `forecast` is omitted, the projection already in play is kept. Send `forecast=""` to clear it deliberately.
+
+### Exposure, phenomena, lunar phases, and procedural soundscape (v1.5)
+
+- `exposure` is one of `outdoor` (default), `sheltered`, `indoor`, or `underground`. Common aliases such as `inside`, `tavern`, `cabin`, `porch`, `balcony`, `cave`, and `dungeon` are normalized automatically. When `indoor` or `sheltered` is active during rain or storm, direct precipitation is softened and a windowpane condensation/rivulet layer renders; when `underground` is active, sky and precipitation layers are suppressed in favor of deep subterranean mist and dust motes.
+- `phenomenon` is one of `none` (default), `aurora`, `blossoms`, `embers`, `ashfall`, `fireflies`, or `sandstorm`. Common aliases such as `northern-lights`, `sakura`, `petals`, `cinders`, `ash`, `lightning-bugs`, and `dust-storm` are normalized automatically.
+- **Astronomical lunar phase**: Computed automatically from the story date (`YYYY-MM-DD`) across the 29.53-day synodic cycle. Clear nights scale moonbeam glow and starlight contrast with the moon's disc illumination (`0..1`).
+- **Procedural WebAudio soundscape**: Optional zero-asset synthesizer in the HUD and settings panel. Synthesizes rain, wind, hearth/ember crackle, aurora/firefly harmonic shimmer, and stereo-panned thunder rumbles timed to lightning strikes. Moving from `outdoor` to `sheltered`, `indoor`, or `underground` applies a real-time low-pass acoustic wall occlusion filter.
 
 Effect placement is user-controlled in settings:
 
@@ -187,7 +202,7 @@ The mobile panel follows the device safe areas and Lumiverse's visual viewport, 
 
 LumiWeather publishes its normalized visible scene through the public, read-only `lumi_weather.state.current` endpoint. Compatible extensions receive the active chat ID, source-local revision, freshness, scene location, calendar date and time, and weather conditions with provenance.
 
-As of v1.4 the weather condition also carries `season` and a serialized `forecast` in its `attributes` map, and `lumi_weather.contract.v1` advertises the additional `forecast` and `solar_time` capabilities. The protocol stays `lumi_state.v1` at `schemaVersion: 1`; every addition is of the same shape, so existing readers are unaffected.
+As of v1.4 and v1.5, the weather condition also carries `season`, `exposure`, `phenomenon`, `lunarPhase`, `moonIllumination`, `visualTags`, and a serialized `forecast` in its `attributes` map, and `lumi_weather.contract.v1` advertises the `forecast`, `solar_time`, `lunar_phase`, `exposure`, `phenomenon`, `visual_tags`, and `ambient_audio` capabilities. The protocol stays `lumi_state.v1` at `schemaVersion: 1`; every addition is of the same shape, so existing readers are unaffected.
 
 Story history is rebuilt with each tag stamped by the timestamp of the message that carried it, so `updatedAt` and `freshness` reflect when the scene was actually written rather than when the history happened to be replayed.
 

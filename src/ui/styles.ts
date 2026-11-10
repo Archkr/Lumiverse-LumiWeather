@@ -131,6 +131,24 @@ export const WEATHER_HUD_CSS = `
   initial-value: 0;
 }
 
+@property --weather-aurora-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --weather-window-droplet-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@property --weather-phenomenon-opacity {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 @property --weather-flash-opacity {
   syntax: "<number>";
   inherits: true;
@@ -1614,6 +1632,9 @@ export const WEATHER_HUD_CSS = `
     --weather-mote-opacity 600ms ease,
     --weather-star-opacity 800ms ease,
     --weather-moonlight-opacity 800ms ease,
+    --weather-aurora-opacity 900ms ease,
+    --weather-window-droplet-opacity 700ms ease,
+    --weather-phenomenon-opacity 700ms ease,
     --weather-flash-opacity 300ms ease;
 }
 
@@ -1685,6 +1706,9 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-motes,
 .weather-fx-stars,
 .weather-fx-moonlight,
+.weather-fx-aurora,
+.weather-fx-phenomenon,
+.weather-fx-windowpane,
 .weather-fx-rain,
 .weather-fx-snow,
 .weather-fx-wind-gusts,
@@ -1766,6 +1790,125 @@ export const WEATHER_HUD_CSS = `
 .weather-fx-root.weather-visible.weather-night-active .weather-fx-star,
 .weather-fx-root.weather-visible.weather-night-active .weather-fx-moonlight {
   animation-play-state: running;
+}
+
+.weather-fx-aurora {
+  inset: -4vmax;
+  opacity: var(--weather-aurora-opacity, 0);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.weather-fx-aurora-ribbon {
+  position: absolute;
+  top: var(--aurora-top, -8%);
+  left: var(--aurora-left, -10%);
+  width: var(--aurora-width, 64vw);
+  height: var(--aurora-height, 42vh);
+  border-radius: 50%;
+  background: linear-gradient(
+    118deg,
+    transparent 8%,
+    hsla(var(--aurora-hue-a, 154), 92%, 64%, 0.55) 36%,
+    hsla(var(--aurora-hue-b, 272), 86%, 68%, 0.42) 68%,
+    transparent 92%
+  );
+  filter: blur(28px) saturate(1.25);
+  transform: rotate(var(--aurora-skew, -12deg));
+  animation: weather-aurora-wave var(--aurora-duration, 18s) ease-in-out infinite alternate;
+  animation-delay: var(--aurora-delay, 0s);
+}
+
+.weather-fx-phenomenon {
+  opacity: var(--weather-phenomenon-opacity, 0);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.weather-fx-phenomenon-particle {
+  position: absolute;
+  left: var(--p-left, 50%);
+  top: var(--p-top, 10%);
+  width: var(--p-size, 6px);
+  height: var(--p-size, 6px);
+  opacity: var(--p-opacity, 0.75);
+  animation-duration: var(--p-duration, 9s);
+  animation-delay: var(--p-delay, 0s);
+  animation-iteration-count: infinite;
+}
+
+.weather-fx-phenomenon[data-phenomenon="blossoms"] .weather-fx-phenomenon-particle {
+  width: calc(var(--p-size, 7px) * 1.35);
+  height: calc(var(--p-size, 7px) * 0.82);
+  border-radius: 80% 18% 80% 18%;
+  background: linear-gradient(135deg, rgba(255, 224, 238, 0.96), rgba(255, 166, 203, 0.86));
+  box-shadow: 0 0 8px rgba(255, 188, 217, 0.45);
+  animation-name: weather-phenomenon-blossom;
+  animation-timing-function: linear;
+}
+
+.weather-fx-phenomenon[data-phenomenon="embers"] .weather-fx-phenomenon-particle {
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 240, 186, 0.98) 0%, rgba(255, 126, 46, 0.92) 56%, transparent 100%);
+  box-shadow: 0 0 12px rgba(255, 118, 38, 0.85);
+  mix-blend-mode: screen;
+  animation-name: weather-phenomenon-ember;
+  animation-timing-function: ease-in-out;
+}
+
+.weather-fx-phenomenon[data-phenomenon="ashfall"] .weather-fx-phenomenon-particle {
+  border-radius: 42% 58% 62% 38%;
+  background: rgba(212, 216, 224, 0.78);
+  box-shadow: 0 0 4px rgba(145, 152, 165, 0.32);
+  animation-name: weather-phenomenon-ash;
+  animation-timing-function: linear;
+}
+
+.weather-fx-phenomenon[data-phenomenon="fireflies"] .weather-fx-phenomenon-particle {
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(246, 255, 182, 0.98) 0%, rgba(176, 245, 86, 0.84) 55%, transparent 100%);
+  box-shadow: 0 0 14px rgba(190, 255, 102, 0.88);
+  mix-blend-mode: screen;
+  animation-name: weather-phenomenon-firefly;
+  animation-timing-function: ease-in-out;
+}
+
+.weather-fx-phenomenon[data-phenomenon="sandstorm"] .weather-fx-phenomenon-particle {
+  width: calc(var(--p-size, 4px) * 6.5);
+  height: calc(var(--p-size, 4px) * 0.45);
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(235, 192, 132, 0.72), transparent);
+  filter: blur(1px);
+  animation-name: weather-phenomenon-sand;
+  animation-timing-function: linear;
+}
+
+.weather-fx-windowpane {
+  opacity: var(--weather-window-droplet-opacity, 0);
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(168, 200, 232, 0.08) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0%, transparent 42%, rgba(195, 222, 255, 0.04) 100%);
+}
+
+.weather-fx-window-drop {
+  position: absolute;
+  left: var(--wdrop-left, 50%);
+  top: var(--wdrop-top, 20%);
+  width: var(--wdrop-width, 3px);
+  height: var(--wdrop-height, 18px);
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(232, 244, 255, 0.05) 0%,
+    rgba(225, 241, 255, var(--wdrop-opacity, 0.45)) 68%,
+    rgba(255, 255, 255, 0.86) 100%
+  );
+  box-shadow: 0 1px 4px rgba(12, 26, 46, 0.22);
+  animation: weather-window-rivulet var(--wdrop-duration, 8s) ease-in-out infinite;
+  animation-delay: var(--wdrop-delay, 0s);
 }
 
 .weather-fx-horizon {
@@ -2232,7 +2375,10 @@ export const WEATHER_HUD_CSS = `
   animation: none;
 }
 
-.weather-fx-root.weather-reduced-motion .weather-fx-moonlight {
+.weather-fx-root.weather-reduced-motion .weather-fx-moonlight,
+.weather-fx-root.weather-reduced-motion .weather-fx-aurora-ribbon,
+.weather-fx-root.weather-reduced-motion .weather-fx-phenomenon-particle,
+.weather-fx-root.weather-reduced-motion .weather-fx-window-drop {
   animation: none;
 }
 
@@ -2317,6 +2463,118 @@ export const WEATHER_HUD_CSS = `
 @keyframes weather-star-twinkle {
   0%, 100% { opacity: calc(var(--star-opacity-scale) * 0.55); }
   50% { opacity: var(--star-opacity-scale); }
+}
+
+@keyframes weather-aurora-wave {
+  0% {
+    transform: translate3d(-4vw, 0, 0) rotate(var(--aurora-skew, -12deg)) scaleY(0.92);
+    opacity: 0.72;
+  }
+  50% {
+    transform: translate3d(3vw, -2vh, 0) rotate(calc(var(--aurora-skew, -12deg) + 4deg)) scaleY(1.14);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(6vw, 1.5vh, 0) rotate(calc(var(--aurora-skew, -12deg) - 3deg)) scaleY(0.96);
+    opacity: 0.8;
+  }
+}
+
+@keyframes weather-phenomenon-blossom {
+  0% {
+    transform: translate3d(0, -10vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: var(--p-opacity, 0.8);
+  }
+  88% {
+    opacity: var(--p-opacity, 0.8);
+  }
+  100% {
+    transform: translate3d(var(--p-drift-x, 18vw), 112vh, 0) rotate(var(--p-rotate, 240deg));
+    opacity: 0;
+  }
+}
+
+@keyframes weather-phenomenon-ember {
+  0% {
+    transform: translate3d(0, 108vh, 0) scale(0.75);
+    opacity: 0;
+  }
+  18% {
+    opacity: var(--p-opacity, 0.85);
+  }
+  82% {
+    opacity: calc(var(--p-opacity, 0.85) * 0.7);
+  }
+  100% {
+    transform: translate3d(var(--p-drift-x, 12vw), -12vh, 0) scale(0.35);
+    opacity: 0;
+  }
+}
+
+@keyframes weather-phenomenon-ash {
+  0% {
+    transform: translate3d(0, -8vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: var(--p-opacity, 0.65);
+  }
+  100% {
+    transform: translate3d(var(--p-drift-x, 10vw), 110vh, 0) rotate(var(--p-rotate, 180deg));
+    opacity: 0;
+  }
+}
+
+@keyframes weather-phenomenon-firefly {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(0.65);
+    opacity: 0.12;
+  }
+  35% {
+    transform: translate3d(calc(var(--p-drift-x, 8vw) * 0.45), var(--p-drift-y, -6vh), 0) scale(1.18);
+    opacity: var(--p-opacity, 0.92);
+  }
+  70% {
+    transform: translate3d(var(--p-drift-x, 8vw), calc(var(--p-drift-y, -6vh) * -0.5), 0) scale(0.85);
+    opacity: 0.28;
+  }
+}
+
+@keyframes weather-phenomenon-sand {
+  0% {
+    transform: translate3d(-24vw, 0, 0);
+    opacity: 0;
+  }
+  15% {
+    opacity: var(--p-opacity, 0.65);
+  }
+  85% {
+    opacity: var(--p-opacity, 0.65);
+  }
+  100% {
+    transform: translate3d(124vw, 6vh, 0);
+    opacity: 0;
+  }
+}
+
+@keyframes weather-window-rivulet {
+  0% {
+    transform: translate3d(0, -4vh, 0) scaleY(0.82);
+    opacity: 0;
+  }
+  16% {
+    opacity: var(--wdrop-opacity, 0.5);
+  }
+  78% {
+    opacity: var(--wdrop-opacity, 0.5);
+  }
+  100% {
+    transform: translate3d(0.4vw, 24vh, 0) scaleY(1.18);
+    opacity: 0;
+  }
 }
 
 @keyframes weather-rain-fall {

@@ -1,5 +1,6 @@
 // @bun
 // src/time-utils.ts
+var TIME_PHASE_PALETTES = ["dawn", "day", "dusk", "night"];
 var DAY_MS = 86400000;
 function pad2(value) {
   return String(value).padStart(2, "0");
@@ -84,6 +85,9 @@ function parseStoryDateTime(dateValue, timeValue) {
   }
   return parsed.getTime();
 }
+function isTimePhasePalette(palette) {
+  return TIME_PHASE_PALETTES.includes(palette);
+}
 function resolveDayOfYear(timestamp) {
   if (!Number.isFinite(timestamp))
     return null;
@@ -120,6 +124,11 @@ function phaseFromHour(hour) {
     return "dusk";
   return "night";
 }
+function resolveHudTimePhase(palette, hour) {
+  if (isTimePhasePalette(palette))
+    return palette;
+  return phaseFromHour(hour);
+}
 function phaseToPalette(phase) {
   return phase;
 }
@@ -142,6 +151,61 @@ function seasonFromStoryDate(dateValue, timeValue) {
     return null;
   const dayOfYear = resolveDayOfYear(timestamp);
   return dayOfYear === null ? null : resolveSeasonFromDayOfYear(dayOfYear);
+}
+var SYNODIC_MONTH_DAYS = 29.530588853;
+var SYNODIC_MONTH_MS = SYNODIC_MONTH_DAYS * DAY_MS;
+var NEW_MOON_EPOCH_MS = Date.UTC(2000, 0, 6, 18, 14, 0);
+var LUNAR_PHASE_LABELS = {
+  new: "New moon",
+  "waxing-crescent": "Waxing crescent",
+  "first-quarter": "First quarter",
+  "waxing-gibbous": "Waxing gibbous",
+  full: "Full moon",
+  "waning-gibbous": "Waning gibbous",
+  "last-quarter": "Last quarter",
+  "waning-crescent": "Waning crescent"
+};
+function lunarPhaseFromFraction(cycleFraction) {
+  const normalized = (cycleFraction % 1 + 1) % 1;
+  if (normalized < 0.0625 || normalized >= 0.9375)
+    return "new";
+  if (normalized < 0.1875)
+    return "waxing-crescent";
+  if (normalized < 0.3125)
+    return "first-quarter";
+  if (normalized < 0.4375)
+    return "waxing-gibbous";
+  if (normalized < 0.5625)
+    return "full";
+  if (normalized < 0.6875)
+    return "waning-gibbous";
+  if (normalized < 0.8125)
+    return "last-quarter";
+  return "waning-crescent";
+}
+function resolveLunarPhase(dateValue, timeValue = "12:00 PM") {
+  const timestamp = parseStoryDateTime(dateValue, timeValue) ?? parseStoryDateTime(dateValue, "12:00 PM");
+  if (timestamp === null) {
+    return {
+      phase: "full",
+      label: LUNAR_PHASE_LABELS.full,
+      ageDays: 14.77,
+      cycleFraction: 0.5,
+      illumination: 1
+    };
+  }
+  const elapsedMs = timestamp - NEW_MOON_EPOCH_MS;
+  const cycleFraction = (elapsedMs / SYNODIC_MONTH_MS % 1 + 1) % 1;
+  const ageDays = Number((cycleFraction * SYNODIC_MONTH_DAYS).toFixed(2));
+  const illumination = Number(((1 - Math.cos(2 * Math.PI * cycleFraction)) / 2).toFixed(3));
+  const phase = lunarPhaseFromFraction(cycleFraction);
+  return {
+    phase,
+    label: LUNAR_PHASE_LABELS[phase],
+    ageDays,
+    cycleFraction: Number(cycleFraction.toFixed(4)),
+    illumination
+  };
 }
 
 // src/forecast-utils.ts
@@ -292,6 +356,16 @@ var WEATHER_MANUAL_STATE_VAR = "weather_manual_state_json";
 var WEATHER_CONDITIONS = ["clear", "cloudy", "rain", "storm", "snow", "fog"];
 var WEATHER_LAYERS = ["back", "front", "both"];
 var WEATHER_PALETTES = ["dawn", "day", "dusk", "night", "storm", "mist", "snow"];
+var WEATHER_EXPOSURES = ["outdoor", "sheltered", "indoor", "underground"];
+var WEATHER_PHENOMENA = [
+  "none",
+  "aurora",
+  "blossoms",
+  "embers",
+  "ashfall",
+  "fireflies",
+  "sandstorm"
+];
 var REDUCED_MOTION_VALUES = ["system", "always", "never"];
 var TEMPERATURE_UNITS = ["fahrenheit", "celsius"];
 var WEATHER_SEASONS = ["spring", "summer", "autumn", "winter"];
@@ -307,7 +381,9 @@ var DEFAULT_PREFS = {
   widgetPosition: null,
   clockMode: "auto",
   showForecast: true,
-  transitionsEnabled: true
+  transitionsEnabled: true,
+  soundEnabled: false,
+  soundVolume: 0.45
 };
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -402,6 +478,101 @@ function normalizeSeason(value) {
 function normalizeClockMode(value, fallback) {
   return typeof value === "string" && WEATHER_CLOCK_MODES.includes(value) ? value : fallback;
 }
+var EXPOSURE_ALIASES = {
+  outdoor: "outdoor",
+  outdoors: "outdoor",
+  outside: "outdoor",
+  exterior: "outdoor",
+  open: "outdoor",
+  exposed: "outdoor",
+  "open air": "outdoor",
+  sheltered: "sheltered",
+  porch: "sheltered",
+  canopy: "sheltered",
+  awning: "sheltered",
+  covered: "sheltered",
+  veranda: "sheltered",
+  balcony: "sheltered",
+  gazebo: "sheltered",
+  eaves: "sheltered",
+  overhang: "sheltered",
+  indoor: "indoor",
+  indoors: "indoor",
+  inside: "indoor",
+  interior: "indoor",
+  room: "indoor",
+  cabin: "indoor",
+  house: "indoor",
+  building: "indoor",
+  tavern: "indoor",
+  hall: "indoor",
+  underground: "underground",
+  subterranean: "underground",
+  cave: "underground",
+  cavern: "underground",
+  dungeon: "underground",
+  cellar: "underground",
+  tunnel: "underground",
+  bunker: "underground",
+  basement: "underground",
+  crypt: "underground",
+  mine: "underground"
+};
+function normalizeExposure(value, fallback = "outdoor") {
+  if (typeof value !== "string")
+    return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return EXPOSURE_ALIASES[normalized] ?? fallback;
+}
+var PHENOMENON_ALIASES = {
+  none: "none",
+  normal: "none",
+  off: "none",
+  clear: "none",
+  aurora: "aurora",
+  "aurora borealis": "aurora",
+  "northern lights": "aurora",
+  "polar lights": "aurora",
+  "southern lights": "aurora",
+  aether: "aurora",
+  blossoms: "blossoms",
+  blossom: "blossoms",
+  "cherry blossoms": "blossoms",
+  petals: "blossoms",
+  sakura: "blossoms",
+  "flower petals": "blossoms",
+  floral: "blossoms",
+  embers: "embers",
+  ember: "embers",
+  cinders: "embers",
+  sparks: "embers",
+  wildfire: "embers",
+  ashfall: "ashfall",
+  ash: "ashfall",
+  "volcanic ash": "ashfall",
+  soot: "ashfall",
+  fallout: "ashfall",
+  fireflies: "fireflies",
+  firefly: "fireflies",
+  "lightning bugs": "fireflies",
+  bioluminescence: "fireflies",
+  glowworms: "fireflies",
+  wisps: "fireflies",
+  spores: "fireflies",
+  sandstorm: "sandstorm",
+  "dust storm": "sandstorm",
+  duststorm: "sandstorm",
+  dust: "sandstorm",
+  haboob: "sandstorm",
+  sand: "sandstorm",
+  grit: "sandstorm"
+};
+function normalizePhenomenon(value, fallback = "none") {
+  if (typeof value !== "string")
+    return fallback;
+  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+  return PHENOMENON_ALIASES[normalized] ?? fallback;
+}
 function parseNumeric(value) {
   if (typeof value === "number" && Number.isFinite(value))
     return value;
@@ -429,6 +600,8 @@ function makeDefaultWeatherState(now = Date.now()) {
     palette: derivePalette("clear", dateValue, timeValue),
     season: seasonFromStoryDate(dateValue, timeValue) ?? "spring",
     seasonOverride: null,
+    exposure: "outdoor",
+    phenomenon: "none",
     forecast: [],
     updatedAt: now,
     source: "story"
@@ -447,6 +620,8 @@ function normalizeWeatherState(input, previous) {
   const intensity = clamp(parseNumeric(source.intensity) ?? fallback.intensity, 0, 1);
   const updatedAt = parseNumeric(source.updatedAt) ?? Date.now();
   const windDirectionValue = source.windDirection ?? source.winddirection ?? source.wind_direction ?? source["wind-direction"];
+  const exposureValue = source.exposure ?? source.shelter ?? source.setting;
+  const phenomenonValue = source.phenomenon ?? source.phenomena ?? source.anomaly;
   const forecastValue = source.forecast ?? source.forecast_days ?? source.forecastDays ?? source.forecastdays;
   const forecast = forecastValue === undefined ? fallback.forecast : normalizeForecast(forecastValue);
   const derivedSeason = seasonFromStoryDate(date, time);
@@ -465,6 +640,8 @@ function normalizeWeatherState(input, previous) {
     palette,
     season: seasonOverride ?? derivedSeason ?? fallback.season,
     seasonOverride,
+    exposure: normalizeExposure(exposureValue, fallback.exposure ?? "outdoor"),
+    phenomenon: normalizePhenomenon(phenomenonValue, fallback.phenomenon ?? "none"),
     forecast,
     updatedAt,
     source: normalizeSource(source.source, fallback.source)
@@ -507,13 +684,88 @@ function normalizePrefs(input) {
     widgetPosition: position,
     clockMode: normalizeClockMode(source.clockMode, DEFAULT_PREFS.clockMode),
     showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
-    transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled
+    transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
+    soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
+    soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0.05, 1)
   };
 }
 
 // src/state-utils.ts
 function selectEffectiveWeatherState(storyState, manualState) {
   return manualState ?? storyState;
+}
+
+// src/visual-tags.ts
+var CONDITION_VISUAL_TAGS = {
+  clear: (intensity) => intensity > 0.65 ? "crisp clear sky, vibrant atmospheric light" : "clear sky",
+  cloudy: (intensity) => intensity > 0.65 ? "heavy overcast sky, dense cloud cover, diffused light" : "partly cloudy sky, soft clouds",
+  rain: (intensity) => intensity > 0.72 ? "heavy rain, streaking raindrops, wet reflective surfaces, rain mist" : intensity < 0.35 ? "light drizzle, damp atmosphere, subtle raindrops" : "steady rain, falling raindrops, wet surfaces",
+  storm: (intensity) => intensity > 0.75 ? "violent thunderstorm, dark cumulonimbus clouds, forked lightning flashes, torrential rain, dramatic storm lighting" : "thunderstorm, dark storm clouds, distant lightning, driving rain",
+  snow: (intensity) => intensity > 0.72 ? "heavy snowfall, swirling blizzard flurries, frost-covered surfaces, wintry haze" : "falling snow, soft snowflakes, wintry atmosphere",
+  fog: (intensity) => intensity > 0.7 ? "dense volumetric fog, thick low mist, shrouded silhouettes" : "atmospheric fog, low-lying mist, soft haze"
+};
+var PALETTE_VISUAL_TAGS = {
+  dawn: "golden dawn lighting, warm sunrise horizon, soft morning glow",
+  day: "natural daylight, balanced sky illumination",
+  dusk: "warm dusk twilight, amber and violet sunset glow, long shadows",
+  night: "night scene, deep nocturnal shadows",
+  storm: "brooding slate-blue storm palette, high-contrast tempest lighting",
+  mist: "muted pearl-grey mist palette, soft diffused contrast",
+  snow: "crisp glacial blue-white palette, luminous wintry reflection"
+};
+var EXPOSURE_VISUAL_TAGS = {
+  outdoor: "outdoor setting, open sky",
+  sheltered: "sheltered under cover, semi-open overhang, weather visible beyond shelter",
+  indoor: "indoor interior setting, weather visible through windowpane, condensation on glass",
+  underground: "underground subterranean setting, cavern haze, floating dust motes"
+};
+var PHENOMENON_VISUAL_TAGS = {
+  none: "",
+  aurora: "aurora borealis, shimmering emerald and violet polar light ribbons in sky",
+  blossoms: "drifting cherry blossom petals, floating pink sakura petals in the air",
+  embers: "floating glowing embers, rising fiery cinders and warm sparks",
+  ashfall: "falling volcanic ash, drifting grey soot flakes, hazy ash sky",
+  fireflies: "glowing bioluminescent fireflies, soft drifting golden light motes",
+  sandstorm: "swirling sandstorm, blowing ochre dust haze, airborne desert grit"
+};
+function buildWeatherVisualTags(state) {
+  if (!state)
+    return "";
+  const exposure = state.exposure ?? "outdoor";
+  const phenomenon = state.phenomenon ?? "none";
+  const hour = parseHourFromTimeString(state.time);
+  const phase = resolveHudTimePhase(state.palette, hour);
+  const lunar = resolveLunarPhase(state.date, state.time);
+  const segments = [];
+  segments.push(EXPOSURE_VISUAL_TAGS[exposure]);
+  if (exposure !== "underground") {
+    segments.push(PALETTE_VISUAL_TAGS[state.palette]);
+    if (phase === "night" && (state.condition === "clear" || state.condition === "cloudy")) {
+      if (lunar.illumination >= 0.85) {
+        segments.push("full moon, bright silver moonlight");
+      } else if (lunar.illumination <= 0.12) {
+        segments.push("new moon, dark starlit sky");
+      } else {
+        segments.push(`${lunar.label.toLowerCase()}, soft moonlight`);
+      }
+    }
+    segments.push(CONDITION_VISUAL_TAGS[state.condition](state.intensity));
+  }
+  if (phenomenon !== "none") {
+    segments.push(PHENOMENON_VISUAL_TAGS[phenomenon]);
+  }
+  if (exposure !== "underground" && exposure !== "indoor") {
+    const windText = state.wind.trim().toLowerCase();
+    if (/hurricane|violent|gale|hard|strong|gust/.test(windText)) {
+      segments.push("strong wind, windswept motion");
+    } else if (/breezy|windy|steady/.test(windText)) {
+      segments.push("gentle wind drift");
+    }
+  }
+  if (state.season && exposure !== "underground") {
+    segments.push(`${state.season} season`);
+  }
+  return segments.filter(Boolean).join(", ");
 }
 
 // src/lumi-state.ts
@@ -551,6 +803,7 @@ function makeWeatherLumiStateSnapshot(chatId, state, revision, extensionVersion,
       timezone: null,
       provenance
     });
+    const lunar = resolveLunarPhase(state.date, state.time);
     scene.conditions.push({
       id: "scene-weather",
       subject: { kind: "scene" },
@@ -564,6 +817,11 @@ function makeWeatherLumiStateSnapshot(chatId, state, revision, extensionVersion,
         windDirection: state.windDirection,
         palette: state.palette,
         season: state.season,
+        exposure: state.exposure ?? "outdoor",
+        phenomenon: state.phenomenon ?? "none",
+        lunarPhase: lunar.phase,
+        moonIllumination: lunar.illumination,
+        visualTags: buildWeatherVisualTags(state),
         forecast: state.forecast.length > 0 ? serializeForecast(state.forecast) : null
       },
       provenance
@@ -693,7 +951,7 @@ function hasSameForecast(left, right) {
 function hasSameStoryScene(left, right) {
   if (!left || !right)
     return left === right;
-  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.season === right.season && left.seasonOverride === right.seasonOverride && left.source === right.source && hasSameForecast(left.forecast, right.forecast);
+  return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.season === right.season && left.seasonOverride === right.seasonOverride && (left.exposure ?? "outdoor") === (right.exposure ?? "outdoor") && (left.phenomenon ?? "none") === (right.phenomenon ?? "none") && left.source === right.source && hasSameForecast(left.forecast, right.forecast);
 }
 
 // src/tag-dedupe.ts
@@ -711,23 +969,29 @@ function buildTagDedupeKey(attrs) {
 }
 
 // src/version.ts
-var EXTENSION_VERSION = "1.4.2";
+var EXTENSION_VERSION = "1.5.0";
 var LUMI_STATE_CAPABILITIES = [
   "scene_location",
   "calendar_time",
   "weather_conditions",
   "manual_override",
   "forecast",
-  "solar_time"
+  "solar_time",
+  "lunar_phase",
+  "exposure",
+  "phenomenon",
+  "visual_tags",
+  "ambient_audio"
 ];
 
 // src/weather-prompt.ts
 function buildWeatherTagExample() {
-  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>';
+  return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" exposure="outdoor" phenomenon="none" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>';
 }
 function summarizeWeatherState(state) {
   if (!state)
     return "No saved weather state yet.";
+  const lunar = resolveLunarPhase(state.date, state.time);
   const lines = [
     `Location: ${state.location}`,
     `Date: ${state.date}`,
@@ -739,7 +1003,10 @@ function summarizeWeatherState(state) {
     `Wind: ${state.wind}`,
     `Wind direction: ${state.windDirection}`,
     `Palette: ${state.palette}`,
-    `Season: ${state.season}`
+    `Season: ${state.season}`,
+    `Exposure: ${state.exposure ?? "outdoor"}`,
+    `Phenomenon: ${state.phenomenon ?? "none"}`,
+    `Lunar phase: ${lunar.label} (${Math.round(lunar.illumination * 100)}% illuminated)`
   ];
   const forecast = state.forecast.length > 0 ? state.forecast.map(formatForecastEntry).join(" | ") : "Not set yet; create a near-term outlook in the next tag.";
   lines.push(`Forecast: ${forecast}`);
@@ -763,9 +1030,13 @@ function buildTrackerMacro() {
     `Allowed conditions: ${WEATHER_CONDITIONS.join(", ")}`,
     `Allowed palettes: ${WEATHER_PALETTES.join(", ")}`,
     `Allowed seasons: ${WEATHER_SEASONS.join(", ")}`,
+    `Allowed exposures: ${WEATHER_EXPOSURES.join(", ")}`,
+    `Allowed phenomena: ${WEATHER_PHENOMENA.join(", ")}`,
     "Use location, date, time, condition, summary, temperature, intensity, wind, windDirection, palette, and forecast.",
     "windDirection is where the wind comes from and must be one of: none, north, northeast, east, southeast, south, southwest, west, northwest.",
     "season is optional and, when present, is one of: spring, summer, autumn, winter.",
+    "exposure is optional (outdoor, sheltered, indoor, underground) and tracks whether the active scene is in open air, under cover/porch/canopy, inside a building looking through windows, or underground.",
+    "phenomenon is optional (none, aurora, blossoms, embers, ashfall, fireflies, sandstorm) for special atmospheric effects.",
     "Include a non-empty forecast attribute in every weather-state tag, even when the visible narrative does not discuss future weather.",
     "Project the next three story calendar days by default, with at most five future days total. Use real YYYY-MM-DD calendar dates strictly after the date in this tag, in chronological order with no duplicate days.",
     "Separate forecast entries with a pipe and format each as date: condition, temperature, summary. Include a supported condition, a temperature with an F or C suffix, and a brief summary for each day; keep the scene's temperature unit.",
@@ -798,6 +1069,7 @@ var WEATHER_REVISION_VAR = "lumi_weather_state_revision_v1";
 var WEATHER_FORMAT_MACROS = ["story_weather_format", "weather_format"];
 var WEATHER_TRACKER_MACROS = ["story_weather_tracker", "weather_tracker", "story_weather"];
 var WEATHER_STATE_MACROS = ["story_weather_state", "weather_state"];
+var WEATHER_VISUAL_TAGS_MACROS = ["story_weather_visual_tags", "weather_visual_tags"];
 var TAG_DEDUPE_TTL_MS = 10 * 60 * 1000;
 var HISTORY_RECONCILE_DELAY_MS = 150;
 var sessions = new Map;
@@ -861,6 +1133,8 @@ function pushMacroValues() {
     spindle.updateMacroValue(macroName, trackerValue);
   for (const macroName of WEATHER_STATE_MACROS)
     spindle.updateMacroValue(macroName, stateValue);
+  for (const macroName of WEATHER_VISUAL_TAGS_MACROS)
+    spindle.updateMacroValue(macroName, "");
 }
 function extractChatId(payload) {
   if (!payload || typeof payload !== "object")
@@ -953,6 +1227,10 @@ async function publishWeatherState(chatId, state, revision, userId, activeChatRe
       return;
     if (activeChatRequest !== undefined && session.activeChatRequest !== activeChatRequest)
       return;
+  }
+  const visualTags = buildWeatherVisualTags(resolvedState);
+  for (const macroName of WEATHER_VISUAL_TAGS_MACROS) {
+    spindle.updateMacroValue(macroName, visualTags);
   }
   spindle.rpcPool.sync("state.current", makeWeatherLumiStateSnapshot(chatId, resolvedState, resolvedRevision, EXTENSION_VERSION), { requires: [] });
 }
@@ -1093,6 +1371,15 @@ for (const name of WEATHER_STATE_MACROS) {
     name,
     category: "extension:lumiweather",
     description: "Current LumiWeather scene state summary",
+    returnType: "string",
+    handler: ""
+  });
+}
+for (const name of WEATHER_VISUAL_TAGS_MACROS) {
+  spindle.registerMacro({
+    name,
+    category: "extension:lumiweather",
+    description: "Comma-separated visual art descriptors for the active weather scene",
     returnType: "string",
     handler: ""
   });

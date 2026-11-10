@@ -53,6 +53,11 @@ describe("LumiState weather publisher", () => {
     expect(snapshot.schemaVersion).toBe(1);
     expect(snapshot.source.extensionVersion).toBe(EXTENSION_VERSION);
     expect(attributes.season).toBe("summer");
+    expect(attributes.exposure).toBe("outdoor");
+    expect(attributes.phenomenon).toBe("none");
+    expect(typeof attributes.lunarPhase).toBe("string");
+    expect(typeof attributes.moonIllumination).toBe("number");
+    expect(typeof attributes.visualTags).toBe("string");
     expect(attributes.forecast).toBe("2026-07-18: rain, 58F, Rain expected");
   });
 

@@ -2,6 +2,26 @@ import type { WeatherPalette } from "./types";
 
 export type SolarPhase = "night" | "dawn" | "day" | "dusk";
 export type WeatherSeasonName = "spring" | "summer" | "autumn" | "winter";
+export type LunarPhaseName =
+  | "new"
+  | "waxing-crescent"
+  | "first-quarter"
+  | "waxing-gibbous"
+  | "full"
+  | "waning-gibbous"
+  | "last-quarter"
+  | "waning-crescent";
+
+export interface LunarCycle {
+  phase: LunarPhaseName;
+  label: string;
+  /** Days since new moon in `[0, 29.53)`. */
+  ageDays: number;
+  /** Normalized synodic progress in `[0, 1)`. */
+  cycleFraction: number;
+  /** Illuminated disc fraction in `[0, 1]`. */
+  illumination: number;
+}
 
 /**
  * Palettes that already encode a time-of-day phase. When a scene uses one of
@@ -291,4 +311,66 @@ export function seasonFromStoryDate(dateValue: string, timeValue: string): Weath
   if (timestamp === null) return null;
   const dayOfYear = resolveDayOfYear(timestamp);
   return dayOfYear === null ? null : resolveSeasonFromDayOfYear(dayOfYear);
+}
+
+/** Astronomical J2000 reference new moon: 2000-01-06 18:14 UTC. */
+export const SYNODIC_MONTH_DAYS = 29.530588853;
+const SYNODIC_MONTH_MS = SYNODIC_MONTH_DAYS * DAY_MS;
+const NEW_MOON_EPOCH_MS = Date.UTC(2000, 0, 6, 18, 14, 0);
+
+const LUNAR_PHASE_LABELS: Record<LunarPhaseName, string> = {
+  "new": "New moon",
+  "waxing-crescent": "Waxing crescent",
+  "first-quarter": "First quarter",
+  "waxing-gibbous": "Waxing gibbous",
+  "full": "Full moon",
+  "waning-gibbous": "Waning gibbous",
+  "last-quarter": "Last quarter",
+  "waning-crescent": "Waning crescent",
+};
+
+export function lunarPhaseFromFraction(cycleFraction: number): LunarPhaseName {
+  const normalized = (((cycleFraction % 1) + 1) % 1);
+  if (normalized < 0.0625 || normalized >= 0.9375) return "new";
+  if (normalized < 0.1875) return "waxing-crescent";
+  if (normalized < 0.3125) return "first-quarter";
+  if (normalized < 0.4375) return "waxing-gibbous";
+  if (normalized < 0.5625) return "full";
+  if (normalized < 0.6875) return "waning-gibbous";
+  if (normalized < 0.8125) return "last-quarter";
+  return "waning-crescent";
+}
+
+/**
+ * Resolves the astronomical lunar phase and disc illumination for a story date.
+ * Falls back to a full moon when the date is not a parseable calendar value so
+ * legacy or dateless night scenes retain their full moonlight intensity.
+ */
+export function resolveLunarPhase(dateValue: string, timeValue = "12:00 PM"): LunarCycle {
+  const timestamp =
+    parseStoryDateTime(dateValue, timeValue) ??
+    parseStoryDateTime(dateValue, "12:00 PM");
+  if (timestamp === null) {
+    return {
+      phase: "full",
+      label: LUNAR_PHASE_LABELS.full,
+      ageDays: 14.77,
+      cycleFraction: 0.5,
+      illumination: 1,
+    };
+  }
+
+  const elapsedMs = timestamp - NEW_MOON_EPOCH_MS;
+  const cycleFraction = (((elapsedMs / SYNODIC_MONTH_MS) % 1) + 1) % 1;
+  const ageDays = Number((cycleFraction * SYNODIC_MONTH_DAYS).toFixed(2));
+  const illumination = Number(((1 - Math.cos(2 * Math.PI * cycleFraction)) / 2).toFixed(3));
+  const phase = lunarPhaseFromFraction(cycleFraction);
+
+  return {
+    phase,
+    label: LUNAR_PHASE_LABELS[phase],
+    ageDays,
+    cycleFraction: Number(cycleFraction.toFixed(4)),
+    illumination,
+  };
 }

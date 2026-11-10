@@ -32,6 +32,11 @@ describe("release metadata", () => {
   test("declares the projected and solar capabilities this release ships", () => {
     expect(LUMI_STATE_CAPABILITIES).toContain("forecast");
     expect(LUMI_STATE_CAPABILITIES).toContain("solar_time");
+    expect(LUMI_STATE_CAPABILITIES).toContain("lunar_phase");
+    expect(LUMI_STATE_CAPABILITIES).toContain("exposure");
+    expect(LUMI_STATE_CAPABILITIES).toContain("phenomenon");
+    expect(LUMI_STATE_CAPABILITIES).toContain("visual_tags");
+    expect(LUMI_STATE_CAPABILITIES).toContain("ambient_audio");
     // The original v1 capabilities must not be dropped from the contract.
     expect(LUMI_STATE_CAPABILITIES).toContain("scene_location");
     expect(LUMI_STATE_CAPABILITIES).toContain("calendar_time");

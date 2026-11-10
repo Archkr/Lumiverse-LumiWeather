@@ -7,6 +7,15 @@ export type TemperatureUnit = "fahrenheit" | "celsius";
 export type WeatherSourceMode = "story" | "manual";
 export type WeatherSeason = "spring" | "summer" | "autumn" | "winter";
 export type WeatherClockMode = "auto" | "live" | "story";
+export type WeatherExposure = "outdoor" | "sheltered" | "indoor" | "underground";
+export type WeatherPhenomenon =
+  | "none"
+  | "aurora"
+  | "blossoms"
+  | "embers"
+  | "ashfall"
+  | "fireflies"
+  | "sandstorm";
 
 /** Which scene layer a resolved token set is being computed for. */
 export type WeatherLayerKind = "back" | "front";
@@ -40,6 +49,9 @@ export interface SceneTokens {
   starOpacity: number;
   moonlightOpacity: number;
   flashOpacity: number;
+  auroraOpacity: number;
+  windowDropletOpacity: number;
+  phenomenonOpacity: number;
 }
 
 export interface WidgetPosition {
@@ -69,6 +81,10 @@ export interface WeatherState {
   season: WeatherSeason;
   /** Null derives from the date; absent on pre-fix persisted states. */
   seasonOverride?: WeatherSeason | null;
+  /** Scene shelter/interior framing; defaults to `"outdoor"` when omitted. */
+  exposure?: WeatherExposure;
+  /** Secondary atmospheric phenomenon; defaults to `"none"` when omitted. */
+  phenomenon?: WeatherPhenomenon;
   forecast: ForecastEntry[];
   updatedAt: number;
   source: WeatherSourceMode;
@@ -86,6 +102,8 @@ export interface WeatherPrefs {
   clockMode: WeatherClockMode;
   showForecast: boolean;
   transitionsEnabled: boolean;
+  soundEnabled?: boolean;
+  soundVolume?: number;
 }
 
 export type FrontendToBackend =

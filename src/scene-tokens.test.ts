@@ -28,6 +28,9 @@ const OPACITY_KEYS: ReadonlyArray<keyof SceneTokens> = [
   "moteOpacity",
   "starOpacity",
   "moonlightOpacity",
+  "auroraOpacity",
+  "windowDropletOpacity",
+  "phenomenonOpacity",
   "flashOpacity",
 ];
 
@@ -161,5 +164,52 @@ describe("scene tokens", () => {
     expect(derivePalette("clear", date, "3:00 PM")).toBe("day");
     const derived = resolveSceneTokens(state({ palette: derivePalette("clear", date, "3:00 PM"), condition: "clear" }), 0.5);
     expect(derived.bgStart).toBe(resolveSceneTokens(state({ palette: "day", condition: "clear" }), 0.5).bgStart);
+  });
+
+  test("modulates indoor, sheltered, and underground exposure tokens", () => {
+    const outdoorRain = resolveSceneTokens(state({ condition: "rain", exposure: "outdoor" }), 0.7);
+    const shelteredRain = resolveSceneTokens(state({ condition: "rain", exposure: "sheltered" }), 0.7);
+    const indoorRain = resolveSceneTokens(state({ condition: "rain", exposure: "indoor" }), 0.7);
+    const undergroundRain = resolveSceneTokens(state({ condition: "rain", exposure: "underground" }), 0.7);
+
+    expect(shelteredRain.rainOpacity).toBeLessThan(outdoorRain.rainOpacity);
+    expect(indoorRain.rainOpacity).toBeLessThan(shelteredRain.rainOpacity);
+    expect(indoorRain.windowDropletOpacity).toBeGreaterThan(0.2);
+    expect(shelteredRain.windowDropletOpacity).toBe(0);
+    expect(outdoorRain.windowDropletOpacity).toBe(0);
+
+    expect(undergroundRain.rainOpacity).toBe(0);
+    expect(undergroundRain.snowOpacity).toBe(0);
+    expect(undergroundRain.starOpacity).toBe(0);
+    expect(undergroundRain.windowDropletOpacity).toBe(0);
+  });
+
+  test("computes aurora and secondary phenomenon opacities", () => {
+    const auroraNight = resolveSceneTokens(state({ condition: "clear", palette: "night", phenomenon: "aurora" }), 0.8);
+    expect(auroraNight.auroraOpacity).toBeGreaterThan(0.4);
+    expect(auroraNight.phenomenonOpacity).toBe(0);
+
+    const sakuraDay = resolveSceneTokens(state({ condition: "clear", palette: "day", phenomenon: "blossoms" }), 0.6);
+    expect(sakuraDay.auroraOpacity).toBe(0);
+    expect(sakuraDay.phenomenonOpacity).toBeGreaterThan(0.3);
+
+    const sandstorm = resolveSceneTokens(state({ condition: "cloudy", palette: "dusk", phenomenon: "sandstorm" }), 0.9);
+    expect(sandstorm.phenomenonOpacity).toBeGreaterThan(0.4);
+    expect(sandstorm.fogOpacity).toBeGreaterThan(0.2);
+  });
+
+  test("scales night moonlight and starlight with lunar phase illumination", () => {
+    // 2000-01-06 is the reference new moon; ~14.77 days later (2000-01-21) is full moon.
+    const newMoonNight = resolveSceneTokens(
+      state({ condition: "clear", palette: "night", date: "2000-01-06", time: "11:00 PM" }),
+      0.6,
+    );
+    const fullMoonNight = resolveSceneTokens(
+      state({ condition: "clear", palette: "night", date: "2000-01-21", time: "11:00 PM" }),
+      0.6,
+    );
+
+    expect(fullMoonNight.moonlightOpacity).toBeGreaterThan(newMoonNight.moonlightOpacity);
+    expect(newMoonNight.starOpacity).toBeGreaterThan(fullMoonNight.starOpacity);
   });
 });

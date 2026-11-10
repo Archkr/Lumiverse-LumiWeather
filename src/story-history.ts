@@ -101,6 +101,8 @@ export function hasSameStoryScene(left: WeatherState | null, right: WeatherState
     left.palette === right.palette &&
     left.season === right.season &&
     left.seasonOverride === right.seasonOverride &&
+    (left.exposure ?? "outdoor") === (right.exposure ?? "outdoor") &&
+    (left.phenomenon ?? "none") === (right.phenomenon ?? "none") &&
     left.source === right.source &&
     hasSameForecast(left.forecast, right.forecast)
   );

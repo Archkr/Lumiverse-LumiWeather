@@ -3,6 +3,8 @@ import {
   SUMMARY_MAX_LENGTH,
   formatTemperatureForUnit,
   makeDefaultWeatherState,
+  normalizeExposure,
+  normalizePhenomenon,
   normalizePrefs,
   normalizeWeatherState,
   normalizeWeatherTag,
@@ -129,5 +131,33 @@ describe("story weather normalization", () => {
     expect(custom.transitionsEnabled).toBe(false);
 
     expect(normalizePrefs({ clockMode: "sideways" }).clockMode).toBe("auto");
+    expect(legacy.soundEnabled).toBe(false);
+    expect(legacy.soundVolume).toBe(0.45);
+
+    const audioPrefs = normalizePrefs({ soundEnabled: true, soundVolume: 0.8 });
+    expect(audioPrefs.soundEnabled).toBe(true);
+    expect(audioPrefs.soundVolume).toBe(0.8);
+  });
+
+  test("normalizes exposure and phenomenon tag aliases", () => {
+    expect(normalizeExposure("tavern")).toBe("indoor");
+    expect(normalizeExposure("porch")).toBe("sheltered");
+    expect(normalizeExposure("dungeon")).toBe("underground");
+    expect(normalizeExposure("courtyard")).toBe("outdoor");
+
+    expect(normalizePhenomenon("northern-lights")).toBe("aurora");
+    expect(normalizePhenomenon("sakura")).toBe("blossoms");
+    expect(normalizePhenomenon("cinders")).toBe("embers");
+    expect(normalizePhenomenon("ash")).toBe("ashfall");
+    expect(normalizePhenomenon("lightning-bugs")).toBe("fireflies");
+    expect(normalizePhenomenon("haboob")).toBe("sandstorm");
+
+    const tagged = normalizeWeatherTag({
+      condition: "rain",
+      exposure: "inside",
+      phenomenon: "sakura",
+    });
+    expect(tagged.exposure).toBe("indoor");
+    expect(tagged.phenomenon).toBe("blossoms");
   });
 });

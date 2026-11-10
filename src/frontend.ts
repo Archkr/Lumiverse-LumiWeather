@@ -16,13 +16,17 @@ import { destroyProceduralFog, updateProceduralFog } from "./fog-renderer";
 import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
 import { resolveSceneTokens } from "./scene-tokens";
 import { resolveSceneHosts } from "./scene-hosts";
+import { WeatherSoundscape } from "./soundscape";
 import { conditionIcon, conditionIconLabel } from "./weather-icons";
 import {
   resolveHudTimePhase as sharedResolveHudTimePhase,
+  resolveLunarPhase,
   resolveSolarArc,
 } from "./time-utils";
 import {
   DEFAULT_PREFS,
+  WEATHER_EXPOSURES,
+  WEATHER_PHENOMENA,
   WEATHER_TAG_NAME,
   clamp,
   formatTemperatureForUnit,
@@ -37,6 +41,8 @@ import type {
   TemperatureUnit,
   WeatherClockMode,
   WeatherCondition,
+  WeatherExposure,
+  WeatherPhenomenon,
   SceneTokens,
   WeatherPrefs,
   WeatherState,
@@ -69,7 +75,7 @@ type FxRoot = {
   root: HTMLDivElement;
   host: HTMLElement | null;
   kind: "back" | "front";
-  poolCondition: WeatherCondition | null;
+  poolCondition: string | null;
   /** Tokens currently applied, used as the `from` side of the next blend. */
   sceneTokens: ResolvedSceneTokens | null;
   /** Identity of the applied scene, so an identical scene never re-blends. */
@@ -92,7 +98,10 @@ type HudCallbacks = {
   onApplyPreset(presetId: string): void;
   onChangeLayerMode(mode: WeatherPrefs["layerMode"]): void;
   onChangeIntensity(intensity: number): void;
+  onChangeExposure(exposure: WeatherExposure): void;
+  onChangePhenomenon(phenomenon: WeatherPhenomenon): void;
   onTogglePause(): void;
+  onToggleSound(): void;
 };
 
 type HudElements = {
@@ -115,9 +124,12 @@ type HudElements = {
   manualButton?: HTMLButtonElement;
   presetButtons: Map<string, HTMLButtonElement>;
   layerSelect?: HTMLSelectElement;
+  exposureSelect?: HTMLSelectElement;
+  phenomenonSelect?: HTMLSelectElement;
   intensitySlider?: HTMLInputElement;
   intensityValue?: HTMLSpanElement;
   pauseButton?: HTMLButtonElement;
+  soundButton?: HTMLButtonElement;
   resumeButton?: HTMLButtonElement;
   forecastSection?: HTMLDivElement;
   forecastLabel?: HTMLSpanElement;
@@ -152,7 +164,13 @@ function cssNumber(value: number, precision = 2): string {
   return value.toFixed(precision).replace(/\.?0+$/, "");
 }
 
-function resolveProceduralFogTint(palette: WeatherState["palette"]): readonly [number, number, number] {
+function resolveProceduralFogTint(
+  palette: WeatherState["palette"],
+  phenomenon: WeatherState["phenomenon"] = "none",
+): readonly [number, number, number] {
+  if (phenomenon === "sandstorm") {
+    return [0.84, 0.67, 0.45];
+  }
   switch (palette) {
     case "dawn":
       return [0.82, 0.76, 0.75];
@@ -334,6 +352,72 @@ function createNightSkyLayers(kind: "back" | "front"): HTMLDivElement[] {
   return [moonlight, stars];
 }
 
+function createAuroraLayer(front: boolean): HTMLDivElement {
+  const aurora = document.createElement("div");
+  aurora.className = front ? "weather-fx-aurora weather-fx-aurora-front" : "weather-fx-aurora";
+  aurora.setAttribute("aria-hidden", "true");
+  const ribbonCount = front ? 2 : 3;
+  for (let index = 0; index < ribbonCount; index += 1) {
+    aurora.appendChild(
+      createSpan("weather-fx-aurora-ribbon", {
+        "--aurora-index": String(index),
+        "--aurora-top": `${4 + index * 11}%`,
+        "--aurora-duration": `${18 + index * 5}s`,
+        "--aurora-delay": `${-index * 6.5}s`,
+      }),
+    );
+  }
+  return aurora;
+}
+
+function createPhenomenonLayer(front: boolean): HTMLDivElement {
+  const container = document.createElement("div");
+  container.className = front ? "weather-fx-phenomenon weather-fx-phenomenon-front" : "weather-fx-phenomenon";
+  container.setAttribute("aria-hidden", "true");
+  const compact = window.matchMedia("(max-width: 768px)").matches;
+  const count = front ? (compact ? 18 : 28) : (compact ? 28 : 44);
+  for (let index = 0; index < count; index += 1) {
+    const seed = index + (front ? 103 : 17);
+    const size = 3.2 + (seed % 5) * (front ? 1.35 : 1.05);
+    const sway = ((seed % 2 === 0 ? 1 : -1) * (1.8 + (seed % 4) * 1.1)).toFixed(2);
+    container.appendChild(
+      createSpan("weather-fx-phenomenon-particle", {
+        "--phenomenon-left": `${((seed * 37.9) % 104) - 2}%`,
+        "--phenomenon-top": `${(seed * 53.7) % 100}%`,
+        "--phenomenon-size": `${size.toFixed(1)}px`,
+        "--phenomenon-duration": `${6.5 + (seed % 8) * 1.4}s`,
+        "--phenomenon-delay": `${-((seed * 1.7) % 14).toFixed(2)}s`,
+        "--phenomenon-sway": `${sway}vw`,
+        "--phenomenon-opacity-scale": `${(0.45 + (seed % 6) * 0.09).toFixed(2)}`,
+      }),
+    );
+  }
+  return container;
+}
+
+function createWindowpaneLayer(front: boolean): HTMLDivElement {
+  const pane = document.createElement("div");
+  pane.className = front ? "weather-fx-windowpane weather-fx-windowpane-front" : "weather-fx-windowpane";
+  pane.setAttribute("aria-hidden", "true");
+  const compact = window.matchMedia("(max-width: 768px)").matches;
+  const dropCount = front ? (compact ? 18 : 30) : (compact ? 12 : 20);
+  for (let index = 0; index < dropCount; index += 1) {
+    const seed = index + (front ? 41 : 7);
+    pane.appendChild(
+      createSpan("weather-fx-window-drop", {
+        "--wdrop-left": `${3 + ((seed * 43.1) % 94)}%`,
+        "--wdrop-top": `${(seed * 61.3) % 92}%`,
+        "--wdrop-length": `${16 + (seed % 6) * 8}px`,
+        "--wdrop-width": `${1.5 + (seed % 3) * 0.6}px`,
+        "--wdrop-duration": `${2.8 + (seed % 7) * 0.65}s`,
+        "--wdrop-delay": `${-((seed * 1.3) % 6).toFixed(2)}s`,
+        "--wdrop-opacity": `${(0.38 + (seed % 5) * 0.11).toFixed(2)}`,
+      }),
+    );
+  }
+  return pane;
+}
+
 function createFxMarkup(kind: "back" | "front"): FxRoot {
   const root = document.createElement("div");
   root.className = "weather-fx-root";
@@ -347,6 +431,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     sky.className = "weather-fx-sky";
     root.appendChild(sky);
     root.append(...createNightSkyLayers(kind));
+    root.appendChild(createAuroraLayer(false));
 
     const glow = document.createElement("div");
     glow.className = "weather-fx-glow";
@@ -517,6 +602,9 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     frost.className = "weather-fx-frost";
     root.appendChild(frost);
 
+    root.appendChild(createPhenomenonLayer(false));
+    root.appendChild(createWindowpaneLayer(false));
+
     const lightning = document.createElement("div");
     lightning.className = "weather-fx-lightning";
     for (let index = 0; index < LIGHTNING_BOLT_SVGS.length; index += 1) {
@@ -532,6 +620,7 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
     sky.className = "weather-fx-sky weather-fx-sky-front";
     root.appendChild(sky);
     root.append(...createNightSkyLayers(kind));
+    root.appendChild(createAuroraLayer(true));
 
     const clouds = document.createElement("div");
     clouds.className = "weather-fx-clouds weather-fx-clouds-front";
@@ -646,6 +735,9 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
       snow.appendChild(createSnowflakeElement(true));
     }
 
+    root.appendChild(createPhenomenonLayer(true));
+    root.appendChild(createWindowpaneLayer(true));
+
     const lightningGlow = document.createElement("div");
     lightningGlow.className = "weather-fx-lightning-glow";
     root.appendChild(lightningGlow);
@@ -656,44 +748,66 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
   return { root, host: null, kind, poolCondition: null, sceneTokens: null, sceneKey: null, blendTimer: null };
 }
 
-function pruneFxMarkup(root: HTMLElement, condition: WeatherCondition | null): void {
+function pruneFxMarkup(
+  root: HTMLElement,
+  condition: WeatherCondition | null,
+  phenomenon: WeatherPhenomenon = "none",
+  exposure: WeatherExposure = "outdoor",
+): void {
   const rainLike = condition === "rain" || condition === "storm";
-  const windLike = condition === "cloudy" || rainLike;
+  const windLike = condition === "cloudy" || rainLike || phenomenon === "sandstorm" || phenomenon === "blossoms";
   const cloudLike = condition === "cloudy" || rainLike || condition === "snow";
-  const fogLike = condition === "fog" || condition === "snow" || rainLike;
+  const fogLike = condition === "fog" || condition === "snow" || rainLike || phenomenon === "sandstorm" || exposure === "underground";
+  const proceduralFogLike = condition === "fog" || phenomenon === "sandstorm";
+  const particlePhenomenon = phenomenon !== "none" && phenomenon !== "aurora";
 
-  if (!cloudLike) root.querySelector(".weather-fx-clouds")?.remove();
+  if (!cloudLike || exposure === "underground") root.querySelector(".weather-fx-clouds")?.remove();
   if (!fogLike) {
     root.querySelector(".weather-fx-fog")?.remove();
     root.querySelector(".weather-fx-mist")?.remove();
   }
-  if (condition !== "fog") root.querySelector(".weather-fx-procedural-fog-layer")?.remove();
-  if (condition !== "clear") root.querySelector(".weather-fx-motes")?.remove();
-  if (!windLike) root.querySelector(".weather-fx-wind-gusts")?.remove();
-  if (!rainLike) {
+  if (!proceduralFogLike) root.querySelector(".weather-fx-procedural-fog-layer")?.remove();
+  if (condition !== "clear" && exposure !== "underground") root.querySelector(".weather-fx-motes")?.remove();
+  if (!windLike || exposure === "underground") root.querySelector(".weather-fx-wind-gusts")?.remove();
+  if (!rainLike || exposure === "underground") {
     root.querySelector(".weather-fx-rain")?.remove();
     root.querySelector(".weather-fx-rain-splashes")?.remove();
     root.querySelector(".weather-fx-rain-ripples")?.remove();
   }
-  if (condition !== "snow") {
+  if (condition !== "snow" || exposure === "underground") {
     root.querySelector(".weather-fx-snow")?.remove();
     root.querySelector(".weather-fx-frost")?.remove();
   }
-  if (condition !== "storm") {
+  if (condition !== "storm" || exposure === "underground") {
     root.querySelector(".weather-fx-lightning")?.remove();
     root.querySelector(".weather-fx-lightning-glow")?.remove();
+  }
+  if (phenomenon !== "aurora" || exposure === "underground") {
+    root.querySelector(".weather-fx-aurora")?.remove();
+  }
+  if (!particlePhenomenon) {
+    root.querySelector(".weather-fx-phenomenon")?.remove();
+  }
+  if (exposure !== "indoor") {
+    root.querySelector(".weather-fx-windowpane")?.remove();
   }
   if (root.dataset.kind === "front" && !rainLike) root.querySelector(".weather-fx-rain-splashes")?.remove();
 }
 
-function syncFxCondition(fxRoot: FxRoot, condition: WeatherCondition | null): void {
-  if (fxRoot.poolCondition === condition) return;
+function syncFxCondition(
+  fxRoot: FxRoot,
+  condition: WeatherCondition | null,
+  phenomenon: WeatherPhenomenon = "none",
+  exposure: WeatherExposure = "outdoor",
+): void {
+  const nextPoolKey = condition ? `${condition}:${phenomenon}:${exposure}` : null;
+  if (fxRoot.poolCondition === nextPoolKey) return;
 
   const next = createFxMarkup(fxRoot.kind);
-  pruneFxMarkup(next.root, condition);
+  pruneFxMarkup(next.root, condition, phenomenon, exposure);
   destroyProceduralFog(fxRoot.root);
   fxRoot.root.replaceChildren(...Array.from(next.root.childNodes));
-  fxRoot.poolCondition = condition;
+  fxRoot.poolCondition = nextPoolKey;
 }
 
 function readChatIdFromSettingsUpdate(payload: unknown): string | null | undefined {
@@ -890,9 +1004,12 @@ function createHudWidget(
   let storyButton: HTMLButtonElement | undefined;
   let manualButton: HTMLButtonElement | undefined;
   let layerSelect: HTMLSelectElement | undefined;
+  let exposureSelect: HTMLSelectElement | undefined;
+  let phenomenonSelect: HTMLSelectElement | undefined;
   let intensitySlider: HTMLInputElement | undefined;
   let intensityValue: HTMLSpanElement | undefined;
   let pauseButton: HTMLButtonElement | undefined;
+  let soundButton: HTMLButtonElement | undefined;
   let resumeButton: HTMLButtonElement | undefined;
   let forecastSection: HTMLDivElement | undefined;
   let forecastLabel: HTMLSpanElement | undefined;
@@ -1028,6 +1145,52 @@ function createHudWidget(
     controlGrid.appendChild(layerWrap);
     controlGrid.appendChild(intensityWrap);
 
+    const exposureWrap = document.createElement("label");
+    exposureWrap.className = "weather-hud-field";
+    const exposureText = document.createElement("span");
+    exposureText.textContent = "Exposure";
+    exposureSelect = document.createElement("select");
+    exposureSelect.className = "weather-hud-select";
+    exposureSelect.innerHTML = `
+      <option value="outdoor">Outdoor</option>
+      <option value="sheltered">Sheltered</option>
+      <option value="indoor">Indoor</option>
+      <option value="underground">Underground</option>
+    `;
+    protectInteractive(exposureSelect);
+    exposureSelect.addEventListener("change", (event) => {
+      event.stopPropagation();
+      callbacks.onChangeExposure(exposureSelect!.value as WeatherExposure);
+    });
+    exposureWrap.appendChild(exposureText);
+    exposureWrap.appendChild(exposureSelect);
+
+    const phenomenonWrap = document.createElement("label");
+    phenomenonWrap.className = "weather-hud-field";
+    const phenomenonText = document.createElement("span");
+    phenomenonText.textContent = "Phenomenon";
+    phenomenonSelect = document.createElement("select");
+    phenomenonSelect.className = "weather-hud-select";
+    phenomenonSelect.innerHTML = `
+      <option value="none">None</option>
+      <option value="aurora">Aurora</option>
+      <option value="blossoms">Blossoms</option>
+      <option value="embers">Embers</option>
+      <option value="ashfall">Ashfall</option>
+      <option value="fireflies">Fireflies</option>
+      <option value="sandstorm">Sandstorm</option>
+    `;
+    protectInteractive(phenomenonSelect);
+    phenomenonSelect.addEventListener("change", (event) => {
+      event.stopPropagation();
+      callbacks.onChangePhenomenon(phenomenonSelect!.value as WeatherPhenomenon);
+    });
+    phenomenonWrap.appendChild(phenomenonText);
+    phenomenonWrap.appendChild(phenomenonSelect);
+
+    controlGrid.appendChild(exposureWrap);
+    controlGrid.appendChild(phenomenonWrap);
+
     controlsSection.appendChild(controlsLabel);
     controlsSection.appendChild(controlGrid);
 
@@ -1045,6 +1208,15 @@ function createHudWidget(
       callbacks.onTogglePause();
     });
 
+    soundButton = document.createElement("button");
+    soundButton.type = "button";
+    soundButton.className = "weather-hud-control";
+    protectInteractive(soundButton);
+    soundButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      callbacks.onToggleSound();
+    });
+
     resumeButton = document.createElement("button");
     resumeButton.type = "button";
     resumeButton.className = "weather-hud-control weather-hud-control-ghost";
@@ -1056,6 +1228,7 @@ function createHudWidget(
     });
 
     actionRow.appendChild(pauseButton);
+    actionRow.appendChild(soundButton);
     actionRow.appendChild(resumeButton);
     actionsSection.appendChild(actionRow);
 
@@ -1090,9 +1263,12 @@ function createHudWidget(
     manualButton,
     presetButtons,
     layerSelect,
+    exposureSelect,
+    phenomenonSelect,
     intensitySlider,
     intensityValue,
     pauseButton,
+    soundButton,
     resumeButton,
     forecastSection,
     forecastLabel,
@@ -1223,8 +1399,14 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   // +90 is solar noon, so gradient stops can key off real light rather than the
   // coarse phase label alone. An unparseable story date leaves it at 0.
   const solar = resolveSolarArc(displayState.date, displayState.time);
+  const lunar = resolveLunarPhase(displayState.date, displayState.time);
+  const exposure = displayState.exposure ?? "outdoor";
+  const phenomenon = displayState.phenomenon ?? "none";
   hud.root.style.setProperty("--weather-sun-altitude", solar.sunAltitude.toFixed(1));
   hud.root.dataset.season = state ? displayState.season : "unknown";
+  hud.root.dataset.exposure = exposure;
+  hud.root.dataset.phenomenon = phenomenon;
+  hud.root.dataset.lunarPhase = lunar.phase;
 
   const iconMarkup = conditionIcon(displayState.condition, phase);
   hud.icon.innerHTML = iconMarkup;
@@ -1237,12 +1419,18 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.summary.textContent = summaryText;
   hud.summary.title = summaryText;
   hud.summary.dataset.tickerText = summaryText;
+  const windBase = `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`;
+  const windExtras: string[] = [];
+  if (exposure !== "outdoor") windExtras.push(exposure);
+  if (phenomenon !== "none") windExtras.push(phenomenon);
   hud.wind.textContent = state
-    ? `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`
+    ? [windBase, ...windExtras].join(" · ")
     : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.location.title = hud.location.textContent;
-  hud.wind.title = hud.wind.textContent;
+  hud.wind.title = state
+    ? `${hud.wind.textContent} · ${lunar.label} (${Math.round(lunar.illumination * 100)}% moon)`
+    : hud.wind.textContent;
   // A missing interceptor permission used to be visible only inside the settings
   // panel; surface it on the HUD itself, where the user is already looking.
   const permissionLimited = hud.root.dataset.permission === "limited";
@@ -1293,6 +1481,16 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     hud.layerSelect.value = prefs.layerMode;
   }
 
+  if (hud.exposureSelect) {
+    hud.exposureSelect.value = exposure;
+    hud.exposureSelect.disabled = !hasActiveChat;
+  }
+
+  if (hud.phenomenonSelect) {
+    hud.phenomenonSelect.value = phenomenon;
+    hud.phenomenonSelect.disabled = !hasActiveChat;
+  }
+
   if (hud.intensitySlider && hud.intensityValue) {
     hud.intensitySlider.value = prefs.intensity.toFixed(2);
     hud.intensityValue.textContent = `${Math.round(prefs.intensity * 100)}%`;
@@ -1302,6 +1500,13 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     hud.pauseButton.textContent = prefs.pauseEffects ? "Resume motion" : "Pause motion";
     hud.pauseButton.classList.toggle("weather-hud-control-active", prefs.pauseEffects);
     hud.pauseButton.setAttribute("aria-pressed", String(prefs.pauseEffects));
+  }
+
+  if (hud.soundButton) {
+    const soundEnabled = Boolean(prefs.soundEnabled);
+    hud.soundButton.textContent = soundEnabled ? "Soundscape on" : "Soundscape off";
+    hud.soundButton.classList.toggle("weather-hud-control-active", soundEnabled);
+    hud.soundButton.setAttribute("aria-pressed", String(soundEnabled));
   }
 
   if (hud.resumeButton) {
@@ -1358,6 +1563,9 @@ const TRANSITIONED_TOKENS: ReadonlyArray<readonly [string, keyof ResolvedSceneTo
   ["--weather-mote-opacity", "moteOpacity"],
   ["--weather-star-opacity", "starOpacity"],
   ["--weather-moonlight-opacity", "moonlightOpacity"],
+  ["--weather-aurora-opacity", "auroraOpacity"],
+  ["--weather-window-droplet-opacity", "windowDropletOpacity"],
+  ["--weather-phenomenon-opacity", "phenomenonOpacity"],
   ["--weather-flash-opacity", "flashOpacity"],
 ];
 
@@ -1369,6 +1577,8 @@ function sceneKeyFor(state: WeatherState, effectiveIntensity: number, prefs: Wea
   return [
     state.condition,
     state.palette,
+    state.exposure ?? "outdoor",
+    state.phenomenon ?? "none",
     Math.round(effectiveIntensity * 1000),
     Math.round(state.intensity * 1000),
     prefs.layerMode,
@@ -1434,11 +1644,16 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
 
   root.root.dataset.condition = state.condition;
   root.root.dataset.palette = state.palette;
+  root.root.dataset.exposure = state.exposure ?? "outdoor";
+  root.root.dataset.phenomenon = state.phenomenon ?? "none";
   root.root.classList.toggle("weather-reduced-motion", reducedMotion);
   root.root.classList.toggle("weather-paused", prefs.pauseEffects || document.visibilityState === "hidden");
   root.root.classList.toggle("weather-rain-active", state.condition === "rain" || state.condition === "storm");
   root.root.classList.toggle("weather-snow-active", state.condition === "snow");
   root.root.classList.toggle("weather-night-active", tokens.starOpacity > 0 || tokens.moonlightOpacity > 0);
+  root.root.classList.toggle("weather-aurora-active", tokens.auroraOpacity > 0);
+  root.root.classList.toggle("weather-windowpane-active", tokens.windowDropletOpacity > 0);
+  root.root.classList.toggle("weather-phenomenon-active", tokens.phenomenonOpacity > 0);
 
   // The front layer zeroes several atmosphere opacities, so the resolved values
   // are what must be recorded and blended.
@@ -1453,6 +1668,9 @@ function applySceneState(root: FxRoot, state: WeatherState, prefs: WeatherPrefs,
     // foreground contribution subtle enough to preserve message readability.
     starOpacity: tokens.starOpacity * (isFront ? (prefs.layerMode === "both" ? 0.4 : 0.78) : 1),
     moonlightOpacity: tokens.moonlightOpacity * (isFront ? (prefs.layerMode === "both" ? 0.22 : 0.65) : 1),
+    auroraOpacity: tokens.auroraOpacity * (isFront ? (prefs.layerMode === "both" ? 0.25 : 0.75) : 1),
+    windowDropletOpacity: tokens.windowDropletOpacity * (isFront ? 1 : (prefs.layerMode === "both" ? 0.35 : 0.9)),
+    phenomenonOpacity: tokens.phenomenonOpacity * (isFront ? 0.95 : 0.85),
   };
 
   const nextKey = sceneKeyFor(state, effectiveIntensity, prefs);
@@ -1589,6 +1807,9 @@ export function setup(ctx: SpindleFrontendContext) {
   settingsMount.appendChild(settingsUI.root);
   cleanups.push(() => settingsUI.destroy());
 
+  const soundscape = new WeatherSoundscape();
+  cleanups.push(() => soundscape.destroy());
+
   const backFx = createFxMarkup("back");
   const frontFx = createFxMarkup("front");
   let hostSyncFrame: number | null = null;
@@ -1724,11 +1945,22 @@ export function setup(ctx: SpindleFrontendContext) {
       onChangeLayerMode: (mode) => {
         sendToBackend(ctx, { type: "save_prefs", prefs: { layerMode: mode } });
       },
+      onChangeExposure: (exposure) => {
+        const state = currentState ?? makeDefaultWeatherState();
+        sendManualState({ ...state, exposure, source: "manual" });
+      },
+      onChangePhenomenon: (phenomenon) => {
+        const state = currentState ?? makeDefaultWeatherState();
+        sendManualState({ ...state, phenomenon, source: "manual" });
+      },
       onChangeIntensity: (intensity) => {
         sendToBackend(ctx, { type: "save_prefs", prefs: { intensity } });
       },
       onTogglePause: () => {
         sendToBackend(ctx, { type: "save_prefs", prefs: { pauseEffects: !currentPrefs.pauseEffects } });
+      },
+      onToggleSound: () => {
+        sendToBackend(ctx, { type: "save_prefs", prefs: { soundEnabled: !currentPrefs.soundEnabled } });
       },
     });
     hud.root.dataset.reducedMotion = String(getReducedMotion());
@@ -1850,6 +2082,7 @@ export function setup(ctx: SpindleFrontendContext) {
         frontFx.root.classList.remove("weather-lightning-glow-flash");
         void frontFx.root.offsetWidth;
         frontFx.root.classList.add("weather-lightning-glow-flash");
+        soundscape.triggerThunder(boltX);
 
         scheduleFlashCleanup(() => {
           bolt.classList.remove("weather-lightning-strike");
@@ -1873,8 +2106,18 @@ export function setup(ctx: SpindleFrontendContext) {
     const showEffects = currentPrefs.effectsEnabled && document.visibilityState !== "hidden" && !!activeChatId && !!currentState;
     const sceneState = currentState ?? makeDefaultWeatherState();
 
-    syncFxCondition(backFx, currentState?.condition ?? null);
-    syncFxCondition(frontFx, currentState?.condition ?? null);
+    syncFxCondition(
+      backFx,
+      currentState?.condition ?? null,
+      currentState?.phenomenon ?? "none",
+      currentState?.exposure ?? "outdoor",
+    );
+    syncFxCondition(
+      frontFx,
+      currentState?.condition ?? null,
+      currentState?.phenomenon ?? "none",
+      currentState?.exposure ?? "outdoor",
+    );
 
     if (hud) {
       hud.root.dataset.permission = permissionWarning ? "limited" : "ok";
@@ -1890,17 +2133,20 @@ export function setup(ctx: SpindleFrontendContext) {
     const showFront = showEffects && !!frontFx.host && (layerMode === "front" || layerMode === "both");
     setFxVisibility(backFx, showBack);
     setFxVisibility(frontFx, showFront);
-    const showFog = showEffects && currentState?.condition === "fog";
+    const showFog = showEffects && (currentState?.condition === "fog" || currentState?.phenomenon === "sandstorm");
     if (showFog) {
       const fogOptions = {
         intensity: clamp(sceneState.intensity * currentPrefs.intensity, 0, 1.5),
         paused: currentPrefs.pauseEffects || document.visibilityState === "hidden",
         reducedMotion,
-        tint: resolveProceduralFogTint(sceneState.palette),
+        tint: currentState?.phenomenon === "sandstorm"
+          ? ([0.88, 0.67, 0.42] as const)
+          : resolveProceduralFogTint(sceneState.palette),
       };
       if (showBack) updateProceduralFog(backFx.root, fogOptions);
       if (showFront) updateProceduralFog(frontFx.root, fogOptions);
     }
+    soundscape.sync(currentState, currentPrefs, showEffects);
     scheduleStormFlash();
   };
 
