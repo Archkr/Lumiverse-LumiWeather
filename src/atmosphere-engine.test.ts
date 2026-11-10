@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { parseCssColorToRgba, resolveAtmosphereUniformTarget } from "./atmosphere-engine";
+import {
+  ATMOSPHERE_FRAGMENT_SHADER,
+  CLOUD_FRAGMENT_SHADER,
+  PARTICLE_FRAGMENT_SHADER,
+  PARTICLE_KIND,
+} from "./atmosphere-shaders";
 import { DEFAULT_PREFS, makeDefaultWeatherState } from "./shared";
 import { resolveSceneTokens } from "./scene-tokens";
 
@@ -70,6 +76,38 @@ describe("resolveAtmosphereUniformTarget", () => {
     expect(Math.abs(backInBoth.windVelocityX)).toBeGreaterThan(1.4);
   });
 
+  test("computes warm coral-amber cloud underglow at dusk and deep slate shadows in storms", () => {
+    const duskState = {
+      ...makeDefaultWeatherState(),
+      condition: "cloudy" as const,
+      palette: "dusk" as const,
+      intensity: 0.85,
+    };
+    const duskUniforms = resolveAtmosphereUniformTarget(
+      duskState,
+      resolveSceneTokens(duskState, 0.85),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(duskUniforms.cloudUnderGlowStrength).toBeGreaterThan(0.4);
+    expect(duskUniforms.cloudUnderGlow[0]).toBeGreaterThan(duskUniforms.cloudUnderGlow[2]);
+
+    const stormState = {
+      ...makeDefaultWeatherState(),
+      condition: "storm" as const,
+      palette: "storm" as const,
+      intensity: 1,
+    };
+    const stormUniforms = resolveAtmosphereUniformTarget(
+      stormState,
+      resolveSceneTokens(stormState, 1),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(stormUniforms.cloudShadowTint[0]).toBeLessThan(0.15);
+    expect(stormUniforms.cloudCore[0]).toBeLessThan(0.35);
+  });
+
   test("maps sandstorm phenomenon and underground exposure into shader uniform flags", () => {
     const sandstormState = {
       ...makeDefaultWeatherState(),
@@ -108,5 +146,13 @@ describe("resolveAtmosphereUniformTarget", () => {
     expect(undergroundUniforms.auroraOpacity).toBe(0);
     expect(undergroundUniforms.starOpacity).toBe(0);
     expect(undergroundUniforms.rainOpacity).toBe(0);
+  });
+
+  test("exposes complete WebGL shader sources and all 17 GPU gradient particle kinds", () => {
+    expect(Object.keys(PARTICLE_KIND).length).toBe(17);
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("fbm4");
+    expect(CLOUD_FRAGMENT_SHADER).toContain("u_rimLight");
+    expect(CLOUD_FRAGMENT_SHADER).toContain("u_underGlow");
+    expect(PARTICLE_FRAGMENT_SHADER).toContain("kind == 16");
   });
 });

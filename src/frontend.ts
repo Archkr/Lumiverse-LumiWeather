@@ -5,10 +5,7 @@ import {
   updateAtmosphereEngine,
 } from "./atmosphere-engine";
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "./presets";
-import {
-  resolveRainProfile,
-  resolveRainVector,
-} from "./fx-utils";
+import { resolveRainProfile } from "./fx-utils";
 import { clampMobileHudPosition, isMobileHudLayout, resolveHudPresentation } from "./mobile-layout";
 import { resolveSceneTokens } from "./scene-tokens";
 import { resolveSceneHosts } from "./scene-hosts";
@@ -144,10 +141,6 @@ function createFxMarkup(kind: "back" | "front"): FxRoot {
   const root = document.createElement("div");
   root.className = "weather-fx-root";
   root.dataset.kind = kind;
-
-  const flash = document.createElement("div");
-  flash.className = "weather-fx-flash";
-  root.appendChild(flash);
 
   return { root, host: null, kind, sceneTokens: null, sceneKey: null, blendTimer: null };
 }
@@ -881,40 +874,6 @@ function setFxVisibility(root: FxRoot, visible: boolean): void {
   root.root.classList.toggle("weather-visible", visible);
 }
 
-/** Maps each blended custom property to the resolved token that feeds it. */
-const TRANSITIONED_TOKENS: ReadonlyArray<readonly [string, keyof ResolvedSceneTokens]> = [
-  ["--weather-bg-start", "bgStart"],
-  ["--weather-bg-mid", "bgMid"],
-  ["--weather-bg-end", "bgEnd"],
-  ["--weather-glow", "glow"],
-  ["--weather-beam-color", "beamColor"],
-  ["--weather-horizon-color", "horizonColor"],
-  ["--weather-cloud-core", "cloudCore"],
-  ["--weather-cloud-edge", "cloudEdge"],
-  ["--weather-fog-color", "fogColor"],
-  ["--weather-mist-color", "mistColor"],
-  ["--weather-sky-opacity", "skyOpacity"],
-  ["--weather-glow-opacity", "glowOpacity"],
-  ["--weather-beam-opacity", "beamOpacity"],
-  ["--weather-cloud-opacity", "cloudOpacity"],
-  ["--weather-horizon-opacity", "horizonOpacity"],
-  ["--weather-mist-opacity", "mistOpacity"],
-  ["--weather-fog-opacity", "fogOpacity"],
-  ["--weather-rain-opacity", "rainOpacity"],
-  ["--weather-snow-opacity", "snowOpacity"],
-  ["--weather-mote-opacity", "moteOpacity"],
-  ["--weather-star-opacity", "starOpacity"],
-  ["--weather-moonlight-opacity", "moonlightOpacity"],
-  ["--weather-aurora-opacity", "auroraOpacity"],
-  ["--weather-window-droplet-opacity", "windowDropletOpacity"],
-  ["--weather-phenomenon-opacity", "phenomenonOpacity"],
-  ["--weather-flash-opacity", "flashOpacity"],
-];
-
-function tokenCssValue(value: string | number): string {
-  return typeof value === "number" ? String(value) : value;
-}
-
 function sceneKeyFor(state: WeatherState, effectiveIntensity: number, prefs: WeatherPrefs): string {
   return [
     state.condition,
@@ -927,47 +886,16 @@ function sceneKeyFor(state: WeatherState, effectiveIntensity: number, prefs: Wea
   ].join(":");
 }
 
-/**
- * Registers the transition properties with `@property` so the browser can
- * interpolate them. Without registration a custom property flips discretely at
- * the midpoint of a transition, so the capability is detected and the scene is
- * snapped instead of producing a jarring half-swap on older engines.
- */
-const sceneTransitionsSupported = (() => {
-  try {
-    return (
-      typeof CSS !== "undefined" &&
-      typeof CSS.registerProperty === "function" &&
-      typeof CSS.supports === "function" &&
-      CSS.supports("background-color", "color-mix(in srgb, red 50%, blue)")
-    );
-  } catch {
-    return false;
-  }
-})();
-
-/** Writes every blended token custom property onto the layer. */
-function writeSceneTokens(root: FxRoot, tokens: ResolvedSceneTokens): void {
-  for (const [property, key] of TRANSITIONED_TOKENS) {
-    root.root.style.setProperty(property, tokenCssValue(tokens[key]));
-  }
-}
-
-/** Animate from the currently painted values, including an interrupted blend. */
-function applySceneBlend(root: FxRoot, to: ResolvedSceneTokens, onComplete: () => void): void {
+/** Tracks transition completion timing while `AtmosphereEngine` interpolates uniforms on GPU. */
+function applySceneBlend(root: FxRoot, _to: ResolvedSceneTokens, onComplete: () => void): void {
   if (root.blendTimer !== null) window.clearTimeout(root.blendTimer);
-  root.root.classList.add("weather-scene-blending");
-  void root.root.offsetWidth;
-  writeSceneTokens(root, to);
   root.blendTimer = window.setTimeout(() => {
     root.blendTimer = null;
-    root.root.classList.remove("weather-scene-blending");
     onComplete();
   }, SCENE_TRANSITION_MS);
 }
 
 function clearSceneBlend(root: FxRoot): void {
-  root.root.classList.remove("weather-scene-blending");
   if (root.blendTimer !== null) {
     window.clearTimeout(root.blendTimer);
     root.blendTimer = null;
@@ -985,9 +913,8 @@ function applySceneState(
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const tokens = resolveSceneTokens(state, effectiveIntensity);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
-  const rainVector = resolveRainVector(state.wind, state.windDirection);
   const isFront = root.kind === "front";
-  const visibleRainDensity = reducedMotion ? Math.min(rainProfile.density, 0.22) : rainProfile.density;
+  const isBoth = prefs.layerMode === "both";
   const rainLayerOpacity = tokens.rainOpacity * rainProfile.opacityScale * (isFront ? 0.82 : 0.72);
   const paused = prefs.pauseEffects || document.visibilityState === "hidden";
 
@@ -1004,21 +931,19 @@ function applySceneState(
   root.root.classList.toggle("weather-windowpane-active", tokens.windowDropletOpacity > 0);
   root.root.classList.toggle("weather-phenomenon-active", tokens.phenomenonOpacity > 0);
 
-  // The front layer zeroes several atmosphere opacities, so the resolved values
-  // are what must be recorded and blended.
+  // In `both` mode the front layer skips sky/glow/beam/deep-fog so `back` owns the
+  // atmosphere behind chat; in `front`-only mode `front` retains scaled atmosphere.
   const resolvedTokens: ResolvedSceneTokens = {
     ...tokens,
-    glowOpacity: isFront ? 0 : tokens.glowOpacity,
-    beamOpacity: isFront ? 0 : tokens.beamOpacity,
-    fogOpacity: isFront ? 0 : tokens.fogOpacity,
+    glowOpacity: isFront ? (isBoth ? 0 : tokens.glowOpacity * 0.6) : tokens.glowOpacity,
+    beamOpacity: isFront ? (isBoth ? 0 : tokens.beamOpacity * 0.55) : tokens.beamOpacity,
+    fogOpacity: isFront ? (isBoth ? 0 : tokens.fogOpacity * 0.72) : tokens.fogOpacity,
     rainOpacity: rainLayerOpacity,
     snowOpacity: tokens.snowOpacity * (isFront ? 0.96 : 0.82),
-    // Front-only mode still needs a visible night sky; both mode keeps its
-    // foreground contribution subtle enough to preserve message readability.
-    starOpacity: tokens.starOpacity * (isFront ? (prefs.layerMode === "both" ? 0.4 : 0.78) : 1),
-    moonlightOpacity: tokens.moonlightOpacity * (isFront ? (prefs.layerMode === "both" ? 0.22 : 0.65) : 1),
-    auroraOpacity: tokens.auroraOpacity * (isFront ? (prefs.layerMode === "both" ? 0.25 : 0.75) : 1),
-    windowDropletOpacity: tokens.windowDropletOpacity * (isFront ? 1 : (prefs.layerMode === "both" ? 0.35 : 0.9)),
+    starOpacity: tokens.starOpacity * (isFront ? (isBoth ? 0.4 : 0.78) : 1),
+    moonlightOpacity: tokens.moonlightOpacity * (isFront ? (isBoth ? 0.22 : 0.65) : 1),
+    auroraOpacity: tokens.auroraOpacity * (isFront ? (isBoth ? 0.25 : 0.75) : 1),
+    windowDropletOpacity: tokens.windowDropletOpacity * (isFront ? 1 : (isBoth ? 0.35 : 0.9)),
     phenomenonOpacity: tokens.phenomenonOpacity * (isFront ? 0.95 : 0.85),
   };
 
@@ -1027,44 +952,19 @@ function applySceneState(
     prefs.effectsEnabled &&
     (prefs.layerMode === "both" || prefs.layerMode === root.kind) &&
     prefs.transitionsEnabled &&
-    sceneTransitionsSupported &&
     !reducedMotion &&
     !paused &&
     root.sceneTokens !== null &&
-    // A layer being revealed has its own opacity fade; blending would double up.
     visible;
 
   if (canBlend && root.sceneKey !== nextKey) {
     applySceneBlend(root, resolvedTokens, onBlendComplete);
   } else if (!canBlend || root.blendTimer === null) {
     clearSceneBlend(root);
-    writeSceneTokens(root, resolvedTokens);
   }
 
   root.sceneTokens = resolvedTokens;
   root.sceneKey = nextKey;
-
-  root.root.style.setProperty(
-    "--weather-procedural-fog-opacity",
-    String(clamp(0.42 + state.intensity * prefs.intensity * 0.18, 0.42, 0.72)),
-  );
-  root.root.style.setProperty("--weather-rain-density", String(visibleRainDensity));
-  root.root.style.setProperty("--weather-rain-speed-scale", String(rainProfile.speedScale));
-  root.root.style.setProperty("--weather-rain-angle", `${rainVector.angle}deg`);
-  root.root.style.setProperty(
-    "--weather-rain-color",
-    state.condition === "storm" ? "rgba(212, 231, 255, 0.96)" : "rgba(190, 220, 255, 0.84)",
-  );
-  root.root.style.setProperty(
-    "--weather-snow-color",
-    state.palette === "night" ? "rgba(219, 232, 255, 0.92)" : "rgba(247, 250, 255, 0.95)",
-  );
-  root.root.style.setProperty(
-    "--weather-particle-opacity-static",
-    state.condition === "snow"
-      ? String(clamp(tokens.snowOpacity * 0.2, 0.04, 0.22))
-      : String(clamp(rainLayerOpacity * 0.13, 0.025, 0.12)),
-  );
 
   updateAtmosphereEngine(root.root, root.kind, {
     state,
@@ -1371,15 +1271,6 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(() => coarsePointerMedia.removeEventListener("change", onCoarsePointerChange));
 
   let flashTimer: number | null = null;
-  const flashCleanupTimers = new Set<number>();
-  const scheduleFlashCleanup = (callback: () => void, delay: number) => {
-    const timer = window.setTimeout(() => {
-      flashCleanupTimers.delete(timer);
-      callback();
-    }, delay);
-    flashCleanupTimers.add(timer);
-  };
-
   const resetFlashTimer = () => {
     if (flashTimer !== null) {
       window.clearTimeout(flashTimer);
@@ -1396,15 +1287,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const scheduleStormFlash = () => {
     resetFlashTimer();
 
-    if (!canRunLightning()) {
-      for (const timer of flashCleanupTimers) window.clearTimeout(timer);
-      flashCleanupTimers.clear();
-      backFx.root.classList.remove("weather-storm-flash");
-      frontFx.root.classList.remove("weather-storm-flash");
-      frontFx.root.classList.remove("weather-lightning-glow-flash");
-      return;
-    }
-
+    if (!canRunLightning()) return;
     if (backFx.blendTimer !== null || frontFx.blendTimer !== null) return;
 
     const trigger = () => {
@@ -1413,28 +1296,14 @@ export function setup(ctx: SpindleFrontendContext) {
         scheduleStormFlash();
         return;
       }
-      if (currentPrefs.lightningFlashEnabled) {
-        backFx.root.classList.add("weather-storm-flash");
-        frontFx.root.classList.add("weather-storm-flash");
-      }
 
       const boltIndex = Math.floor(Math.random() * LIGHTNING_BOLT_POSITIONS.length);
       const boltX = LIGHTNING_BOLT_POSITIONS[boltIndex] ?? 50;
 
       triggerAtmosphereLightning(backFx.root, boltX);
       triggerAtmosphereLightning(frontFx.root, boltX);
-
-      frontFx.root.style.setProperty("--weather-lightning-x", `${boltX}%`);
-      frontFx.root.classList.remove("weather-lightning-glow-flash");
-      void frontFx.root.offsetWidth;
-      frontFx.root.classList.add("weather-lightning-glow-flash");
       soundscape.triggerThunder(boltX);
 
-      scheduleFlashCleanup(() => {
-        backFx.root.classList.remove("weather-storm-flash");
-        frontFx.root.classList.remove("weather-storm-flash");
-        frontFx.root.classList.remove("weather-lightning-glow-flash");
-      }, 650);
       flashTimer = window.setTimeout(trigger, 3200 + Math.random() * 5200);
     };
 
