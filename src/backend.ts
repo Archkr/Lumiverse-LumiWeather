@@ -406,12 +406,13 @@ for (const name of WEATHER_VISUAL_TAGS_MACROS) {
 
 pushMacroValues();
 
+// Run after LumiBooks (90) so fallback detection sees the final surviving history.
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
-  const instruction = buildPromptInstruction(state);
-  return injectWeatherInstruction(messages, instruction);
-}, 90);
+  const instruction = buildPromptInstruction();
+  return injectWeatherInstruction(messages, instruction, state);
+}, 100);
 
 const onEvent = spindle.on as unknown as (
   event: string,

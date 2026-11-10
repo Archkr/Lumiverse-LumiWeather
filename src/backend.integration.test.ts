@@ -132,10 +132,23 @@ test("tracker aliases and generation receive the forecast requirement with the s
 
   expect(result.messages[1]).toMatchObject({ role: "system" });
   expect(result.messages[1].content).toContain("Include a non-empty forecast attribute in every weather-state tag");
-  expect(result.messages[1].content).toContain("Date: 2026-12-31");
-  expect(result.messages[1].content).toContain("Forecast: 2027-01-01: rain, 15C, lingering showers | 2027-01-02: cloudy, 14C, low clouds");
-  expect(result.messages[2].content).toBe("A quiet evening.");
+  expect(result.messages[1].content).not.toContain("Date: 2026-12-31");
+  expect(result.messages.at(-1)?.content).toContain("Date: 2026-12-31");
+  expect(result.messages.at(-1)?.content).toContain("Forecast: 2027-01-01: rain, 15C, lingering showers | 2027-01-02: cloudy, 14C, low clouds");
+  expect(result.messages[2].content).toBe(`A quiet evening.\n${tag}`);
   expect(errors).toEqual([]);
+});
+
+test("generation uses the latest assistant history tag without duplicating scene state", async () => {
+  await send({ type: "weather_tag_intercepted", chatId: "chat", messageId: "current-tag",
+    attrs: { date: "2026-01-15", time: "12:00", condition: "clear", summary: "Calm" } });
+  const history: LlmMessageDTO = { role: "assistant", content: `Quiet.\n${tag}`,
+    __isChatHistory: true, sourceMessageId: "current-tag", sourceIndexInChat: 0 };
+  const result = await intercept([{ role: "system", content: "Base" }, history], { chatId: "chat" });
+  expect(result.messages).toHaveLength(3);
+  expect(result.messages[2]).toBe(history);
+  expect(result.breakdown).toHaveLength(1);
+  expect(result.messages[1].content).not.toContain("Current scene:");
 });
 
 test("manual season changes survive JSON transport, backend merge, and persisted reload", async () => {

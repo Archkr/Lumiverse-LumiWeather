@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { makeDefaultWeatherState, normalizeWeatherTag } from "./shared";
 import { extractLastWeatherTag } from "./tag-utils";
-import { buildPromptInstruction, buildTrackerMacro, buildWeatherTagExample } from "./weather-prompt";
+import { buildPromptInstruction, buildSceneInstruction, buildTrackerMacro, buildWeatherTagExample } from "./weather-prompt";
 
 describe("weather prompt guidance", () => {
   test("keeps conversational turns on the current story time", () => {
@@ -19,7 +19,7 @@ describe("weather prompt guidance", () => {
     state.date = "2026-07-20";
     state.time = "8:14 PM";
 
-    const instruction = buildPromptInstruction(state);
+    const instruction = [buildPromptInstruction(), buildSceneInstruction(state)].join("\n");
     expect(instruction).toContain("Date: 2026-07-20");
     expect(instruction).toContain("Time: 8:14 PM");
   });
@@ -43,7 +43,7 @@ describe("weather prompt guidance", () => {
       date: "2026-12-31", time: "8:14 PM", temperature: "16C",
       forecast: "2027-01-01: rain, 15C, lingering showers | 2027-01-02: cloudy, 14C, low clouds",
     });
-    const instruction = buildPromptInstruction(state);
+    const instruction = [buildPromptInstruction(), buildSceneInstruction(state)].join("\n");
 
     expect(instruction).toContain("Date: 2026-12-31");
     expect(instruction).toContain("Forecast: 2027-01-01: rain, 15C, lingering showers | 2027-01-02: cloudy, 14C, low clouds");
@@ -55,8 +55,8 @@ describe("weather prompt guidance", () => {
   });
 
   test("marks a missing saved outlook and retains forecast instructions before the first scene tag", () => {
-    const withState = buildPromptInstruction(makeDefaultWeatherState(0));
-    const withoutState = buildPromptInstruction(null);
+    const withState = [buildPromptInstruction(), buildSceneInstruction(makeDefaultWeatherState(0))].join("\n");
+    const withoutState = [buildPromptInstruction(), buildSceneInstruction(null)].join("\n");
 
     expect(withState).toContain("Forecast: Not set yet; create a near-term outlook in the next tag.");
     expect(withoutState).toContain("Current scene: No saved weather state yet.");

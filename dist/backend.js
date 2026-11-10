@@ -857,11 +857,6 @@ function makeWeatherLumiStateSnapshot(chatId, state, revision, extensionVersion,
 function buildWeatherTagRegex(flags = "ig") {
   return new RegExp(String.raw`<weather-state\b[^>]*?(?:\/>|>[\s\S]*?<\/weather-state>)`, flags);
 }
-function stripWeatherStateTags(content) {
-  return content.replace(buildWeatherTagRegex(), "").replace(/\n{3,}/g, `
-
-`).trim();
-}
 function parseTagAttributes(raw) {
   const attrs = {};
   const attributePattern = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
@@ -882,33 +877,6 @@ function extractLastWeatherTag(content) {
     };
   }
   return lastMatch;
-}
-
-// src/prompt-injection.ts
-var WEATHER_BREAKDOWN_NAME = "LumiWeather \u2014 Scene State";
-function stripWeatherStateMessageContent(content) {
-  if (typeof content === "string")
-    return stripWeatherStateTags(content);
-  if (!Array.isArray(content))
-    return content;
-  return content.map((part) => {
-    if (!part || typeof part !== "object" || !("text" in part))
-      return part;
-    const text = part.text;
-    return typeof text === "string" ? { ...part, text: stripWeatherStateTags(text) } : part;
-  });
-}
-function injectWeatherInstruction(messages, instruction) {
-  const cleanedMessages = messages.map((message) => message?.content ? { ...message, content: stripWeatherStateMessageContent(message.content) } : message);
-  const firstSystemIndex = cleanedMessages.findIndex((message) => message.role === "system");
-  const messageIndex = firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0;
-  const injected = { role: "system", content: instruction };
-  const nextMessages = [...cleanedMessages];
-  nextMessages.splice(messageIndex, 0, injected);
-  return {
-    messages: nextMessages,
-    breakdown: [{ messageIndex, name: WEATHER_BREAKDOWN_NAME }]
-  };
 }
 
 // src/story-history.ts
@@ -961,36 +929,6 @@ function hasSameStoryScene(left, right) {
     return left === right;
   return left.location === right.location && left.date === right.date && left.time === right.time && left.condition === right.condition && left.summary === right.summary && left.temperature === right.temperature && left.intensity === right.intensity && left.wind === right.wind && left.windDirection === right.windDirection && left.palette === right.palette && left.season === right.season && left.seasonOverride === right.seasonOverride && (left.exposure ?? "outdoor") === (right.exposure ?? "outdoor") && (left.phenomenon ?? "none") === (right.phenomenon ?? "none") && left.source === right.source && hasSameForecast(left.forecast, right.forecast);
 }
-
-// src/tag-dedupe.ts
-function buildTagDedupeKey(attrs) {
-  const normalized = [];
-  for (const key of Object.keys(attrs)) {
-    const namespacedKey = key.trim().toLowerCase();
-    if (!namespacedKey)
-      continue;
-    const value = typeof attrs[key] === "string" ? attrs[key].trim() : String(attrs[key] ?? "");
-    normalized.push([namespacedKey, value]);
-  }
-  normalized.sort(([a, av], [b, bv]) => a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0);
-  return JSON.stringify(normalized);
-}
-
-// src/version.ts
-var EXTENSION_VERSION = "1.5.0";
-var LUMI_STATE_CAPABILITIES = [
-  "scene_location",
-  "calendar_time",
-  "weather_conditions",
-  "manual_override",
-  "forecast",
-  "solar_time",
-  "lunar_phase",
-  "exposure",
-  "phenomenon",
-  "visual_tags",
-  "ambient_audio"
-];
 
 // src/weather-prompt.ts
 function buildWeatherTagExample() {
@@ -1059,17 +997,86 @@ function buildTrackerMacro() {
 `);
 }
 function buildStaticStateMacro() {
-  return "The current LumiWeather scene state is injected for the active chat during generation.";
+  return "Use the most recent assistant weather-state tag in chat history as the current scene reference.";
 }
-function buildPromptInstruction(state) {
+function buildPromptInstruction() {
   return [
     "[LumiWeather HUD]",
     "Keep the visible reply natural and in-character.",
     buildTrackerMacro(),
+    "Use the most recent assistant weather-state tag in chat history as the current scene reference.",
+    "If a [LumiWeather Current Scene] reference is supplied after history, use it instead; it restores missing state or a manual override.",
+    "If neither exists, establish the initial scene from the narrative."
+  ].join(`
+`);
+}
+function buildSceneInstruction(state) {
+  return [
+    "[LumiWeather Current Scene]",
     `Current scene: ${summarizeWeatherState(state)}`
   ].join(`
 `);
 }
+
+// src/prompt-injection.ts
+var WEATHER_INSTRUCTIONS_BREAKDOWN_NAME = "LumiWeather \u2014 Instructions";
+var WEATHER_BREAKDOWN_NAME = "LumiWeather \u2014 Scene State";
+function latestHistoryTag(messages) {
+  for (let i = messages.length - 1;i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "assistant" || !message.__isChatHistory)
+      continue;
+    const content = typeof message.content === "string" ? message.content : message.content.flatMap((part) => ("text" in part) && typeof part.text === "string" ? [part.text] : []).join(`
+`);
+    const tag = extractLastWeatherTag(content);
+    if (tag)
+      return tag;
+  }
+  return null;
+}
+function injectWeatherInstruction(messages, instruction, state) {
+  const firstSystemIndex = messages.findIndex((message) => message.role === "system");
+  const messageIndex = firstSystemIndex >= 0 ? firstSystemIndex + 1 : 0;
+  const nextMessages = [...messages];
+  nextMessages.splice(messageIndex, 0, { role: "system", content: instruction });
+  const breakdown = [{ messageIndex, name: WEATHER_INSTRUCTIONS_BREAKDOWN_NAME }];
+  const tag = latestHistoryTag(messages);
+  if (state && (state.source === "manual" || !tag || !hasSameStoryScene(normalizeWeatherTag(tag.attrs, state), state))) {
+    breakdown.push({ messageIndex: nextMessages.length, name: WEATHER_BREAKDOWN_NAME });
+    nextMessages.push({ role: "system", content: buildSceneInstruction(state) });
+  }
+  return { messages: nextMessages, breakdown };
+}
+
+// src/tag-dedupe.ts
+function buildTagDedupeKey(attrs) {
+  const normalized = [];
+  for (const key of Object.keys(attrs)) {
+    const namespacedKey = key.trim().toLowerCase();
+    if (!namespacedKey)
+      continue;
+    const value = typeof attrs[key] === "string" ? attrs[key].trim() : String(attrs[key] ?? "");
+    normalized.push([namespacedKey, value]);
+  }
+  normalized.sort(([a, av], [b, bv]) => a < b ? -1 : a > b ? 1 : av < bv ? -1 : av > bv ? 1 : 0);
+  return JSON.stringify(normalized);
+}
+
+// src/version.ts
+var EXTENSION_VERSION = "1.5.0";
+var LUMI_STATE_CAPABILITIES = [
+  "scene_location",
+  "calendar_time",
+  "weather_conditions",
+  "manual_override",
+  "forecast",
+  "solar_time",
+  "lunar_phase",
+  "exposure",
+  "phenomenon",
+  "visual_tags",
+  "ambient_audio"
+];
 
 // src/backend.ts
 var PREFS_FILE = "weather_prefs.json";
@@ -1396,9 +1403,9 @@ pushMacroValues();
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
-  const instruction = buildPromptInstruction(state);
-  return injectWeatherInstruction(messages, instruction);
-}, 90);
+  const instruction = buildPromptInstruction();
+  return injectWeatherInstruction(messages, instruction, state);
+}, 100);
 var onEvent = spindle.on;
 for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWIPE_EDITED"]) {
   onEvent(event, (payload, eventUserId) => {

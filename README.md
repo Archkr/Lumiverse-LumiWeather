@@ -40,7 +40,7 @@ Optional reference macros:
 {{weather_visual_tags}}
 ```
 
-`{{weather_tracker}}` is the canonical integration macro. `{{weather_visual_tags}}` (and `{{story_weather_visual_tags}}`) expands to comma-separated lighting, sky, weather, lunar, exposure, and phenomenon art descriptors for image generation prompts. The older aliases remain available for existing prompts; the current state is injected directly into generation, so `{{weather_state}}` is retained only as a compatibility marker. LumiWeather no longer makes extra generation calls when a tag is missing.
+`{{weather_tracker}}` is the canonical integration macro. `{{weather_visual_tags}}` (and `{{story_weather_visual_tags}}`) expands to comma-separated lighting, sky, weather, lunar, exposure, and phenomenon art descriptors for image generation prompts. The older aliases remain available for existing prompts; the latest assistant weather tag in chat history carries the current state, so `{{weather_state}}` is retained only as a compatibility marker. LumiWeather no longer makes extra generation calls when a tag is missing.
 
 Supported aliases:
 
@@ -129,6 +129,10 @@ The HUD clock follows story time by default. **HUD clock** in settings chooses b
 4. The HUD updates only after the assistant message is complete, so streaming does not mutate the scene mid-reply.
 5. The backend stores the normalized weather state per chat.
 6. If the model does not emit a weather tag, the current scene remains unchanged and the HUD reports that it is waiting for LumiWeather.
+
+Weather instructions stay constant near the start of the outgoing prompt. Historical assistant weather tags remain in the model's context and carry scene continuity; normal scene updates do not rewrite an early system message. Tags remain hidden in the visible chat.
+
+After LumiBooks has replaced covered history, LumiWeather checks whether the latest surviving assistant tag represents the saved scene. If it is missing or outdated (including after context clipping), a scene reference is appended at the end of the prompt. Manual overrides also use this final reference. This preserves the earlier prompt prefix; changes to a fallback reference can still affect caching at the tail. The visual art macros change with the scene, so use them in image generation prompts rather than an early chat instruction block.
 
 Only completed assistant tags are accepted. Streaming tags and user-authored tags are ignored, and duplicate tags from the same chat message do not update state twice. When a tagged message is deleted, edited, or swiped, LumiWeather rebuilds story state from the latest remaining assistant tag. Rendering older messages keeps the latest scene intact.
 

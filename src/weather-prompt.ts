@@ -78,14 +78,24 @@ export function buildTrackerMacro(): string {
 }
 
 export function buildStaticStateMacro(): string {
-  return "The current LumiWeather scene state is injected for the active chat during generation.";
+  return "Use the most recent assistant weather-state tag in chat history as the current scene reference.";
 }
 
-export function buildPromptInstruction(state: WeatherState | null): string {
+export function buildPromptInstruction(): string {
   return [
     "[LumiWeather HUD]",
     "Keep the visible reply natural and in-character.",
     buildTrackerMacro(),
+    "Use the most recent assistant weather-state tag in chat history as the current scene reference.",
+    "If a [LumiWeather Current Scene] reference is supplied after history, use it instead; it restores missing state or a manual override.",
+    "If neither exists, establish the initial scene from the narrative.",
+  ].join("\n");
+}
+
+/** Changing scene data belongs after history so it cannot invalidate the instruction prefix. */
+export function buildSceneInstruction(state: WeatherState | null): string {
+  return [
+    "[LumiWeather Current Scene]",
     `Current scene: ${summarizeWeatherState(state)}`,
   ].join("\n");
 }
