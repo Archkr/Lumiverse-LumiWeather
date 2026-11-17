@@ -199,4 +199,19 @@ describe("resolveAtmosphereUniformTarget", () => {
     );
     expect(calmUniforms.windAngleDeg).toBe(0);
   });
+
+  test("guards mobile highp precision and adapts sky shaders to portrait aspect ratios", () => {
+    for (const shader of [
+      ATMOSPHERE_FRAGMENT_SHADER,
+      CLOUD_FRAGMENT_SHADER,
+      PARTICLE_FRAGMENT_SHADER,
+    ]) {
+      expect(shader).toContain("#ifdef GL_FRAGMENT_PRECISION_HIGH");
+      expect(shader).toContain("precision mediump float;");
+    }
+
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("uniform vec2 u_moonPos;");
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("auroraAspect");
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("beamTargetAngle");
+  });
 });

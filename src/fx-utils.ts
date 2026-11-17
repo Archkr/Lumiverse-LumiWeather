@@ -17,6 +17,75 @@ export interface RainVector {
   driftDirection: -1 | 0 | 1;
 }
 
+export interface ViewportFxProfile {
+  compact: boolean;
+  cloudCountScale: number;
+  cloudSizeScale: number;
+  cloudMaxWidthNorm: number;
+  cloudMaxHeightNorm: number;
+  cloudOpacityScale: number;
+  particleCountScale: number;
+  particleSizeScale: number;
+  streakWidthScale: number;
+  verticalSpanScale: number;
+  moonX: number;
+  moonY: number;
+  moonHalfSizePx: number;
+  frostCornerW: number;
+  frostCornerH: number;
+  lightningSpreadScale: number;
+  lightningWidthScale: number;
+}
+
+export function resolveViewportFxProfile(clientW: number, clientH: number): ViewportFxProfile {
+  const safeW = Math.max(1, Number.isFinite(clientW) ? clientW : 1);
+  const safeH = Math.max(1, Number.isFinite(clientH) ? clientH : 1);
+  const compact = safeW < 768;
+
+  const widthScale = clamp(safeW / 1024, 0.38, 1);
+  const areaScale = clamp(Math.sqrt((safeW * safeH) / (1180 * 780)), 0.42, 1);
+  const particleCountScale = clamp(widthScale * 0.6 + areaScale * 0.4, 0.42, 1);
+  const particleSizeScale = clamp(safeW / 760, 0.68, 1);
+  const streakWidthScale = clamp(safeW / 900, 0.5, 1);
+  const verticalSpanScale = clamp(safeH / 840, 0.72, 1);
+
+  const cloudCountScale = clamp(safeW / 960, 0.44, 1);
+  const cloudSizeScale = clamp(safeW / 960, 0.44, 1);
+  const cloudMaxWidthNorm = compact ? 0.58 : 0.72;
+  const cloudMaxHeightNorm = safeH < 520 ? 0.32 : 0.42;
+  const cloudOpacityScale = clamp(0.76 + (safeW / 1024) * 0.24, 0.8, 1);
+
+  const moonHalfSizePx = clamp(Math.min(safeW, safeH) * 0.13, 50, 145);
+  const moonX = safeW < 640 ? 0.78 : 0.84;
+  const moonY = 0.16;
+
+  const frostCornerW = clamp(safeW * 0.32, 105, 480);
+  const frostCornerH = clamp(safeH * 0.25, 110, 320);
+
+  const lightningSpreadScale = compact ? clamp(768 / Math.max(safeW, 300), 1, 1.9) : 1;
+  const lightningWidthScale = clamp(safeW / 760, 0.72, 1);
+
+  return {
+    compact,
+    cloudCountScale,
+    cloudSizeScale,
+    cloudMaxWidthNorm,
+    cloudMaxHeightNorm,
+    cloudOpacityScale,
+    particleCountScale,
+    particleSizeScale,
+    streakWidthScale,
+    verticalSpanScale,
+    moonX,
+    moonY,
+    moonHalfSizePx,
+    frostCornerW,
+    frostCornerH,
+    lightningSpreadScale,
+    lightningWidthScale,
+  };
+}
+
 export function resolveRainParticlePool(compact: boolean): RainParticlePool {
   return compact ? { back: 60, front: 42 } : { back: 96, front: 72 };
 }

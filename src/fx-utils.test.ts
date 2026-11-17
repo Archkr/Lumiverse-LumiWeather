@@ -4,6 +4,7 @@ import {
   resolveRainParticlePool,
   resolveRainProfile,
   resolveRainVector,
+  resolveViewportFxProfile,
 } from "./fx-utils";
 
 describe("weather FX profiles", () => {
@@ -65,5 +66,51 @@ describe("weather FX profiles", () => {
       opacityScale: 0,
       speedScale: 1,
     });
+  });
+
+  test("scales clouds, particles, frost, moon, and lightning cleanly for portrait mobile", () => {
+    const desktop = resolveViewportFxProfile(1440, 900);
+    expect(desktop.compact).toBe(false);
+    expect(desktop.particleCountScale).toBe(1);
+    expect(desktop.cloudCountScale).toBe(1);
+    expect(desktop.cloudSizeScale).toBe(1);
+    expect(desktop.moonX).toBe(0.84);
+    expect(desktop.lightningSpreadScale).toBe(1);
+
+    for (const [w, h] of [
+      [390, 844],
+      [360, 740],
+      [320, 568],
+    ] as const) {
+      const mobile = resolveViewportFxProfile(w, h);
+      expect(mobile.compact).toBe(true);
+      expect(mobile.particleCountScale).toBeLessThan(0.55);
+      expect(mobile.particleSizeScale).toBeLessThan(0.75);
+      expect(mobile.cloudCountScale).toBeLessThan(0.5);
+      expect(mobile.cloudSizeScale).toBeLessThan(0.5);
+      expect(mobile.cloudMaxWidthNorm).toBe(0.58);
+      expect(mobile.streakWidthScale).toBe(0.5);
+
+      // Moon disc fits inside top-right bounds with zero edge clipping
+      expect(mobile.moonX * w + mobile.moonHalfSizePx).toBeLessThan(w);
+      expect(mobile.moonY * h - mobile.moonHalfSizePx).toBeGreaterThanOrEqual(0);
+
+      // Left and right corner frost quads leave an unobstructed central chat band
+      expect(mobile.frostCornerW * 2).toBeLessThan(w * 0.68);
+      expect(mobile.frostCornerH * 2).toBeLessThan(h * 0.55);
+
+      // Lightning branches widen horizontally relative to narrow viewport while keeping slim strokes
+      expect(mobile.lightningSpreadScale).toBeGreaterThan(1.5);
+      expect(mobile.lightningWidthScale).toBeLessThan(0.8);
+    }
+  });
+
+  test("caps cloud height and vertical particle span in mobile landscape viewports", () => {
+    const landscape = resolveViewportFxProfile(844, 390);
+    expect(landscape.cloudMaxHeightNorm).toBe(0.32);
+    expect(landscape.verticalSpanScale).toBe(0.72);
+    expect(landscape.moonX * 844 + landscape.moonHalfSizePx).toBeLessThan(844);
+    expect(landscape.moonY * 390 - landscape.moonHalfSizePx).toBeGreaterThanOrEqual(0);
+    expect(landscape.frostCornerW * 2).toBeLessThan(844 * 0.68);
   });
 });

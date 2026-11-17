@@ -1063,7 +1063,7 @@ function buildTagDedupeKey(attrs) {
 }
 
 // src/version.ts
-var EXTENSION_VERSION = "1.5.0";
+var EXTENSION_VERSION = "1.6.0";
 var LUMI_STATE_CAPABILITIES = [
   "scene_location",
   "calendar_time",

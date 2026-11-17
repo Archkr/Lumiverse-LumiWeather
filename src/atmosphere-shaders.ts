@@ -39,7 +39,11 @@ export const ATMOSPHERE_VERTEX_SHADER = `
 `;
 
 export const ATMOSPHERE_FRAGMENT_SHADER = `
-  precision highp float;
+  #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+  #else
+    precision mediump float;
+  #endif
   varying vec2 v_uv;
 
   uniform vec2 u_resolution;
@@ -63,6 +67,7 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
   uniform float u_auroraOpacity;
   uniform float u_moonlightOpacity;
   uniform float u_moonIllumination;
+  uniform vec2 u_moonPos;
   uniform float u_windX;
   uniform float u_isSandstorm;
   uniform float u_isIndoor;
@@ -141,7 +146,7 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
 
     // 2. Ambient moonlight atmospheric sky scatter (night upper-right & lower-left bounce)
     if (u_moonlightOpacity > 0.004) {
-      vec2 m1 = vec2((uv.x - 0.84) * aspect, uv.y - 0.16);
+      vec2 m1 = vec2((uv.x - u_moonPos.x) * aspect, uv.y - u_moonPos.y);
       vec2 m2 = vec2((uv.x - 0.14) * aspect, uv.y - 0.76);
       float g1 = exp(-length(m1) * 2.35) * (0.45 + 0.55 * u_moonIllumination);
       float g2 = exp(-length(m2) * 2.1) * 0.28;
@@ -153,7 +158,8 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
     // 3. Multi-curtain geomagnetic Aurora Borealis (emerald -> cyan -> violet -> rose)
     if (u_auroraOpacity > 0.004 && uv.y < 0.78) {
       float yFade = smoothstep(0.01, 0.18, uv.y) * smoothstep(0.78, 0.34, uv.y);
-      float xCentered = (uv.x - 0.5) * aspect;
+      float auroraAspect = max(aspect, 0.92);
+      float xCentered = (uv.x - 0.5) * auroraAspect;
 
       for (int c = 0; c < 2; c++) {
         float cf = float(c);
@@ -213,7 +219,8 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
       float angle = atan(rel.x, max(0.02, rel.y));
 
       // Fan envelope centered along diagonal sunbeam corridor
-      float corridor = exp(-sq((angle - 0.52) * 1.65));
+      float beamTargetAngle = mix(0.28, 0.52, clamp((aspect - 0.45) / 0.65, 0.0, 1.0));
+      float corridor = exp(-sq((angle - beamTargetAngle) * 1.65));
       float shaft1 = sin(angle * 16.0 - u_time * 0.14) * 0.5 + 0.5;
       float shaft2 = sin(angle * 27.0 + u_time * 0.09 + 1.7) * 0.5 + 0.5;
       float shafts = pow(max(0.0001, shaft1 * 0.62 + shaft2 * 0.38), 2.1);
@@ -292,6 +299,8 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
       composePremul(outRgb, outA, boltSkyTint, flashAmt, 0.78);
     }
 
+    float dither = (hash21(gl_FragCoord.xy) - 0.5) / 255.0;
+    outRgb = max(vec3(0.0), outRgb + dither * clamp(outA, 0.0, 1.0));
     gl_FragColor = vec4(outRgb, clamp(outA, 0.0, 0.97));
   }
 `;
@@ -348,7 +357,11 @@ export const CLOUD_VERTEX_SHADER = `
 `;
 
 export const CLOUD_FRAGMENT_SHADER = `
-  precision highp float;
+  #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+  #else
+    precision mediump float;
+  #endif
 
   varying vec2 v_atlasUv;
   varying vec2 v_localUv;
@@ -480,7 +493,11 @@ export const PARTICLE_VERTEX_SHADER = `
 `;
 
 export const PARTICLE_FRAGMENT_SHADER = `
-  precision highp float;
+  #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+  #else
+    precision mediump float;
+  #endif
 
   varying vec2 v_uv;
   varying vec2 v_screenUv;
