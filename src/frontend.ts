@@ -1351,6 +1351,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let connectionProfiles: ConnectionProfileSummary[] = [];
   let extractionStatus: "idle" | "running" | "error" = "idle";
   let extractionDetail: string | undefined;
+  let migrationStatus: "idle" | "running" | "done" | "error" = "idle";
+  let migrationDetail: string | undefined;
 
   const refreshPermissionWarning = () => {
     if (!grantedPermissions) {
@@ -1417,7 +1419,8 @@ export function setup(ctx: SpindleFrontendContext) {
       if (
         message.type === "set_manual_state" ||
         message.type === "clear_manual_override" ||
-        message.type === "extract_now"
+        message.type === "extract_now" ||
+        message.type === "migrate_chat_tags"
       ) {
         sendToBackend(ctx, { ...message, chatId: activeChatId });
         return;
@@ -1798,6 +1801,8 @@ export function setup(ctx: SpindleFrontendContext) {
         connections: connectionProfiles,
         extractionStatus,
         extractionDetail,
+        migrationStatus,
+        migrationDetail,
       },
     );
     setFxVisibility(backFx, showBack);
@@ -1889,11 +1894,29 @@ export function setup(ctx: SpindleFrontendContext) {
         updateScene();
         break;
 
+      case "migration_result":
+        if (message.chatId !== activeChatId) break;
+        migrationStatus = message.status;
+        if (message.status === "done") {
+          const count = message.migratedMessages ?? 0;
+          const tags = message.tagsRemoved ?? 0;
+          migrationDetail =
+            count === 0
+              ? "No legacy <weather-state> tags found in this chat."
+              : `Migrated ${count} message${count === 1 ? "" : "s"} (${tags} tag${tags === 1 ? "" : "s"} moved to metadata).`;
+        } else {
+          migrationDetail = message.detail;
+        }
+        updateScene();
+        break;
+
       case "active_chat_state":
         if (!shouldApplyChatState(activeChatId, message.chatId, message.requestId, activeChatRequestId)) break;
         backendWarning = null;
         extractionStatus = "idle";
         extractionDetail = undefined;
+        migrationStatus = "idle";
+        migrationDetail = undefined;
         activeChatId = message.chatId;
         currentState = message.state;
         updateScene();

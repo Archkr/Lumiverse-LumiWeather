@@ -43,6 +43,8 @@ export interface SettingsUI {
       connections?: ConnectionProfileSummary[];
       extractionStatus?: "idle" | "running" | "error";
       extractionDetail?: string;
+      migrationStatus?: "idle" | "running" | "done" | "error";
+      migrationDetail?: string;
     },
   ): void;
   reportError(message: string): void;
@@ -368,6 +370,15 @@ export function createSettingsUI(
   sidecarActions.appendChild(analyzeNowButton);
   sidecarActions.appendChild(refreshConnectionsButton);
 
+  const migrateTagsButton = document.createElement("button");
+  migrateTagsButton.type = "button";
+  migrateTagsButton.className = "weather-settings-button";
+  migrateTagsButton.textContent = "Migrate legacy tags in this chat";
+  migrateTagsButton.title = "Converts old <weather-state> tags in this chat into hidden message metadata and strips the XML from prose.";
+  migrateTagsButton.addEventListener("click", () => {
+    sendToBackend({ type: "migrate_chat_tags" });
+  });
+
   const sidecarStatusCopy = document.createElement("p");
   sidecarStatusCopy.className = "weather-settings-section-copy";
   sidecarStatusCopy.hidden = true;
@@ -376,6 +387,7 @@ export function createSettingsUI(
   sidecarGroup.appendChild(sidecarConnectionLabel);
   sidecarGroup.appendChild(sidecarModelField);
   sidecarGroup.appendChild(sidecarActions);
+  sidecarGroup.appendChild(migrateTagsButton);
   sidecarGroup.appendChild(sidecarStatusCopy);
 
   const promptRecommended = document.createElement("div");
@@ -1137,10 +1149,25 @@ export function createSettingsUI(
 
       const extractionStatus = options?.extractionStatus ?? "idle";
       const extractionDetail = options?.extractionDetail;
+      const migrationStatus = options?.migrationStatus ?? "idle";
+      const migrationDetail = options?.migrationDetail;
       const chatAvailable = chatId !== null && statusOverride !== "No active chat";
-      analyzeNowButton.disabled = !chatAvailable || extractionStatus === "running";
+      analyzeNowButton.disabled = !chatAvailable || extractionStatus === "running" || migrationStatus === "running";
       analyzeNowButton.textContent = extractionStatus === "running" ? "Analyzing scene…" : "Analyze scene now";
-      if (extractionStatus === "running") {
+      migrateTagsButton.disabled = !chatAvailable || migrationStatus === "running" || extractionStatus === "running";
+      migrateTagsButton.textContent =
+        migrationStatus === "running" ? "Migrating chat tags…" : "Migrate legacy tags in this chat";
+
+      if (migrationStatus === "running") {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = "Converting legacy <weather-state> tags into per-message metadata…";
+      } else if (migrationStatus === "done" && migrationDetail) {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = migrationDetail;
+      } else if (migrationStatus === "error" && migrationDetail) {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = `Migration note: ${migrationDetail}`;
+      } else if (extractionStatus === "running") {
         sidecarStatusCopy.hidden = false;
         sidecarStatusCopy.textContent = "Sidecar is reading the latest reply and updating the weather scene…";
       } else if (extractionStatus === "error" && extractionDetail) {

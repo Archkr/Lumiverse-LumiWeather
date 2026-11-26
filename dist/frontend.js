@@ -6338,6 +6338,14 @@ function createSettingsUI(sendToBackend, options) {
   });
   sidecarActions.appendChild(analyzeNowButton);
   sidecarActions.appendChild(refreshConnectionsButton);
+  const migrateTagsButton = document.createElement("button");
+  migrateTagsButton.type = "button";
+  migrateTagsButton.className = "weather-settings-button";
+  migrateTagsButton.textContent = "Migrate legacy tags in this chat";
+  migrateTagsButton.title = "Converts old <weather-state> tags in this chat into hidden message metadata and strips the XML from prose.";
+  migrateTagsButton.addEventListener("click", () => {
+    sendToBackend({ type: "migrate_chat_tags" });
+  });
   const sidecarStatusCopy = document.createElement("p");
   sidecarStatusCopy.className = "weather-settings-section-copy";
   sidecarStatusCopy.hidden = true;
@@ -6345,6 +6353,7 @@ function createSettingsUI(sendToBackend, options) {
   sidecarGroup.appendChild(sidecarConnectionLabel);
   sidecarGroup.appendChild(sidecarModelField);
   sidecarGroup.appendChild(sidecarActions);
+  sidecarGroup.appendChild(migrateTagsButton);
   sidecarGroup.appendChild(sidecarStatusCopy);
   const promptRecommended = document.createElement("div");
   promptRecommended.className = "weather-settings-copy-group";
@@ -6986,10 +6995,23 @@ function createSettingsUI(sendToBackend, options) {
       }
       const extractionStatus = options?.extractionStatus ?? "idle";
       const extractionDetail = options?.extractionDetail;
+      const migrationStatus = options?.migrationStatus ?? "idle";
+      const migrationDetail = options?.migrationDetail;
       const chatAvailable = chatId !== null && statusOverride !== "No active chat";
-      analyzeNowButton.disabled = !chatAvailable || extractionStatus === "running";
+      analyzeNowButton.disabled = !chatAvailable || extractionStatus === "running" || migrationStatus === "running";
       analyzeNowButton.textContent = extractionStatus === "running" ? "Analyzing scene…" : "Analyze scene now";
-      if (extractionStatus === "running") {
+      migrateTagsButton.disabled = !chatAvailable || migrationStatus === "running" || extractionStatus === "running";
+      migrateTagsButton.textContent = migrationStatus === "running" ? "Migrating chat tags…" : "Migrate legacy tags in this chat";
+      if (migrationStatus === "running") {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = "Converting legacy <weather-state> tags into per-message metadata…";
+      } else if (migrationStatus === "done" && migrationDetail) {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = migrationDetail;
+      } else if (migrationStatus === "error" && migrationDetail) {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = `Migration note: ${migrationDetail}`;
+      } else if (extractionStatus === "running") {
         sidecarStatusCopy.hidden = false;
         sidecarStatusCopy.textContent = "Sidecar is reading the latest reply and updating the weather scene…";
       } else if (extractionStatus === "error" && extractionDetail) {
@@ -10196,6 +10218,8 @@ function setup(ctx) {
   let connectionProfiles = [];
   let extractionStatus = "idle";
   let extractionDetail;
+  let migrationStatus = "idle";
+  let migrationDetail;
   const refreshPermissionWarning = () => {
     if (!grantedPermissions) {
       permissionWarning = null;
@@ -10244,7 +10268,7 @@ function setup(ctx) {
   }) : null;
   const settingsUI = createSettingsUI((payload) => {
     const message = payload;
-    if (message.type === "set_manual_state" || message.type === "clear_manual_override" || message.type === "extract_now") {
+    if (message.type === "set_manual_state" || message.type === "clear_manual_override" || message.type === "extract_now" || message.type === "migrate_chat_tags") {
       sendToBackend(ctx, { ...message, chatId: activeChatId });
       return;
     }
@@ -10564,7 +10588,9 @@ function setup(ctx) {
     settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : backendWarning ?? permissionWarning ?? undefined, activeChatId, {
       connections: connectionProfiles,
       extractionStatus,
-      extractionDetail
+      extractionDetail,
+      migrationStatus,
+      migrationDetail
     });
     setFxVisibility(backFx, showBack);
     setFxVisibility(frontFx, showFront);
@@ -10645,12 +10671,27 @@ function setup(ctx) {
         extractionDetail = message.detail;
         updateScene();
         break;
+      case "migration_result":
+        if (message.chatId !== activeChatId)
+          break;
+        migrationStatus = message.status;
+        if (message.status === "done") {
+          const count = message.migratedMessages ?? 0;
+          const tags = message.tagsRemoved ?? 0;
+          migrationDetail = count === 0 ? "No legacy <weather-state> tags found in this chat." : `Migrated ${count} message${count === 1 ? "" : "s"} (${tags} tag${tags === 1 ? "" : "s"} moved to metadata).`;
+        } else {
+          migrationDetail = message.detail;
+        }
+        updateScene();
+        break;
       case "active_chat_state":
         if (!shouldApplyChatState(activeChatId, message.chatId, message.requestId, activeChatRequestId))
           break;
         backendWarning = null;
         extractionStatus = "idle";
         extractionDetail = undefined;
+        migrationStatus = "idle";
+        migrationDetail = undefined;
         activeChatId = message.chatId;
         currentState = message.state;
         updateScene();

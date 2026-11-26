@@ -1001,6 +1001,117 @@ function rebuildStoryWeatherState(messages, fallbackUpdatedAt = Date.now()) {
   }
   return state;
 }
+function countWeatherTags(text) {
+  let count = 0;
+  for (const _match of text.matchAll(buildWeatherTagRegex()))
+    count += 1;
+  return count;
+}
+function readExistingMetadataForSwipe(message, swipeIndex) {
+  return extractMessageWeatherMetadata({ ...message, swipe_id: swipeIndex });
+}
+function planWeatherTagMigration(messages, fallbackUpdatedAt = Date.now()) {
+  const ordered = messages.map((message, originalIndex) => ({ message, originalIndex })).sort((left, right) => {
+    const leftIndex = Number.isFinite(left.message.index_in_chat) ? left.message.index_in_chat : left.originalIndex;
+    const rightIndex = Number.isFinite(right.message.index_in_chat) ? right.message.index_in_chat : right.originalIndex;
+    return leftIndex - rightIndex || left.originalIndex - right.originalIndex;
+  });
+  const patches = [];
+  let runningState = null;
+  let totalTagsRemoved = 0;
+  for (const { message } of ordered) {
+    const role = message.role ?? (message.is_user ? "user" : "assistant");
+    if (role !== "assistant")
+      continue;
+    const activeSwipeId = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id) ? Math.max(0, Math.floor(message.swipe_id)) : 0;
+    const hasSwipes = Array.isArray(message.swipes) && message.swipes.length > 0;
+    let nextMetadata = message.metadata && typeof message.metadata === "object" ? { ...message.metadata } : {};
+    let changed = false;
+    let messageTagsRemoved = 0;
+    let nextActiveState = null;
+    if (hasSwipes) {
+      const nextSwipes = [...message.swipes];
+      for (let i = 0;i < nextSwipes.length; i += 1) {
+        const swipeText = typeof nextSwipes[i] === "string" ? nextSwipes[i] : "";
+        const existingSwipeMeta = readExistingMetadataForSwipe(message, i);
+        const tag = extractLastWeatherTag(swipeText);
+        if (tag) {
+          const swipeTimestamp = normalizeMessageTimestamp(message.swipe_dates?.[i]) ?? normalizeMessageTimestamp(message.send_date) ?? fallbackUpdatedAt;
+          const migratedState = existingSwipeMeta ? { ...existingSwipeMeta, source: "story" } : { ...normalizeWeatherTag(tag.attrs, runningState), updatedAt: swipeTimestamp };
+          nextMetadata = buildMessageWeatherMetadata(nextMetadata, i, migratedState);
+          nextSwipes[i] = stripWeatherStateTags(swipeText);
+          changed = true;
+          messageTagsRemoved += countWeatherTags(swipeText);
+          if (i === activeSwipeId)
+            nextActiveState = migratedState;
+        } else if (i === activeSwipeId && existingSwipeMeta) {
+          const ts = normalizeMessageTimestamp(message.swipe_dates?.[i]) ?? normalizeMessageTimestamp(message.send_date) ?? (existingSwipeMeta.updatedAt > 0 ? existingSwipeMeta.updatedAt : fallbackUpdatedAt);
+          nextActiveState = { ...existingSwipeMeta, updatedAt: ts, source: "story" };
+        }
+      }
+      const rawContent = typeof message.content === "string" ? message.content : "";
+      const activeSwipeContent = typeof nextSwipes[activeSwipeId] === "string" ? nextSwipes[activeSwipeId] : rawContent;
+      let nextContent = activeSwipeContent;
+      if (!changed && extractLastWeatherTag(rawContent)) {
+        const tag = extractLastWeatherTag(rawContent);
+        const ts = resolveMessageTimestamp(message) ?? fallbackUpdatedAt;
+        const existingActiveMeta = readExistingMetadataForSwipe(message, activeSwipeId);
+        const migratedState = existingActiveMeta ? { ...existingActiveMeta, source: "story" } : { ...normalizeWeatherTag(tag.attrs, runningState), updatedAt: ts };
+        nextMetadata = buildMessageWeatherMetadata(nextMetadata, activeSwipeId, migratedState);
+        nextContent = stripWeatherStateTags(rawContent);
+        if (activeSwipeId < nextSwipes.length)
+          nextSwipes[activeSwipeId] = nextContent;
+        changed = true;
+        messageTagsRemoved += countWeatherTags(rawContent);
+        nextActiveState = migratedState;
+      }
+      if (changed && message.id) {
+        patches.push({
+          messageId: message.id,
+          content: nextContent,
+          swipes: nextSwipes,
+          metadata: nextMetadata,
+          tagsRemoved: messageTagsRemoved
+        });
+        totalTagsRemoved += messageTagsRemoved;
+      }
+    } else {
+      const rawContent = typeof message.content === "string" ? message.content : "";
+      const existingActiveMeta = readExistingMetadataForSwipe(message, activeSwipeId);
+      const tag = extractLastWeatherTag(rawContent);
+      if (tag) {
+        const ts = resolveMessageTimestamp(message) ?? fallbackUpdatedAt;
+        const migratedState = existingActiveMeta ? { ...existingActiveMeta, source: "story" } : { ...normalizeWeatherTag(tag.attrs, runningState), updatedAt: ts };
+        nextMetadata = buildMessageWeatherMetadata(nextMetadata, activeSwipeId, migratedState);
+        const nextContent = stripWeatherStateTags(rawContent);
+        changed = true;
+        messageTagsRemoved += countWeatherTags(rawContent);
+        nextActiveState = migratedState;
+        if (message.id) {
+          patches.push({
+            messageId: message.id,
+            content: nextContent,
+            metadata: nextMetadata,
+            tagsRemoved: messageTagsRemoved
+          });
+          totalTagsRemoved += messageTagsRemoved;
+        }
+      } else if (existingActiveMeta) {
+        const ts = resolveMessageTimestamp(message) ?? (existingActiveMeta.updatedAt > 0 ? existingActiveMeta.updatedAt : fallbackUpdatedAt);
+        nextActiveState = { ...existingActiveMeta, updatedAt: ts, source: "story" };
+      }
+    }
+    if (nextActiveState) {
+      runningState = nextActiveState;
+    }
+  }
+  return {
+    patches,
+    migratedMessages: patches.length,
+    tagsRemoved: totalTagsRemoved,
+    finalState: runningState
+  };
+}
 function hasSameForecast(left, right) {
   if (left.length !== right.length)
     return false;
@@ -1946,6 +2057,75 @@ async function extractWeatherForChat(options) {
     }
   }
 }
+async function migrateChatTags(userId, chatId) {
+  if (typeof spindle.chat?.updateMessage !== "function") {
+    send(userId, {
+      type: "migration_result",
+      chatId,
+      status: "error",
+      detail: "Enable the Chat Mutation permission to migrate legacy weather tags."
+    });
+    return;
+  }
+  cancelActiveExtraction(chatId);
+  send(userId, { type: "migration_result", chatId, status: "running" });
+  try {
+    await runSerialized(`chat:${chatId}`, async () => {
+      const messages = await spindle.chat.getMessages(chatId);
+      const plan = planWeatherTagMigration(messages);
+      if (plan.patches.length === 0) {
+        send(userId, {
+          type: "migration_result",
+          chatId,
+          status: "done",
+          migratedMessages: 0,
+          tagsRemoved: 0
+        });
+        return;
+      }
+      for (const patch of plan.patches) {
+        const suppressKey = `${chatId}:${patch.messageId}`;
+        suppressedMetadataEdits.set(suppressKey, Date.now() + METADATA_EDIT_SUPPRESS_MS);
+        try {
+          await spindle.chat.updateMessage(chatId, patch.messageId, {
+            content: patch.content,
+            ...patch.swipes ? { swipes: patch.swipes } : {},
+            metadata: patch.metadata,
+            skipChunkRebuild: true
+          });
+        } catch (error) {
+          suppressedMetadataEdits.delete(suppressKey);
+          throw error;
+        }
+      }
+      clearProcessedChatTags(chatId);
+      const previousStored = await loadStoryWeatherState(chatId);
+      if (plan.finalState) {
+        const changed = !hasSameStoryScene(previousStored, plan.finalState) || previousStored?.updatedAt !== plan.finalState.updatedAt;
+        if (changed) {
+          await saveStoryWeatherState(chatId, plan.finalState);
+        }
+        const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
+        const effective = await loadManualWeatherState(chatId) ?? plan.finalState;
+        await publishWeatherState(chatId, effective, revision, userId);
+        if (getSession(userId).activeChatId === chatId) {
+          send(userId, { type: "weather_state", chatId, state: effective });
+        }
+      }
+      send(userId, {
+        type: "migration_result",
+        chatId,
+        status: "done",
+        migratedMessages: plan.migratedMessages,
+        tagsRemoved: plan.tagsRemoved
+      });
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWeather tag migration failed: ${detail}`);
+    send(userId, { type: "migration_result", chatId, status: "error", detail });
+  }
+}
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
@@ -1983,7 +2163,7 @@ for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWI
       return;
     const msgObj = value.message && typeof value.message === "object" ? value.message : null;
     const messageId = typeof value.messageId === "string" ? value.messageId : typeof value.message_id === "string" ? value.message_id : typeof msgObj?.id === "string" ? msgObj.id : null;
-    if (event === "MESSAGE_EDITED" && isSuppressedMetadataEdit(chatId, messageId)) {
+    if ((event === "MESSAGE_EDITED" || event === "SWIPE_EDITED") && isSuppressedMetadataEdit(chatId, messageId)) {
       return;
     }
     const userIds = resolveUsersForChat(chatId, eventUserId);
@@ -2014,6 +2194,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         await extractWeatherForChat({ chatId, userId, force: true });
+        break;
+      }
+      case "migrate_chat_tags": {
+        const chatId = await resolveWeatherEditChatId(userId, message.chatId);
+        if (!chatId) {
+          send(userId, { type: "error", message: "Open a chat before migrating legacy weather tags." });
+          break;
+        }
+        await migrateChatTags(userId, chatId);
         break;
       }
       case "chat_changed":

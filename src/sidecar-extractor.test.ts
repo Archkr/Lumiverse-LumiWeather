@@ -10,6 +10,7 @@ import {
 import {
   buildMessageWeatherMetadata,
   extractMessageWeatherMetadata,
+  planWeatherTagMigration,
   rebuildStoryWeatherState,
 } from "./story-history";
 
@@ -170,5 +171,69 @@ describe("sidecar weather extractor", () => {
     const rebuiltSwipe1 = rebuildStoryWeatherState([msgSwipe1]);
     expect(rebuiltSwipe0?.condition).toBe("clear");
     expect(rebuiltSwipe1?.condition).toBe("rain");
+  });
+
+  test("plans lossless swipe-aware migration from inline tags to metadata and is idempotent", () => {
+    const history = [
+      { id: "u1", role: "user" as const, is_user: true, index_in_chat: 0, content: "Hello" },
+      {
+        id: "a1",
+        role: "assistant" as const,
+        is_user: false,
+        index_in_chat: 1,
+        swipe_id: 1,
+        send_date: 1_700_000_100,
+        swipe_dates: [1_700_000_100, 1_700_000_200],
+        swipes: [
+          'Morning sun.\n<weather-state location="Harbor" date="2026-07-10" time="9:00 AM" condition="clear" temperature="72F"></weather-state>',
+          'Light rain falls.\n<weather-state location="Harbor" date="2026-07-10" time="9:15 AM" condition="rain" temperature="66F"></weather-state>',
+        ],
+        content:
+          'Light rain falls.\n<weather-state location="Harbor" date="2026-07-10" time="9:15 AM" condition="rain" temperature="66F"></weather-state>',
+        metadata: { keep_me: "yes" },
+      },
+      {
+        id: "a2",
+        role: "assistant" as const,
+        is_user: false,
+        index_in_chat: 2,
+        swipe_id: 0,
+        send_date: 1_700_000_500,
+        content: 'We step inside.\n<weather-state exposure="indoor"></weather-state>',
+      },
+    ];
+
+    const plan = planWeatherTagMigration(history);
+    expect(plan.migratedMessages).toBe(2);
+    expect(plan.tagsRemoved).toBe(3);
+    expect(plan.finalState).toMatchObject({
+      location: "Harbor",
+      condition: "rain",
+      exposure: "indoor",
+      updatedAt: 1_700_000_500_000,
+    });
+
+    const patch1 = plan.patches[0]!;
+    expect(patch1.messageId).toBe("a1");
+    expect(patch1.content).toBe("Light rain falls.");
+    expect(patch1.swipes).toEqual(["Morning sun.", "Light rain falls."]);
+    expect(patch1.metadata.keep_me).toBe("yes");
+
+    const patch2 = plan.patches[1]!;
+    expect(patch2.messageId).toBe("a2");
+    expect(patch2.content).toBe("We step inside.");
+
+    // Apply patches and confirm rebuildStoryWeatherState preserves both swipes and second run is a no-op.
+    const migrated = history.map((msg) => {
+      const patch = plan.patches.find((p) => p.messageId === msg.id);
+      return patch ? { ...msg, content: patch.content, swipes: patch.swipes ?? msg.swipes, metadata: patch.metadata } : msg;
+    });
+    expect(rebuildStoryWeatherState(migrated)?.exposure).toBe("indoor");
+    expect(rebuildStoryWeatherState([migrated[0]!, { ...migrated[1]!, swipe_id: 0 }])?.condition).toBe("clear");
+    expect(rebuildStoryWeatherState([migrated[0]!, { ...migrated[1]!, swipe_id: 1 }])?.condition).toBe("rain");
+
+    const secondPlan = planWeatherTagMigration(migrated);
+    expect(secondPlan.patches).toHaveLength(0);
+    expect(secondPlan.tagsRemoved).toBe(0);
   });
 });

@@ -46,6 +46,7 @@ import {
 import {
   buildMessageWeatherMetadata,
   hasSameStoryScene,
+  planWeatherTagMigration,
   rebuildStoryWeatherState,
   resolveMessageTimestamp,
 } from "./story-history";
@@ -677,6 +678,84 @@ async function extractWeatherForChat(options: {
   }
 }
 
+async function migrateChatTags(userId: string, chatId: string): Promise<void> {
+  if (typeof spindle.chat?.updateMessage !== "function") {
+    send(userId, {
+      type: "migration_result",
+      chatId,
+      status: "error",
+      detail: "Enable the Chat Mutation permission to migrate legacy weather tags.",
+    });
+    return;
+  }
+
+  cancelActiveExtraction(chatId);
+  send(userId, { type: "migration_result", chatId, status: "running" });
+
+  try {
+    await runSerialized(`chat:${chatId}`, async () => {
+      const messages = await spindle.chat.getMessages(chatId);
+      const plan = planWeatherTagMigration(messages);
+
+      if (plan.patches.length === 0) {
+        send(userId, {
+          type: "migration_result",
+          chatId,
+          status: "done",
+          migratedMessages: 0,
+          tagsRemoved: 0,
+        });
+        return;
+      }
+
+      for (const patch of plan.patches) {
+        const suppressKey = `${chatId}:${patch.messageId}`;
+        suppressedMetadataEdits.set(suppressKey, Date.now() + METADATA_EDIT_SUPPRESS_MS);
+        try {
+          await spindle.chat.updateMessage(chatId, patch.messageId, {
+            content: patch.content,
+            ...(patch.swipes ? { swipes: patch.swipes } : {}),
+            metadata: patch.metadata,
+            skipChunkRebuild: true,
+          });
+        } catch (error) {
+          suppressedMetadataEdits.delete(suppressKey);
+          throw error;
+        }
+      }
+
+      clearProcessedChatTags(chatId);
+      const previousStored = await loadStoryWeatherState(chatId);
+      if (plan.finalState) {
+        const changed =
+          !hasSameStoryScene(previousStored, plan.finalState) ||
+          previousStored?.updatedAt !== plan.finalState.updatedAt;
+        if (changed) {
+          await saveStoryWeatherState(chatId, plan.finalState);
+        }
+        const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
+        const effective = (await loadManualWeatherState(chatId)) ?? plan.finalState;
+        await publishWeatherState(chatId, effective, revision, userId);
+        if (getSession(userId).activeChatId === chatId) {
+          send(userId, { type: "weather_state", chatId, state: effective });
+        }
+      }
+
+      send(userId, {
+        type: "migration_result",
+        chatId,
+        status: "done",
+        migratedMessages: plan.migratedMessages,
+        tagsRemoved: plan.tagsRemoved,
+      });
+    });
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWeather tag migration failed: ${detail}`);
+    send(userId, { type: "migration_result", chatId, status: "error", detail });
+  }
+}
+
 // Run after LumiBooks (90) so fallback detection sees the final surviving history.
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
@@ -732,7 +811,7 @@ for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWI
           : typeof msgObj?.id === "string"
             ? msgObj.id
             : null;
-    if (event === "MESSAGE_EDITED" && isSuppressedMetadataEdit(chatId, messageId)) {
+    if ((event === "MESSAGE_EDITED" || event === "SWIPE_EDITED") && isSuppressedMetadataEdit(chatId, messageId)) {
       return;
     }
 
@@ -767,6 +846,16 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         await extractWeatherForChat({ chatId, userId, force: true });
+        break;
+      }
+
+      case "migrate_chat_tags": {
+        const chatId = await resolveWeatherEditChatId(userId, message.chatId);
+        if (!chatId) {
+          send(userId, { type: "error", message: "Open a chat before migrating legacy weather tags." });
+          break;
+        }
+        await migrateChatTags(userId, chatId);
         break;
       }
 

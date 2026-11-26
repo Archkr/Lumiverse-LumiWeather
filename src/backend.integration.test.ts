@@ -75,7 +75,11 @@ beforeAll(async () => {
       updateMessage: async (chatId: string, messageId: string, patch: Record<string, unknown>) => {
         updateMessageCalls.push({ chatId, messageId, patch });
         const target = messages.find((entry) => entry.id === messageId);
-        if (target && patch.metadata) target.metadata = patch.metadata;
+        if (target) {
+          if (patch.metadata) target.metadata = patch.metadata;
+          if (typeof patch.content === "string") target.content = patch.content;
+          if (Array.isArray(patch.swipes)) target.swipes = patch.swipes;
+        }
       },
     },
     generate: {
@@ -538,4 +542,58 @@ test("lists connection profiles on frontend_ready and supports manual extract_no
   });
   await send({ type: "extract_now", chatId: "chat" });
   expect(stored(WEATHER_STATE_VAR)).toMatchObject({ location: "Quiet Plaza", condition: "snow" });
+});
+
+test("migrate_chat_tags moves inline tags into per-message metadata and strips XML from prose", async () => {
+  messages = [
+    {
+      id: "m1",
+      role: "assistant",
+      is_user: false,
+      index_in_chat: 0,
+      swipe_id: 0,
+      send_date: 1_700_001_000,
+      content: 'Evening breeze.\n<weather-state location="Old Port" date="2026-08-02" time="7:30 PM" condition="cloudy" temperature="70F"></weather-state>',
+    },
+    {
+      id: "m2",
+      role: "assistant",
+      is_user: false,
+      index_in_chat: 1,
+      swipe_id: 0,
+      send_date: 1_700_001_500,
+      content: 'Rain starts falling.\n<weather-state condition="rain" exposure="sheltered"></weather-state>',
+    },
+  ];
+
+  await send({ type: "migrate_chat_tags", chatId: "chat" });
+
+  expect(updateMessageCalls).toHaveLength(2);
+  expect(messages[0].content).toBe("Evening breeze.");
+  expect(messages[1].content).toBe("Rain starts falling.");
+  expect(stored(WEATHER_STATE_VAR)).toMatchObject({
+    location: "Old Port",
+    condition: "rain",
+    exposure: "sheltered",
+  });
+  expect(sent).toContainEqual({
+    type: "migration_result",
+    chatId: "chat",
+    status: "done",
+    migratedMessages: 2,
+    tagsRemoved: 2,
+  });
+
+  // Running a second time reports 0 migrated messages and preserves state.
+  sent.length = 0;
+  updateMessageCalls.length = 0;
+  await send({ type: "migrate_chat_tags", chatId: "chat" });
+  expect(updateMessageCalls).toHaveLength(0);
+  expect(sent).toContainEqual({
+    type: "migration_result",
+    chatId: "chat",
+    status: "done",
+    migratedMessages: 0,
+    tagsRemoved: 0,
+  });
 });

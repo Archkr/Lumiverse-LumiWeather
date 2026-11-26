@@ -145,12 +145,21 @@ export type FrontendToBackend =
   | { type: "save_prefs"; prefs: Partial<WeatherPrefs> }
   | { type: "refresh_connections" }
   | { type: "extract_now"; chatId?: string | null }
+  | { type: "migrate_chat_tags"; chatId?: string | null }
   | { type: "reset_widget_position" };
 
 export type BackendToFrontend =
   | { type: "prefs"; prefs: WeatherPrefs }
   | { type: "connections"; profiles: ConnectionProfileSummary[] }
   | { type: "extraction_status"; chatId: string | null; status: "idle" | "running" | "error"; detail?: string }
+  | {
+      type: "migration_result";
+      chatId: string | null;
+      status: "running" | "done" | "error";
+      migratedMessages?: number;
+      tagsRemoved?: number;
+      detail?: string;
+    }
   | { type: "active_chat_state"; chatId: string | null; state: WeatherState | null; requestId?: number }
   | { type: "weather_state"; chatId: string | null; state: WeatherState }
   | { type: "error"; message: string };
