@@ -1939,7 +1939,7 @@ export const WEATHER_HUD_CSS = `
 }
 
 .weather-fx-root[data-kind="back"] {
-  z-index: 1;
+  z-index: 2;
 }
 
 .weather-fx-root[data-kind="front"] {

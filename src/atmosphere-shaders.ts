@@ -411,7 +411,7 @@ export const CLOUD_FRAGMENT_SHADER = `
     float aUp = clamp(softAlpha - diffUp, 0.0, 1.0);
     float dropShadow = clamp(aUp * 0.65 - softAlpha, 0.0, 1.0) * 0.22;
 
-    if (softAlpha < 0.008 && dropShadow < 0.008) {
+    if (softAlpha < 0.008 && (dropShadow < 0.008 || baked.g < 0.25)) {
       discard;
     }
 
@@ -515,6 +515,7 @@ export const PARTICLE_FRAGMENT_SHADER = `
 
   uniform float u_frontMask;
   uniform float u_time;
+  uniform float u_bgContrast;
 
   float hash21(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
@@ -606,8 +607,11 @@ export const PARTICLE_FRAGMENT_SHADER = `
       float headBulge = 1.0 + 0.42 * exp(-sq((t - 0.94) * 14.0));
       float xDist = abs(p.x) / headBulge;
 
-      float bodyProfile = smoothstep(0.42, 0.06, xDist);
+      float bodyProfile = smoothstep(0.54, 0.08, xDist);
       float outerGlow = exp(-xDist * xDist * 3.4) * 0.34 * smoothstep(0.0, 0.35, t);
+      // Over high-opacity bright backgrounds, frame each raindrop with a subtle cool-slate
+      // refraction edge so silver streaks stay crisp instead of disappearing into foliage/sky.
+      float contrastRim = smoothstep(0.96, 0.44, xDist) * (1.0 - bodyProfile) * u_bgContrast * 0.42;
 
       // 5-stop longitudinal gradient
       float longAlpha = smoothstep(0.0, 0.16, t) * pow(max(0.0001, t), 0.85) * smoothstep(1.0, 0.955, t);
@@ -615,10 +619,13 @@ export const PARTICLE_FRAGMENT_SHADER = `
 
       vec3 streakCol = mix(v_colorA.rgb, v_colorB.rgb, smoothstep(0.22, 0.82, t));
       streakCol = mix(streakCol, vec3(1.0), headSpec * 0.88);
+      vec3 rimCol = vec3(0.11, 0.19, 0.30);
+      float brightWeight = bodyProfile + outerGlow;
+      float totalWeight = brightWeight + contrastRim;
 
-      col = streakCol;
-      alpha = (bodyProfile + outerGlow) * longAlpha * v_colorA.a;
-      glowMix = 0.28 + headSpec * 0.35;
+      col = totalWeight > 0.0001 ? mix(rimCol, streakCol, clamp(brightWeight / totalWeight, 0.0, 1.0)) : streakCol;
+      alpha = totalWeight * longAlpha * v_colorA.a;
+      glowMix = (0.28 + headSpec * 0.35) * clamp(brightWeight / max(0.0001, totalWeight), 0.0, 1.0);
     } else if (kind == 3) {
       // RIPPLE: Expanding perspective elliptical dual-ring water gradient + soft glow
       float ringR = 0.42 + v_param * 0.46;
@@ -826,7 +833,8 @@ export const PARTICLE_FRAGMENT_SHADER = `
     }
 
     alpha = clamp(alpha, 0.0, 1.0);
-    float blockA = alpha * (1.0 - clamp(glowMix, 0.0, 0.84));
+    float effectiveGlow = clamp(glowMix * (1.0 - u_bgContrast * 0.52), 0.0, 0.84);
+    float blockA = alpha * (1.0 - effectiveGlow);
     gl_FragColor = vec4(col * alpha, blockA);
   }
 `;

@@ -82,6 +82,7 @@ export interface AtmosphereUniforms {
   isSandstorm: number;
   isIndoor: number;
   isUnderground: number;
+  backdropBoost: number;
   renderAtmosphereShader: boolean;
 }
 
@@ -254,6 +255,82 @@ function resolveCloudLightingPalette(
 }
 
 /**
+ * Converts Lumiverse's active wallpaper / scene background opacity (`0..1`) into
+ * an adaptive contrast & lighting boost (`0..1`). Default subtle backdrops (`<= 0.35`)
+ * receive `0` boost so dark themes keep their light touch; opaque backdrops (`0.35..1.0`)
+ * ramp smoothly up to `1.0` so weather lighting, clouds, and precipitation remain crisp.
+ */
+export function resolveBackdropContrastBoost(backdropOpacity: number): number {
+  if (!Number.isFinite(backdropOpacity) || backdropOpacity <= 0.35) return 0;
+  return clamp((backdropOpacity - 0.35) / 0.65, 0, 1);
+}
+
+/**
+ * Samples the highest active wallpaper or scene background opacity (`0..1`) behind
+ * the weather layer inside Lumiverse's `ChatView` (or global fixed `WallpaperLayer`).
+ */
+export function measureHostBackgroundOpacity(root: HTMLElement | null): number {
+  if (!root || typeof window === "undefined" || typeof window.getComputedStyle !== "function") {
+    return 0;
+  }
+
+  let maxOpacity = 0;
+  const inspectLayer = (el: Element | null) => {
+    if (!(el instanceof HTMLElement)) return;
+    if (el.classList.contains("weather-fx-root")) return;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return;
+    const opacity = Number.parseFloat(style.opacity || "0");
+    if (!Number.isFinite(opacity) || opacity <= 0.01) return;
+    const isVideo = el.tagName === "VIDEO";
+    const hasBgImage = Boolean(style.backgroundImage && style.backgroundImage !== "none");
+    if (!isVideo && !hasBgImage) return;
+    if (opacity > maxOpacity) {
+      maxOpacity = clamp(opacity, 0, 1);
+    }
+  };
+
+  const inspectContainerChildren = (container: Element | null) => {
+    if (!container) return;
+    for (let i = 0; i < container.children.length; i += 1) {
+      const child = container.children[i];
+      if (child === root || child.classList.contains("weather-fx-root")) continue;
+      if (child instanceof HTMLElement) {
+        const z = window.getComputedStyle(child).zIndex;
+        if (z === "0" || child.className.includes("sceneBackgroundLayer") || child.tagName === "VIDEO") {
+          inspectLayer(child);
+        }
+      }
+    }
+  };
+
+  const chatView = root.closest('[data-component="ChatView"]') ?? root.parentElement;
+  if (chatView) {
+    inspectLayer(chatView.querySelector('[class*="sceneBackgroundLayer"]'));
+    inspectContainerChildren(chatView);
+  }
+
+  if (maxOpacity < 0.99 && typeof document !== "undefined") {
+    const globalSceneBg = document.querySelector('[class*="sceneBackgroundLayer"]');
+    inspectLayer(globalSceneBg);
+    if (globalSceneBg?.parentElement && globalSceneBg.parentElement !== chatView) {
+      inspectContainerChildren(globalSceneBg.parentElement);
+    }
+    const fixedLayers = document.querySelectorAll('[class*="fixed"]');
+    for (let i = 0; i < fixedLayers.length; i += 1) {
+      const candidate = fixedLayers[i];
+      if (!(candidate instanceof HTMLElement)) continue;
+      const style = window.getComputedStyle(candidate);
+      if (style.position === "fixed" && style.zIndex === "0") {
+        inspectLayer(candidate);
+      }
+    }
+  }
+
+  return maxOpacity;
+}
+
+/**
  * Resolves the complete GPU shader & particle uniform target for a layer.
  * In `layerMode === "both"`, the offscreen atmosphere FBO pass runs only on `back`
  * while `front` renders crisp foreground parallax particles, wisps, and windowpane droplets.
@@ -263,7 +340,9 @@ export function resolveAtmosphereUniformTarget(
   tokens: SceneTokens,
   prefs: WeatherPrefs,
   kind: "back" | "front",
+  backdropBoost = 0,
 ): AtmosphereUniforms {
+  const safeBackdropBoost = clamp(Number.isFinite(backdropBoost) ? backdropBoost : 0, 0, 1);
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
   const effectiveWindDirection =
@@ -306,6 +385,53 @@ export function resolveAtmosphereUniformTarget(
     rawCloudEdge,
   );
 
+  // When Lumiverse's wallpaper/scene background is opaque (e.g. 100%), lift atmospheric
+  // lighting grade, cloud density, and precipitation contrast so night/storm/dusk moods
+  // and particles remain clearly visible over vivid artwork.
+  const exposureLiftScale = exposure === "underground" ? 0.28 : exposure === "indoor" ? 0.52 : 1;
+  const bgLift = safeBackdropBoost * exposureLiftScale;
+  let skyOpacityLift = 0;
+  let horizonOpacityLift = 0;
+  let glowOpacityLift = 0;
+  let beamOpacityLift = 0;
+  let fogOpacityLift = 0;
+  let mistOpacityLift = 0;
+
+  if (bgLift > 0.001) {
+    if (state.condition === "storm") {
+      skyOpacityLift = 0.34 * bgLift;
+      horizonOpacityLift = 0.10 * bgLift;
+      mistOpacityLift = 0.08 * bgLift;
+    } else if (state.palette === "night") {
+      skyOpacityLift = (state.condition === "clear" ? 0.36 : 0.30) * bgLift;
+      horizonOpacityLift = 0.08 * bgLift;
+    } else if (state.condition === "rain") {
+      skyOpacityLift = 0.24 * bgLift;
+      mistOpacityLift = 0.08 * bgLift;
+    } else if (state.palette === "dusk" || state.palette === "dawn") {
+      skyOpacityLift = 0.18 * bgLift;
+      horizonOpacityLift = 0.16 * bgLift;
+      glowOpacityLift = 0.10 * bgLift;
+    } else if (state.condition === "fog") {
+      skyOpacityLift = 0.14 * bgLift;
+      fogOpacityLift = 0.14 * bgLift;
+      mistOpacityLift = 0.12 * bgLift;
+    } else if (state.condition === "cloudy" || state.condition === "snow") {
+      skyOpacityLift = 0.12 * bgLift;
+      mistOpacityLift = 0.06 * bgLift;
+    } else {
+      skyOpacityLift = 0.06 * bgLift;
+      glowOpacityLift = 0.14 * bgLift;
+      beamOpacityLift = 0.14 * bgLift;
+    }
+  }
+
+  const boostedCloudOpacity =
+    tokens.cloudOpacity >= 0.05
+      ? clamp(tokens.cloudOpacity + 0.14 * bgLift, 0, 1.15)
+      : tokens.cloudOpacity;
+  const particleBoost = 1 + 0.22 * safeBackdropBoost;
+
   return {
     bgStart,
     bgMid,
@@ -322,23 +448,29 @@ export function resolveAtmosphereUniformTarget(
     cloudShadowTint: cloudPalette.shadowTint,
     cloudUnderGlowStrength: cloudPalette.underGlowStrength,
     cloudDetailStrength: cloudPalette.detailStrength,
-    skyOpacity: isFront && isBoth ? 0 : tokens.skyOpacity,
-    glowOpacity: isFront && isBoth ? 0 : tokens.glowOpacity,
-    beamOpacity: isFront && isBoth ? 0 : tokens.beamOpacity,
+    skyOpacity: isFront && isBoth ? 0 : clamp(tokens.skyOpacity + skyOpacityLift, 0, 0.72),
+    glowOpacity: isFront && isBoth ? 0 : clamp(tokens.glowOpacity + glowOpacityLift, 0, 0.85),
+    beamOpacity: isFront && isBoth ? 0 : clamp(tokens.beamOpacity + beamOpacityLift, 0, 0.78),
     cloudOpacity: isFront && isBoth
-      ? (tokens.cloudOpacity >= 0.08 ? tokens.cloudOpacity * 0.24 : 0)
-      : tokens.cloudOpacity,
-    horizonOpacity: isFront && isBoth ? 0 : tokens.horizonOpacity,
-    mistOpacity: isFront && isBoth ? tokens.mistOpacity * 0.32 : tokens.mistOpacity,
-    fogOpacity: isFront && isBoth ? tokens.fogOpacity * 0.28 : tokens.fogOpacity,
-    rainOpacity: tokens.rainOpacity,
-    snowOpacity: tokens.snowOpacity,
-    moteOpacity: isFront && isBoth ? tokens.moteOpacity * 0.48 : tokens.moteOpacity,
-    starOpacity: isFront && isBoth ? 0 : tokens.starOpacity,
-    moonlightOpacity: isFront && isBoth ? 0 : tokens.moonlightOpacity,
-    auroraOpacity: isFront && isBoth ? 0 : tokens.auroraOpacity,
-    windowDropletOpacity: tokens.windowDropletOpacity,
-    phenomenonOpacity: tokens.phenomenonOpacity,
+      ? (tokens.cloudOpacity >= 0.08 ? boostedCloudOpacity * 0.26 : 0)
+      : boostedCloudOpacity,
+    horizonOpacity: isFront && isBoth ? 0 : clamp(tokens.horizonOpacity + horizonOpacityLift, 0, 0.75),
+    mistOpacity: isFront && isBoth
+      ? tokens.mistOpacity * 0.32
+      : clamp(tokens.mistOpacity + mistOpacityLift, 0, 0.75),
+    fogOpacity: isFront && isBoth
+      ? tokens.fogOpacity * 0.28
+      : clamp(tokens.fogOpacity + fogOpacityLift, 0, 0.92),
+    rainOpacity: clamp(tokens.rainOpacity * (1 + 0.24 * safeBackdropBoost), 0, 1.4),
+    snowOpacity: clamp(tokens.snowOpacity * particleBoost, 0, 1.25),
+    moteOpacity: isFront && isBoth
+      ? tokens.moteOpacity * 0.48 * particleBoost
+      : tokens.moteOpacity * particleBoost,
+    starOpacity: isFront && isBoth ? 0 : clamp(tokens.starOpacity * particleBoost, 0, 1.25),
+    moonlightOpacity: isFront && isBoth ? 0 : clamp(tokens.moonlightOpacity * (1 + 0.18 * safeBackdropBoost), 0, 1.1),
+    auroraOpacity: isFront && isBoth ? 0 : clamp(tokens.auroraOpacity * (1 + 0.24 * safeBackdropBoost), 0, 1.25),
+    windowDropletOpacity: clamp(tokens.windowDropletOpacity * particleBoost, 0, 1.25),
+    phenomenonOpacity: clamp(tokens.phenomenonOpacity * particleBoost, 0, 1.25),
     flashOpacity: tokens.flashOpacity,
     sunAltitude: solar.sunAltitude,
     moonIllumination: lunar.illumination,
@@ -350,6 +482,7 @@ export function resolveAtmosphereUniformTarget(
     isSandstorm: phenomenon === "sandstorm" ? 1 : 0,
     isIndoor: exposure === "indoor" ? 1 : 0,
     isUnderground: exposure === "underground" ? 1 : 0,
+    backdropBoost: safeBackdropBoost,
     renderAtmosphereShader,
   };
 }
@@ -413,6 +546,7 @@ function interpolateUniforms(from: AtmosphereUniforms, to: AtmosphereUniforms, t
     isSandstorm: lerp(from.isSandstorm, to.isSandstorm, ease),
     isIndoor: lerp(from.isIndoor, to.isIndoor, ease),
     isUnderground: lerp(from.isUnderground, to.isUnderground, ease),
+    backdropBoost: lerp(from.backdropBoost, to.backdropBoost, ease),
     renderAtmosphereShader: to.renderAtmosphereShader,
   };
 }
@@ -584,13 +718,16 @@ export function resolveAtmosphereTargetFps(
   return 15;
 }
 
-// Shared HTMLCanvasElement atlas built once across all engine instances
-let sharedCloudAtlasCanvas: HTMLCanvasElement | null = null;
+// Shared raw straight-alpha RGBA pixel buffer built once across all engine instances.
+// Uploading the raw Uint8Array directly to WebGL bypasses HTMLCanvasElement's premultiplied
+// 2D backing store, which would otherwise zero G=128 on transparent pixels (A=0) and make
+// CLOUD_FRAGMENT_SHADER decode a phantom full-quad drop shadow around every cloud.
+let sharedCloudAtlasPixels: Uint8Array | null = null;
 let sharedCloudAtlasLoading = false;
 const activeEngines = new Set<AtmosphereEngine>();
 
-function ensureSharedCloudAtlas(): HTMLCanvasElement | null {
-  if (sharedCloudAtlasCanvas) return sharedCloudAtlasCanvas;
+function ensureSharedCloudAtlas(): Uint8Array | null {
+  if (sharedCloudAtlasPixels) return sharedCloudAtlasPixels;
   if (sharedCloudAtlasLoading) return null;
   if (typeof document === "undefined" || typeof Image === "undefined") return null;
 
@@ -624,10 +761,7 @@ function ensureSharedCloudAtlas(): HTMLCanvasElement | null {
 
       const raw = ctx.getImageData(0, 0, ATLAS_SIZE, ATLAS_SIZE);
       const baked = bakeCloudAtlasPixels(raw.data, ATLAS_SIZE, ATLAS_SIZE, ATLAS_COLS, ATLAS_ROWS);
-      raw.data.set(baked);
-      ctx.putImageData(raw, 0, 0);
-
-      sharedCloudAtlasCanvas = canvas;
+      sharedCloudAtlasPixels = new Uint8Array(baked.buffer, baked.byteOffset, baked.byteLength);
       for (const engine of activeEngines) {
         engine.notifyAtlasReady();
       }
@@ -651,7 +785,7 @@ function ensureSharedCloudAtlas(): HTMLCanvasElement | null {
     images.push(img);
   }
 
-  return sharedCloudAtlasCanvas;
+  return sharedCloudAtlasPixels;
 }
 
 interface CloudInstance {
@@ -854,7 +988,10 @@ export class AtmosphereEngine {
   private transitionDurationMs = 0;
 
   private state: WeatherState | null = null;
+  private tokens: SceneTokens | null = null;
   private prefs: WeatherPrefs | null = null;
+  private backdropBoost = 0;
+  private lastBackdropProbeMs = 0;
   private visible = false;
   private paused = false;
   private reducedMotion = false;
@@ -983,11 +1120,16 @@ export class AtmosphereEngine {
   update(options: AtmosphereUpdateOptions): void {
     if (this.destroyed) return;
 
+    const nowMs = performance.now();
+    this.backdropBoost = resolveBackdropContrastBoost(measureHostBackgroundOpacity(this.root));
+    this.lastBackdropProbeMs = nowMs;
+
     const nextTarget = resolveAtmosphereUniformTarget(
       options.state,
       options.tokens,
       options.prefs,
       options.kind,
+      this.backdropBoost,
     );
 
     const shouldTransition =
@@ -1000,7 +1142,7 @@ export class AtmosphereEngine {
     if (shouldTransition && this.currentUniforms) {
       this.fromUniforms = this.currentUniforms;
       this.targetUniforms = nextTarget;
-      this.transitionStartMs = performance.now();
+      this.transitionStartMs = nowMs;
       this.transitionDurationMs = 1200;
     } else {
       this.currentUniforms = nextTarget;
@@ -1010,6 +1152,7 @@ export class AtmosphereEngine {
     }
 
     this.state = options.state;
+    this.tokens = options.tokens;
     this.prefs = options.prefs;
     this.visible = options.visible;
     this.paused = options.paused;
@@ -1240,7 +1383,38 @@ export class AtmosphereEngine {
     this.elapsedSeconds += dt;
     this.dirty = false;
 
-    if (transitioning && this.fromUniforms && this.targetUniforms) {
+    if (
+      nowMs - this.lastBackdropProbeMs >= 750 &&
+      this.state &&
+      this.tokens &&
+      this.prefs
+    ) {
+      this.lastBackdropProbeMs = nowMs;
+      const nextBoost = resolveBackdropContrastBoost(measureHostBackgroundOpacity(this.root));
+      if (Math.abs(nextBoost - this.backdropBoost) > 0.03) {
+        this.backdropBoost = nextBoost;
+        const retarget = resolveAtmosphereUniformTarget(
+          this.state,
+          this.tokens,
+          this.prefs,
+          this.kind,
+          nextBoost,
+        );
+        if (this.currentUniforms) {
+          this.fromUniforms = this.currentUniforms;
+          this.targetUniforms = retarget;
+          this.transitionStartMs = nowMs;
+          this.transitionDurationMs = 360;
+        } else {
+          this.currentUniforms = retarget;
+          this.targetUniforms = retarget;
+        }
+        this.atmoFboDirty = true;
+      }
+    }
+
+    const isTransitioning = this.transitionDurationMs > 0 && !!this.fromUniforms && !!this.targetUniforms;
+    if (isTransitioning && this.fromUniforms && this.targetUniforms) {
       const progress = clamp((nowMs - this.transitionStartMs) / this.transitionDurationMs, 0, 1);
       this.currentUniforms = interpolateUniforms(this.fromUniforms, this.targetUniforms, progress);
       this.atmoFboDirty = true;
@@ -1371,6 +1545,7 @@ export class AtmosphereEngine {
 
       this.particleLocs.u_frontMask = gl.getUniformLocation(particleProgram, "u_frontMask");
       this.particleLocs.u_time = gl.getUniformLocation(particleProgram, "u_time");
+      this.particleLocs.u_bgContrast = gl.getUniformLocation(particleProgram, "u_bgContrast");
 
       this.atmoAttribs.a_pos = gl.getAttribLocation(atmoProgram, "a_pos");
       this.blitAttribs.a_pos = gl.getAttribLocation(blitProgram, "a_pos");
@@ -1449,8 +1624,8 @@ export class AtmosphereEngine {
 
   private ensureCloudAtlasTexture(gl: WebGLRenderingContext): boolean {
     if (this.cloudAtlasUploaded && this.cloudAtlasTex) return true;
-    const atlasCanvas = ensureSharedCloudAtlas();
-    if (!atlasCanvas) return false;
+    const atlasPixels = ensureSharedCloudAtlas();
+    if (!atlasPixels) return false;
 
     const tex = gl.createTexture();
     if (!tex) return false;
@@ -1458,7 +1633,17 @@ export class AtmosphereEngine {
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlasCanvas);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      ATLAS_SIZE,
+      ATLAS_SIZE,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      atlasPixels,
+    );
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -1784,7 +1969,7 @@ export class AtmosphereEngine {
       this.emitMoon(u, clientW, clientH, fxProfile);
     }
     if (this.particleVertexCount > 0) {
-      this.flushParticles(gl, frontMaskFlag);
+      this.flushParticles(gl, frontMaskFlag, u.backdropBoost);
     }
 
     // PASS 2: Multi-depth hand-painted cloud atlas sprites with 4-stop shader gradients
@@ -1794,7 +1979,7 @@ export class AtmosphereEngine {
     this.particleVertexCount = 0;
     this.buildWeatherParticles(u, clientW, clientH, dt, lightningFlicker, fxProfile);
     if (this.particleVertexCount > 0) {
-      this.flushParticles(gl, frontMaskFlag);
+      this.flushParticles(gl, frontMaskFlag, u.backdropBoost);
     }
   }
 
@@ -2005,7 +2190,7 @@ export class AtmosphereEngine {
     this.cloudVertexCount += 6;
   }
 
-  private flushParticles(gl: WebGLRenderingContext, frontMaskFlag: number): void {
+  private flushParticles(gl: WebGLRenderingContext, frontMaskFlag: number, bgContrast = 0): void {
     if (!this.particleProgram || !this.particleBuffer || this.particleVertexCount === 0) return;
 
     gl.useProgram(this.particleProgram);
@@ -2029,6 +2214,7 @@ export class AtmosphereEngine {
 
     gl.uniform1f(this.particleLocs.u_frontMask ?? null, frontMaskFlag);
     gl.uniform1f(this.particleLocs.u_time ?? null, this.elapsedSeconds);
+    gl.uniform1f(this.particleLocs.u_bgContrast ?? null, bgContrast);
 
     gl.drawArrays(gl.TRIANGLES, 0, this.particleVertexCount);
     this.particleVertexCount = 0;
@@ -2274,7 +2460,7 @@ export class AtmosphereEngine {
           if (g.x > 1.25) g.x -= 1.5;
           if (g.x < -0.25) g.x += 1.5;
         }
-        const gAlpha = clamp(g.opacity * gustBoost, 0, 0.32);
+        const gAlpha = clamp(g.opacity * gustBoost * (1 + 0.45 * u.backdropBoost), 0, 0.44);
         const isSand = phenomenon === "sandstorm";
         this.pushOrientedQuad(
           g.x,

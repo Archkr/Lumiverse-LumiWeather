@@ -5,6 +5,7 @@ import {
   parseCssColorToRgba,
   resolveAtmosphereTargetFps,
   resolveAtmosphereUniformTarget,
+  resolveBackdropContrastBoost,
 } from "./atmosphere-engine";
 import {
   ATMOSPHERE_FRAGMENT_SHADER,
@@ -352,6 +353,45 @@ describe("resolveAtmosphereUniformTarget", () => {
     // Cloud fragment shader uses a single atlas texture fetch instead of 5 live taps
     const atlasFetches = CLOUD_FRAGMENT_SHADER.match(/texture2D\s*\(\s*u_atlas/g) ?? [];
     expect(atlasFetches.length).toBe(1);
+    // Guard prevents zeroed/premultiplied transparent pixels from decoding a phantom drop-shadow box
+    expect(CLOUD_FRAGMENT_SHADER).toContain("baked.g < 0.25");
+  });
+
+  test("adapts atmosphere lighting and particle contrast for opaque Lumiverse backgrounds", () => {
+    expect(resolveBackdropContrastBoost(0)).toBe(0);
+    expect(resolveBackdropContrastBoost(0.35)).toBe(0);
+    expect(resolveBackdropContrastBoost(0.675)).toBeCloseTo(0.5, 2);
+    expect(resolveBackdropContrastBoost(1)).toBe(1);
+
+    const stormState = {
+      ...makeDefaultWeatherState(),
+      condition: "storm" as const,
+      palette: "night" as const,
+      intensity: 0.9,
+    };
+    const tokens = resolveSceneTokens(stormState, 0.9);
+    const subtleBg = resolveAtmosphereUniformTarget(stormState, tokens, DEFAULT_PREFS, "back", 0);
+    const opaqueBg = resolveAtmosphereUniformTarget(stormState, tokens, DEFAULT_PREFS, "back", 1);
+
+    expect(subtleBg.backdropBoost).toBe(0);
+    expect(opaqueBg.backdropBoost).toBe(1);
+    expect(opaqueBg.skyOpacity).toBeGreaterThan(subtleBg.skyOpacity + 0.25);
+    expect(opaqueBg.cloudOpacity).toBeGreaterThan(subtleBg.cloudOpacity);
+    expect(opaqueBg.rainOpacity).toBeGreaterThan(subtleBg.rainOpacity);
+
+    const clearNight = {
+      ...makeDefaultWeatherState(),
+      condition: "clear" as const,
+      palette: "night" as const,
+      intensity: 0.6,
+    };
+    const nightTokens = resolveSceneTokens(clearNight, 0.6);
+    const subtleNight = resolveAtmosphereUniformTarget(clearNight, nightTokens, DEFAULT_PREFS, "back", 0);
+    const opaqueNight = resolveAtmosphereUniformTarget(clearNight, nightTokens, DEFAULT_PREFS, "back", 1);
+    expect(opaqueNight.skyOpacity).toBeGreaterThan(subtleNight.skyOpacity + 0.3);
+
+    expect(PARTICLE_FRAGMENT_SHADER).toContain("uniform float u_bgContrast;");
+    expect(WEATHER_HUD_CSS).toContain('.weather-fx-root[data-kind="back"] {\n  z-index: 2;\n}');
   });
 
   test("gates FBM fog in clear skies and strips legacy HUD blur animations and @property rules", () => {

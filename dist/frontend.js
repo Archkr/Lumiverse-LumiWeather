@@ -408,7 +408,7 @@ var CLOUD_FRAGMENT_SHADER = `
     float aUp = clamp(softAlpha - diffUp, 0.0, 1.0);
     float dropShadow = clamp(aUp * 0.65 - softAlpha, 0.0, 1.0) * 0.22;
 
-    if (softAlpha < 0.008 && dropShadow < 0.008) {
+    if (softAlpha < 0.008 && (dropShadow < 0.008 || baked.g < 0.25)) {
       discard;
     }
 
@@ -506,6 +506,7 @@ var PARTICLE_FRAGMENT_SHADER = `
 
   uniform float u_frontMask;
   uniform float u_time;
+  uniform float u_bgContrast;
 
   float hash21(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
@@ -597,8 +598,11 @@ var PARTICLE_FRAGMENT_SHADER = `
       float headBulge = 1.0 + 0.42 * exp(-sq((t - 0.94) * 14.0));
       float xDist = abs(p.x) / headBulge;
 
-      float bodyProfile = smoothstep(0.42, 0.06, xDist);
+      float bodyProfile = smoothstep(0.54, 0.08, xDist);
       float outerGlow = exp(-xDist * xDist * 3.4) * 0.34 * smoothstep(0.0, 0.35, t);
+      // Over high-opacity bright backgrounds, frame each raindrop with a subtle cool-slate
+      // refraction edge so silver streaks stay crisp instead of disappearing into foliage/sky.
+      float contrastRim = smoothstep(0.96, 0.44, xDist) * (1.0 - bodyProfile) * u_bgContrast * 0.42;
 
       // 5-stop longitudinal gradient
       float longAlpha = smoothstep(0.0, 0.16, t) * pow(max(0.0001, t), 0.85) * smoothstep(1.0, 0.955, t);
@@ -606,10 +610,13 @@ var PARTICLE_FRAGMENT_SHADER = `
 
       vec3 streakCol = mix(v_colorA.rgb, v_colorB.rgb, smoothstep(0.22, 0.82, t));
       streakCol = mix(streakCol, vec3(1.0), headSpec * 0.88);
+      vec3 rimCol = vec3(0.11, 0.19, 0.30);
+      float brightWeight = bodyProfile + outerGlow;
+      float totalWeight = brightWeight + contrastRim;
 
-      col = streakCol;
-      alpha = (bodyProfile + outerGlow) * longAlpha * v_colorA.a;
-      glowMix = 0.28 + headSpec * 0.35;
+      col = totalWeight > 0.0001 ? mix(rimCol, streakCol, clamp(brightWeight / totalWeight, 0.0, 1.0)) : streakCol;
+      alpha = totalWeight * longAlpha * v_colorA.a;
+      glowMix = (0.28 + headSpec * 0.35) * clamp(brightWeight / max(0.0001, totalWeight), 0.0, 1.0);
     } else if (kind == 3) {
       // RIPPLE: Expanding perspective elliptical dual-ring water gradient + soft glow
       float ringR = 0.42 + v_param * 0.46;
@@ -817,7 +824,8 @@ var PARTICLE_FRAGMENT_SHADER = `
     }
 
     alpha = clamp(alpha, 0.0, 1.0);
-    float blockA = alpha * (1.0 - clamp(glowMix, 0.0, 0.84));
+    float effectiveGlow = clamp(glowMix * (1.0 - u_bgContrast * 0.52), 0.0, 0.84);
+    float blockA = alpha * (1.0 - effectiveGlow);
     gl_FragColor = vec4(col * alpha, blockA);
   }
 `;
@@ -1507,7 +1515,76 @@ function resolveCloudLightingPalette(palette, condition, bgStart, bgEnd, glow, c
     detailStrength
   };
 }
-function resolveAtmosphereUniformTarget(state, tokens, prefs, kind) {
+function resolveBackdropContrastBoost(backdropOpacity) {
+  if (!Number.isFinite(backdropOpacity) || backdropOpacity <= 0.35)
+    return 0;
+  return clamp((backdropOpacity - 0.35) / 0.65, 0, 1);
+}
+function measureHostBackgroundOpacity(root) {
+  if (!root || typeof window === "undefined" || typeof window.getComputedStyle !== "function") {
+    return 0;
+  }
+  let maxOpacity = 0;
+  const inspectLayer = (el) => {
+    if (!(el instanceof HTMLElement))
+      return;
+    if (el.classList.contains("weather-fx-root"))
+      return;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden")
+      return;
+    const opacity = Number.parseFloat(style.opacity || "0");
+    if (!Number.isFinite(opacity) || opacity <= 0.01)
+      return;
+    const isVideo = el.tagName === "VIDEO";
+    const hasBgImage = Boolean(style.backgroundImage && style.backgroundImage !== "none");
+    if (!isVideo && !hasBgImage)
+      return;
+    if (opacity > maxOpacity) {
+      maxOpacity = clamp(opacity, 0, 1);
+    }
+  };
+  const inspectContainerChildren = (container) => {
+    if (!container)
+      return;
+    for (let i = 0;i < container.children.length; i += 1) {
+      const child = container.children[i];
+      if (child === root || child.classList.contains("weather-fx-root"))
+        continue;
+      if (child instanceof HTMLElement) {
+        const z = window.getComputedStyle(child).zIndex;
+        if (z === "0" || child.className.includes("sceneBackgroundLayer") || child.tagName === "VIDEO") {
+          inspectLayer(child);
+        }
+      }
+    }
+  };
+  const chatView = root.closest('[data-component="ChatView"]') ?? root.parentElement;
+  if (chatView) {
+    inspectLayer(chatView.querySelector('[class*="sceneBackgroundLayer"]'));
+    inspectContainerChildren(chatView);
+  }
+  if (maxOpacity < 0.99 && typeof document !== "undefined") {
+    const globalSceneBg = document.querySelector('[class*="sceneBackgroundLayer"]');
+    inspectLayer(globalSceneBg);
+    if (globalSceneBg?.parentElement && globalSceneBg.parentElement !== chatView) {
+      inspectContainerChildren(globalSceneBg.parentElement);
+    }
+    const fixedLayers = document.querySelectorAll('[class*="fixed"]');
+    for (let i = 0;i < fixedLayers.length; i += 1) {
+      const candidate = fixedLayers[i];
+      if (!(candidate instanceof HTMLElement))
+        continue;
+      const style = window.getComputedStyle(candidate);
+      if (style.position === "fixed" && style.zIndex === "0") {
+        inspectLayer(candidate);
+      }
+    }
+  }
+  return maxOpacity;
+}
+function resolveAtmosphereUniformTarget(state, tokens, prefs, kind, backdropBoost = 0) {
+  const safeBackdropBoost = clamp(Number.isFinite(backdropBoost) ? backdropBoost : 0, 0, 1);
   const effectiveIntensity = clamp(state.intensity * prefs.intensity, 0, 1.5);
   const rainProfile = resolveRainProfile(effectiveIntensity, state.condition);
   const effectiveWindDirection = state.windDirection === "none" && !/\b(still|calm|hushed|none)\b/i.test(state.wind) ? undefined : state.windDirection;
@@ -1533,6 +1610,44 @@ function resolveAtmosphereUniformTarget(state, tokens, prefs, kind) {
   const fogColor = parseCssColorToRgba(tokens.fogColor);
   const mistColor = parseCssColorToRgba(tokens.mistColor);
   const cloudPalette = resolveCloudLightingPalette(state.palette, state.condition, bgStart, bgEnd, glow, rawCloudCore, rawCloudEdge);
+  const exposureLiftScale = exposure === "underground" ? 0.28 : exposure === "indoor" ? 0.52 : 1;
+  const bgLift = safeBackdropBoost * exposureLiftScale;
+  let skyOpacityLift = 0;
+  let horizonOpacityLift = 0;
+  let glowOpacityLift = 0;
+  let beamOpacityLift = 0;
+  let fogOpacityLift = 0;
+  let mistOpacityLift = 0;
+  if (bgLift > 0.001) {
+    if (state.condition === "storm") {
+      skyOpacityLift = 0.34 * bgLift;
+      horizonOpacityLift = 0.1 * bgLift;
+      mistOpacityLift = 0.08 * bgLift;
+    } else if (state.palette === "night") {
+      skyOpacityLift = (state.condition === "clear" ? 0.36 : 0.3) * bgLift;
+      horizonOpacityLift = 0.08 * bgLift;
+    } else if (state.condition === "rain") {
+      skyOpacityLift = 0.24 * bgLift;
+      mistOpacityLift = 0.08 * bgLift;
+    } else if (state.palette === "dusk" || state.palette === "dawn") {
+      skyOpacityLift = 0.18 * bgLift;
+      horizonOpacityLift = 0.16 * bgLift;
+      glowOpacityLift = 0.1 * bgLift;
+    } else if (state.condition === "fog") {
+      skyOpacityLift = 0.14 * bgLift;
+      fogOpacityLift = 0.14 * bgLift;
+      mistOpacityLift = 0.12 * bgLift;
+    } else if (state.condition === "cloudy" || state.condition === "snow") {
+      skyOpacityLift = 0.12 * bgLift;
+      mistOpacityLift = 0.06 * bgLift;
+    } else {
+      skyOpacityLift = 0.06 * bgLift;
+      glowOpacityLift = 0.14 * bgLift;
+      beamOpacityLift = 0.14 * bgLift;
+    }
+  }
+  const boostedCloudOpacity = tokens.cloudOpacity >= 0.05 ? clamp(tokens.cloudOpacity + 0.14 * bgLift, 0, 1.15) : tokens.cloudOpacity;
+  const particleBoost = 1 + 0.22 * safeBackdropBoost;
   return {
     bgStart,
     bgMid,
@@ -1549,21 +1664,21 @@ function resolveAtmosphereUniformTarget(state, tokens, prefs, kind) {
     cloudShadowTint: cloudPalette.shadowTint,
     cloudUnderGlowStrength: cloudPalette.underGlowStrength,
     cloudDetailStrength: cloudPalette.detailStrength,
-    skyOpacity: isFront && isBoth ? 0 : tokens.skyOpacity,
-    glowOpacity: isFront && isBoth ? 0 : tokens.glowOpacity,
-    beamOpacity: isFront && isBoth ? 0 : tokens.beamOpacity,
-    cloudOpacity: isFront && isBoth ? tokens.cloudOpacity >= 0.08 ? tokens.cloudOpacity * 0.24 : 0 : tokens.cloudOpacity,
-    horizonOpacity: isFront && isBoth ? 0 : tokens.horizonOpacity,
-    mistOpacity: isFront && isBoth ? tokens.mistOpacity * 0.32 : tokens.mistOpacity,
-    fogOpacity: isFront && isBoth ? tokens.fogOpacity * 0.28 : tokens.fogOpacity,
-    rainOpacity: tokens.rainOpacity,
-    snowOpacity: tokens.snowOpacity,
-    moteOpacity: isFront && isBoth ? tokens.moteOpacity * 0.48 : tokens.moteOpacity,
-    starOpacity: isFront && isBoth ? 0 : tokens.starOpacity,
-    moonlightOpacity: isFront && isBoth ? 0 : tokens.moonlightOpacity,
-    auroraOpacity: isFront && isBoth ? 0 : tokens.auroraOpacity,
-    windowDropletOpacity: tokens.windowDropletOpacity,
-    phenomenonOpacity: tokens.phenomenonOpacity,
+    skyOpacity: isFront && isBoth ? 0 : clamp(tokens.skyOpacity + skyOpacityLift, 0, 0.72),
+    glowOpacity: isFront && isBoth ? 0 : clamp(tokens.glowOpacity + glowOpacityLift, 0, 0.85),
+    beamOpacity: isFront && isBoth ? 0 : clamp(tokens.beamOpacity + beamOpacityLift, 0, 0.78),
+    cloudOpacity: isFront && isBoth ? tokens.cloudOpacity >= 0.08 ? boostedCloudOpacity * 0.26 : 0 : boostedCloudOpacity,
+    horizonOpacity: isFront && isBoth ? 0 : clamp(tokens.horizonOpacity + horizonOpacityLift, 0, 0.75),
+    mistOpacity: isFront && isBoth ? tokens.mistOpacity * 0.32 : clamp(tokens.mistOpacity + mistOpacityLift, 0, 0.75),
+    fogOpacity: isFront && isBoth ? tokens.fogOpacity * 0.28 : clamp(tokens.fogOpacity + fogOpacityLift, 0, 0.92),
+    rainOpacity: clamp(tokens.rainOpacity * (1 + 0.24 * safeBackdropBoost), 0, 1.4),
+    snowOpacity: clamp(tokens.snowOpacity * particleBoost, 0, 1.25),
+    moteOpacity: isFront && isBoth ? tokens.moteOpacity * 0.48 * particleBoost : tokens.moteOpacity * particleBoost,
+    starOpacity: isFront && isBoth ? 0 : clamp(tokens.starOpacity * particleBoost, 0, 1.25),
+    moonlightOpacity: isFront && isBoth ? 0 : clamp(tokens.moonlightOpacity * (1 + 0.18 * safeBackdropBoost), 0, 1.1),
+    auroraOpacity: isFront && isBoth ? 0 : clamp(tokens.auroraOpacity * (1 + 0.24 * safeBackdropBoost), 0, 1.25),
+    windowDropletOpacity: clamp(tokens.windowDropletOpacity * particleBoost, 0, 1.25),
+    phenomenonOpacity: clamp(tokens.phenomenonOpacity * particleBoost, 0, 1.25),
     flashOpacity: tokens.flashOpacity,
     sunAltitude: solar.sunAltitude,
     moonIllumination: lunar.illumination,
@@ -1575,6 +1690,7 @@ function resolveAtmosphereUniformTarget(state, tokens, prefs, kind) {
     isSandstorm: phenomenon === "sandstorm" ? 1 : 0,
     isIndoor: exposure === "indoor" ? 1 : 0,
     isUnderground: exposure === "underground" ? 1 : 0,
+    backdropBoost: safeBackdropBoost,
     renderAtmosphereShader
   };
 }
@@ -1637,6 +1753,7 @@ function interpolateUniforms(from, to, t) {
     isSandstorm: lerp(from.isSandstorm, to.isSandstorm, ease),
     isIndoor: lerp(from.isIndoor, to.isIndoor, ease),
     isUnderground: lerp(from.isUnderground, to.isUnderground, ease),
+    backdropBoost: lerp(from.backdropBoost, to.backdropBoost, ease),
     renderAtmosphereShader: to.renderAtmosphereShader
   };
 }
@@ -1752,12 +1869,12 @@ function resolveAtmosphereTargetFps(u, state, options) {
   }
   return 15;
 }
-var sharedCloudAtlasCanvas = null;
+var sharedCloudAtlasPixels = null;
 var sharedCloudAtlasLoading = false;
 var activeEngines = new Set;
 function ensureSharedCloudAtlas() {
-  if (sharedCloudAtlasCanvas)
-    return sharedCloudAtlasCanvas;
+  if (sharedCloudAtlasPixels)
+    return sharedCloudAtlasPixels;
   if (sharedCloudAtlasLoading)
     return null;
   if (typeof document === "undefined" || typeof Image === "undefined")
@@ -1790,9 +1907,7 @@ function ensureSharedCloudAtlas() {
       }
       const raw = ctx.getImageData(0, 0, ATLAS_SIZE, ATLAS_SIZE);
       const baked = bakeCloudAtlasPixels(raw.data, ATLAS_SIZE, ATLAS_SIZE, ATLAS_COLS, ATLAS_ROWS);
-      raw.data.set(baked);
-      ctx.putImageData(raw, 0, 0);
-      sharedCloudAtlasCanvas = canvas;
+      sharedCloudAtlasPixels = new Uint8Array(baked.buffer, baked.byteOffset, baked.byteLength);
       for (const engine of activeEngines) {
         engine.notifyAtlasReady();
       }
@@ -1812,7 +1927,7 @@ function ensureSharedCloudAtlas() {
     img.src = CLOUD_SOURCES[i];
     images.push(img);
   }
-  return sharedCloudAtlasCanvas;
+  return sharedCloudAtlasPixels;
 }
 function compileGlShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -1904,7 +2019,10 @@ class AtmosphereEngine {
   transitionStartMs = 0;
   transitionDurationMs = 0;
   state = null;
+  tokens = null;
   prefs = null;
+  backdropBoost = 0;
+  lastBackdropProbeMs = 0;
   visible = false;
   paused = false;
   reducedMotion = false;
@@ -2024,12 +2142,15 @@ class AtmosphereEngine {
   update(options) {
     if (this.destroyed)
       return;
-    const nextTarget = resolveAtmosphereUniformTarget(options.state, options.tokens, options.prefs, options.kind);
+    const nowMs = performance.now();
+    this.backdropBoost = resolveBackdropContrastBoost(measureHostBackgroundOpacity(this.root));
+    this.lastBackdropProbeMs = nowMs;
+    const nextTarget = resolveAtmosphereUniformTarget(options.state, options.tokens, options.prefs, options.kind, this.backdropBoost);
     const shouldTransition = options.prefs.transitionsEnabled && !options.reducedMotion && !options.paused && options.visible && this.currentUniforms !== null;
     if (shouldTransition && this.currentUniforms) {
       this.fromUniforms = this.currentUniforms;
       this.targetUniforms = nextTarget;
-      this.transitionStartMs = performance.now();
+      this.transitionStartMs = nowMs;
       this.transitionDurationMs = 1200;
     } else {
       this.currentUniforms = nextTarget;
@@ -2038,6 +2159,7 @@ class AtmosphereEngine {
       this.transitionDurationMs = 0;
     }
     this.state = options.state;
+    this.tokens = options.tokens;
     this.prefs = options.prefs;
     this.visible = options.visible;
     this.paused = options.paused;
@@ -2246,7 +2368,26 @@ class AtmosphereEngine {
     this.lastRenderMs = nowMs;
     this.elapsedSeconds += dt;
     this.dirty = false;
-    if (transitioning && this.fromUniforms && this.targetUniforms) {
+    if (nowMs - this.lastBackdropProbeMs >= 750 && this.state && this.tokens && this.prefs) {
+      this.lastBackdropProbeMs = nowMs;
+      const nextBoost = resolveBackdropContrastBoost(measureHostBackgroundOpacity(this.root));
+      if (Math.abs(nextBoost - this.backdropBoost) > 0.03) {
+        this.backdropBoost = nextBoost;
+        const retarget = resolveAtmosphereUniformTarget(this.state, this.tokens, this.prefs, this.kind, nextBoost);
+        if (this.currentUniforms) {
+          this.fromUniforms = this.currentUniforms;
+          this.targetUniforms = retarget;
+          this.transitionStartMs = nowMs;
+          this.transitionDurationMs = 360;
+        } else {
+          this.currentUniforms = retarget;
+          this.targetUniforms = retarget;
+        }
+        this.atmoFboDirty = true;
+      }
+    }
+    const isTransitioning = this.transitionDurationMs > 0 && !!this.fromUniforms && !!this.targetUniforms;
+    if (isTransitioning && this.fromUniforms && this.targetUniforms) {
       const progress = clamp((nowMs - this.transitionStartMs) / this.transitionDurationMs, 0, 1);
       this.currentUniforms = interpolateUniforms(this.fromUniforms, this.targetUniforms, progress);
       this.atmoFboDirty = true;
@@ -2355,6 +2496,7 @@ class AtmosphereEngine {
       }
       this.particleLocs.u_frontMask = gl.getUniformLocation(particleProgram, "u_frontMask");
       this.particleLocs.u_time = gl.getUniformLocation(particleProgram, "u_time");
+      this.particleLocs.u_bgContrast = gl.getUniformLocation(particleProgram, "u_bgContrast");
       this.atmoAttribs.a_pos = gl.getAttribLocation(atmoProgram, "a_pos");
       this.blitAttribs.a_pos = gl.getAttribLocation(blitProgram, "a_pos");
       this.cloudAttribs = {
@@ -2424,8 +2566,8 @@ class AtmosphereEngine {
   ensureCloudAtlasTexture(gl) {
     if (this.cloudAtlasUploaded && this.cloudAtlasTex)
       return true;
-    const atlasCanvas = ensureSharedCloudAtlas();
-    if (!atlasCanvas)
+    const atlasPixels = ensureSharedCloudAtlas();
+    if (!atlasPixels)
       return false;
     const tex = gl.createTexture();
     if (!tex)
@@ -2433,7 +2575,7 @@ class AtmosphereEngine {
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlasCanvas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ATLAS_SIZE, ATLAS_SIZE, 0, gl.RGBA, gl.UNSIGNED_BYTE, atlasPixels);
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -2705,13 +2847,13 @@ class AtmosphereEngine {
       this.emitMoon(u, clientW, clientH, fxProfile);
     }
     if (this.particleVertexCount > 0) {
-      this.flushParticles(gl, frontMaskFlag);
+      this.flushParticles(gl, frontMaskFlag, u.backdropBoost);
     }
     this.renderCloudPass(gl, u, clientW, clientH, dt, lightningFlicker, frontMaskFlag, fxProfile);
     this.particleVertexCount = 0;
     this.buildWeatherParticles(u, clientW, clientH, dt, lightningFlicker, fxProfile);
     if (this.particleVertexCount > 0) {
-      this.flushParticles(gl, frontMaskFlag);
+      this.flushParticles(gl, frontMaskFlag, u.backdropBoost);
     }
   }
   enableOnlyAttribs(gl, active) {
@@ -2864,7 +3006,7 @@ class AtmosphereEngine {
     writeVert(x1, y1, u1, v1, 1, 1);
     this.cloudVertexCount += 6;
   }
-  flushParticles(gl, frontMaskFlag) {
+  flushParticles(gl, frontMaskFlag, bgContrast = 0) {
     if (!this.particleProgram || !this.particleBuffer || this.particleVertexCount === 0)
       return;
     gl.useProgram(this.particleProgram);
@@ -2881,6 +3023,7 @@ class AtmosphereEngine {
     gl.vertexAttribPointer(pa.a_colorB, 4, gl.FLOAT, false, stride, 40);
     gl.uniform1f(this.particleLocs.u_frontMask ?? null, frontMaskFlag);
     gl.uniform1f(this.particleLocs.u_time ?? null, this.elapsedSeconds);
+    gl.uniform1f(this.particleLocs.u_bgContrast ?? null, bgContrast);
     gl.drawArrays(gl.TRIANGLES, 0, this.particleVertexCount);
     this.particleVertexCount = 0;
   }
@@ -3011,7 +3154,7 @@ class AtmosphereEngine {
           if (g.x < -0.25)
             g.x += 1.5;
         }
-        const gAlpha = clamp(g.opacity * gustBoost, 0, 0.32);
+        const gAlpha = clamp(g.opacity * gustBoost * (1 + 0.45 * u.backdropBoost), 0, 0.44);
         const isSand = phenomenon === "sandstorm";
         this.pushOrientedQuad(g.x, g.y, g.widthPx * 0.5 * fxProfile.streakWidthScale, g.heightPx * 0.5 * fxProfile.particleSizeScale, 0, clientW, clientH, PARTICLE_KIND.WIND_GUST, this.elapsedSeconds * 2.2 + g.phase, isSand ? 0.95 : 0.92, isSand ? 0.8 : 0.96, isSand ? 0.58 : 1, gAlpha, isSand ? 0.82 : 0.72, isSand ? 0.64 : 0.84, isSand ? 0.42 : 0.98, gAlpha);
       }
@@ -9326,7 +9469,7 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-fx-root[data-kind="back"] {
-  z-index: 1;
+  z-index: 2;
 }
 
 .weather-fx-root[data-kind="front"] {
