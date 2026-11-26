@@ -305,7 +305,9 @@ export function resolveAtmosphereUniformTarget(
     skyOpacity: isFront && isBoth ? 0 : tokens.skyOpacity,
     glowOpacity: isFront && isBoth ? 0 : tokens.glowOpacity,
     beamOpacity: isFront && isBoth ? 0 : tokens.beamOpacity,
-    cloudOpacity: isFront && isBoth ? tokens.cloudOpacity * 0.24 : tokens.cloudOpacity,
+    cloudOpacity: isFront && isBoth
+      ? (tokens.cloudOpacity >= 0.08 ? tokens.cloudOpacity * 0.24 : 0)
+      : tokens.cloudOpacity,
     horizonOpacity: isFront && isBoth ? 0 : tokens.horizonOpacity,
     mistOpacity: isFront && isBoth ? tokens.mistOpacity * 0.32 : tokens.mistOpacity,
     fogOpacity: isFront && isBoth ? tokens.fogOpacity * 0.28 : tokens.fogOpacity,
@@ -409,6 +411,159 @@ function evaluateLightningFlicker(ageSec: number): number {
   return 0.64 * Math.pow(1.0 - (ageSec - 0.35) / 0.33, 1.8);
 }
 
+function smoothstepJs(edge0: number, edge1: number, x: number): number {
+  const t = clamp((x - edge0) / Math.max(1e-6, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Pre-bakes the 5-tap cloud feathering, interior puff luminance relief, and
+ * top/bottom contour rim channels once on the CPU during atlas creation so
+ * `CLOUD_FRAGMENT_SHADER` executes a single `texture2D()` fetch per fragment
+ * instead of 5 trilinear taps per pixel across 20+ overlapping clouds.
+ *
+ * Channel layout:
+ * - R: interior puff relief `[0.55..1.08]` normalized to `[0..255]`
+ * - G: signed upper-edge delta `0.5 + (softAlpha - aUp) * 0.5` (encodes both topRim & dropShadow)
+ * - B: lower-edge rim `clamp((softAlpha - aDown) * 2.1, 0, 1)`
+ * - A: feathered `softAlpha`
+ */
+export function bakeCloudAtlasPixels(
+  src: Uint8ClampedArray,
+  width: number,
+  height: number,
+  cols = ATLAS_COLS,
+  rows = ATLAS_ROWS,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(src.length);
+  const cellW = Math.floor(width / cols);
+  const cellH = Math.floor(height / rows);
+  const stepX = Math.max(1, Math.round(width * 0.006));
+  const stepY = Math.max(1, Math.round(height * 0.0085));
+
+  for (let row = 0; row < rows; row += 1) {
+    const y0 = row * cellH;
+    const y1 = Math.min(height - 1, (row + 1) * cellH - 1);
+    for (let col = 0; col < cols; col += 1) {
+      const x0 = col * cellW;
+      const x1 = Math.min(width - 1, (col + 1) * cellW - 1);
+
+      for (let y = y0; y <= y1; y += 1) {
+        const yUp = Math.max(y0, y - stepY);
+        const yDown = Math.min(y1, y + stepY);
+        const rowOff = y * width;
+        const upOff = yUp * width;
+        const downOff = yDown * width;
+
+        for (let x = x0; x <= x1; x += 1) {
+          const xLeft = Math.max(x0, x - stepX);
+          const xRight = Math.min(x1, x + stepX);
+          const idx = (rowOff + x) * 4;
+
+          const cA = src[idx + 3] / 255;
+          const aUp = src[(upOff + x) * 4 + 3] / 255;
+          const aDown = src[(downOff + x) * 4 + 3] / 255;
+          const aLeft = src[(rowOff + xLeft) * 4 + 3] / 255;
+          const aRight = src[(rowOff + xRight) * 4 + 3] / 255;
+
+          const softAlpha = cA * 0.44 + (aUp + aDown + aLeft + aRight) * 0.14;
+
+          if (softAlpha <= 0 && aUp <= 0 && aDown <= 0) {
+            // Neutral padding prevents dark or glowing fringes during mipmap filtering.
+            out[idx] = 168; // 0.90 relief
+            out[idx + 1] = 128; // 0.5 neutral delta
+            out[idx + 2] = 0;
+            out[idx + 3] = 0;
+            continue;
+          }
+
+          const rawLuma = (src[idx] * 0.299 + src[idx + 1] * 0.587 + src[idx + 2] * 0.114) / 255;
+          const interiorMask = smoothstepJs(0.32, 0.88, cA);
+          const puffRelief = lerp(0.9, clamp(rawLuma * 1.06, 0.55, 1.08), interiorMask);
+
+          out[idx] = Math.round(clamp((puffRelief - 0.55) / 0.53, 0, 1) * 255);
+          out[idx + 1] = Math.round(clamp(0.5 + (softAlpha - aUp) * 0.5, 0, 1) * 255);
+          out[idx + 2] = Math.round(clamp((softAlpha - aDown) * 2.1, 0, 1) * 255);
+          out[idx + 3] = Math.round(clamp(softAlpha, 0, 1) * 255);
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+export interface AtmospherePacingOptions {
+  windowFocused: boolean;
+  lightningActive: boolean;
+  transitioning: boolean;
+}
+
+/**
+ * Returns true if the layer has any visible elements to draw in the current scene.
+ * Empty layers (e.g. `front` during a clear night in `both` mode) pause their rAF
+ * loop completely instead of clearing and presenting blank 1M+ pixel canvases.
+ */
+export function hasAtmosphereLayerContent(
+  u: AtmosphereUniforms,
+  state: WeatherState,
+  lightningActive: boolean,
+): boolean {
+  if (u.renderAtmosphereShader) return true;
+  if (lightningActive) return true;
+  if (u.cloudOpacity > 0.005 && u.isUnderground < 0.5) return true;
+  if (u.starOpacity > 0.005 || u.moonlightOpacity > 0.005) return true;
+  if (u.rainOpacity > 0.01 && u.rainDensity > 0.01 && u.isUnderground < 0.5) return true;
+  if (u.snowOpacity > 0.01 && u.isUnderground < 0.5) return true;
+
+  const phenomenon: WeatherPhenomenon = state.phenomenon ?? "none";
+  const exposure: WeatherExposure = state.exposure ?? "outdoor";
+  if (u.moteOpacity > 0.008 && phenomenon === "none") return true;
+  if (u.phenomenonOpacity > 0.01 && phenomenon !== "none" && phenomenon !== "aurora") return true;
+  if (u.windowDropletOpacity > 0.01 && exposure === "indoor") return true;
+
+  const condition = state.condition;
+  if (
+    exposure !== "underground" &&
+    exposure !== "indoor" &&
+    (condition === "cloudy" || condition === "rain" || condition === "storm" || phenomenon === "sandstorm")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Selects an energy-aware target frame rate matched to the visual motion speed
+ * of the active weather scene, avoiding wasteful 120-144 Hz rendering and
+ * backdrop-filter invalidation on calm skies or unfocused laptop windows.
+ */
+export function resolveAtmosphereTargetFps(
+  u: AtmosphereUniforms,
+  state: WeatherState,
+  options: AtmospherePacingOptions,
+): number {
+  if (options.lightningActive) return 60;
+  if (!options.windowFocused) return options.transitioning ? 15 : 4;
+  if (options.transitioning) return 30;
+
+  const phenomenon: WeatherPhenomenon = state.phenomenon ?? "none";
+  const exposure: WeatherExposure = state.exposure ?? "outdoor";
+  const hasFastRain = u.rainOpacity > 0.01 && u.rainDensity > 0.01 && u.isUnderground < 0.5;
+  const hasSnow = u.snowOpacity > 0.01 && u.isUnderground < 0.5;
+  const hasFastPhenomenon = u.phenomenonOpacity > 0.01 && phenomenon !== "none" && phenomenon !== "aurora";
+  const hasWindowDrops = u.windowDropletOpacity > 0.01 && exposure === "indoor";
+
+  if (hasFastRain || hasSnow || hasFastPhenomenon || hasWindowDrops) {
+    return 30;
+  }
+
+  // Slow ambient motion (drifting clouds, fog, aurora, stars, calm motes) moves
+  // < 1 px per frame at 15 FPS, slashing GPU and backdrop-filter churn by 4x-9x.
+  return 15;
+}
+
 // Shared HTMLCanvasElement atlas built once across all engine instances
 let sharedCloudAtlasCanvas: HTMLCanvasElement | null = null;
 let sharedCloudAtlasLoading = false;
@@ -428,7 +583,7 @@ function ensureSharedCloudAtlas(): HTMLCanvasElement | null {
       const canvas = document.createElement("canvas");
       canvas.width = ATLAS_SIZE;
       canvas.height = ATLAS_SIZE;
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx) return;
 
       ctx.clearRect(0, 0, ATLAS_SIZE, ATLAS_SIZE);
@@ -446,6 +601,11 @@ function ensureSharedCloudAtlas(): HTMLCanvasElement | null {
         const row = Math.floor(i / ATLAS_COLS);
         ctx.drawImage(img, col * cellW + padX, row * cellH + padY, drawW, drawH);
       }
+
+      const raw = ctx.getImageData(0, 0, ATLAS_SIZE, ATLAS_SIZE);
+      const baked = bakeCloudAtlasPixels(raw.data, ATLAS_SIZE, ATLAS_SIZE, ATLAS_COLS, ATLAS_ROWS);
+      raw.data.set(baked);
+      ctx.putImageData(raw, 0, 0);
 
       sharedCloudAtlasCanvas = canvas;
       for (const engine of activeEngines) {
@@ -682,12 +842,25 @@ export class AtmosphereEngine {
   private dirty = true;
 
   private animationFrame: number | null = null;
+  private pacingTimer: number | null = null;
   private elapsedSeconds = Math.random() * 40;
   private lastTickMs = 0;
+  private lastRenderMs = 0;
+  private lastAtmoFboMs = 0;
+  private atmoFboDirty = true;
+  private cachedClientW = 0;
+  private cachedClientH = 0;
+  private cachedFxProfileW = 0;
+  private cachedFxProfileH = 0;
+  private cachedFxProfile: ViewportFxProfile | null = null;
   private lastClientW = 1280;
+  private windowFocused = typeof document === "undefined" ? true : document.hasFocus();
+  private canvasHiddenForIdle = false;
   private resizeObserver: ResizeObserver | null = null;
   private readonly onContextLost: (event: Event) => void;
   private readonly onContextRestored: () => void;
+  private readonly onWindowFocus: () => void;
+  private readonly onWindowBlur: () => void;
 
   private lightningAge = -1;
   private lightningX = 0.5;
@@ -726,10 +899,7 @@ export class AtmosphereEngine {
       event.preventDefault();
       if (this.destroyed) return;
       this.resetGlHandles();
-      if (this.animationFrame !== null) {
-        window.cancelAnimationFrame(this.animationFrame);
-        this.animationFrame = null;
-      }
+      this.cancelScheduledFrame();
     };
 
     this.onContextRestored = () => {
@@ -739,16 +909,45 @@ export class AtmosphereEngine {
         this.fallbackCtx2d = this.canvas.getContext("2d", { alpha: true });
       }
       this.dirty = true;
+      this.atmoFboDirty = true;
       this.syncLoopState();
+    };
+
+    this.onWindowFocus = () => {
+      if (this.destroyed) return;
+      this.windowFocused = true;
+      this.dirty = true;
+      this.atmoFboDirty = true;
+      this.cancelScheduledFrame();
+      this.syncLoopState();
+    };
+
+    this.onWindowBlur = () => {
+      if (this.destroyed) return;
+      this.windowFocused = false;
     };
 
     this.canvas.addEventListener("webglcontextlost", this.onContextLost);
     this.canvas.addEventListener("webglcontextrestored", this.onContextRestored);
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", this.onWindowFocus);
+      window.addEventListener("blur", this.onWindowBlur);
+    }
 
     if (typeof ResizeObserver !== "undefined") {
-      this.resizeObserver = new ResizeObserver(() => {
+      this.resizeObserver = new ResizeObserver((entries) => {
         if (this.destroyed) return;
+        const entry = entries[entries.length - 1];
+        if (entry) {
+          const w = Math.round(entry.contentRect.width);
+          const h = Math.round(entry.contentRect.height);
+          if (w > 0 && h > 0) {
+            this.cachedClientW = w;
+            this.cachedClientH = h;
+          }
+        }
         this.dirty = true;
+        this.atmoFboDirty = true;
         this.syncLoopState();
       });
       this.resizeObserver.observe(this.root);
@@ -796,6 +995,7 @@ export class AtmosphereEngine {
     this.paused = options.paused;
     this.reducedMotion = options.reducedMotion;
     this.dirty = true;
+    this.atmoFboDirty = true;
 
     this.syncLoopState();
   }
@@ -805,13 +1005,26 @@ export class AtmosphereEngine {
     this.lightningX = clamp(boltPositionPercent / 100, 0.12, 0.88);
     this.lightningAge = 0;
     if (this.kind === "back" || this.prefs?.layerMode === "front") {
-      const clientW = this.root.clientWidth || this.lastClientW;
+      const clientW = this.cachedClientW || this.root.clientWidth || this.lastClientW;
       this.generateLightningBolt(this.lightningX, clientW);
     } else {
       this.lightningSegments = [];
     }
     this.dirty = true;
+    this.atmoFboDirty = true;
+    this.cancelScheduledFrame();
     this.syncLoopState();
+  }
+
+  private cancelScheduledFrame(): void {
+    if (this.animationFrame !== null) {
+      window.cancelAnimationFrame(this.animationFrame);
+      this.animationFrame = null;
+    }
+    if (this.pacingTimer !== null) {
+      window.clearTimeout(this.pacingTimer);
+      this.pacingTimer = null;
+    }
   }
 
   private resetGlHandles(): void {
@@ -827,6 +1040,7 @@ export class AtmosphereEngine {
     this.atmoFboTex = null;
     this.atmoFboW = 0;
     this.atmoFboH = 0;
+    this.atmoFboDirty = true;
     this.cloudAtlasTex = null;
     this.cloudAtlasUploaded = false;
     this.atmoLocs = {};
@@ -846,11 +1060,12 @@ export class AtmosphereEngine {
     }
     this.canvas.removeEventListener("webglcontextlost", this.onContextLost);
     this.canvas.removeEventListener("webglcontextrestored", this.onContextRestored);
-
-    if (this.animationFrame !== null) {
-      window.cancelAnimationFrame(this.animationFrame);
-      this.animationFrame = null;
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", this.onWindowFocus);
+      window.removeEventListener("blur", this.onWindowBlur);
     }
+
+    this.cancelScheduledFrame();
     const gl = this.gl;
     if (gl) {
       if (this.quadBuffer) gl.deleteBuffer(this.quadBuffer);
@@ -863,9 +1078,30 @@ export class AtmosphereEngine {
       if (this.blitProgram) gl.deleteProgram(this.blitProgram);
       if (this.cloudProgram) gl.deleteProgram(this.cloudProgram);
       if (this.particleProgram) gl.deleteProgram(this.particleProgram);
+      try {
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
+      } catch {
+        // Ignore if extension is unavailable
+      }
     }
     this.resetGlHandles();
     this.canvas.remove();
+  }
+
+  private setCanvasIdleHidden(hidden: boolean): void {
+    if (this.canvasHiddenForIdle === hidden) return;
+    this.canvasHiddenForIdle = hidden;
+    this.canvas.style.visibility = hidden ? "hidden" : "";
+  }
+
+  private clearCanvasOnce(): void {
+    if (this.gl) {
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+      this.gl.clearColor(0, 0, 0, 0);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    } else if (this.fallbackCtx2d) {
+      this.fallbackCtx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
   }
 
   private syncLoopState(): void {
@@ -874,36 +1110,74 @@ export class AtmosphereEngine {
     const shouldAnimate = this.visible && docVisible && !this.paused && !this.reducedMotion;
 
     if (!this.visible || !docVisible) {
-      if (this.animationFrame !== null) {
-        window.cancelAnimationFrame(this.animationFrame);
-        this.animationFrame = null;
-      }
+      this.cancelScheduledFrame();
       return;
     }
 
-    if (!shouldAnimate) {
-      if (this.animationFrame !== null) {
-        window.cancelAnimationFrame(this.animationFrame);
-        this.animationFrame = null;
+    const activeUniforms = this.targetUniforms ?? this.currentUniforms;
+    const hasContent =
+      activeUniforms !== null &&
+      this.state !== null &&
+      (this.transitionDurationMs > 0 ||
+        hasAtmosphereLayerContent(activeUniforms, this.state, this.lightningAge >= 0));
+
+    if (!hasContent) {
+      this.cancelScheduledFrame();
+      if (this.dirty) {
+        this.clearCanvasOnce();
+        this.dirty = false;
       }
+      this.setCanvasIdleHidden(true);
+      return;
+    }
+
+    this.setCanvasIdleHidden(false);
+
+    if (!shouldAnimate) {
+      this.cancelScheduledFrame();
       if (this.dirty) {
         this.currentUniforms = this.targetUniforms;
-        this.renderFrame(0);
+        this.renderFrame(0, performance.now());
         this.dirty = false;
       }
       return;
     }
 
-    if (this.animationFrame === null) {
+    if (this.dirty) {
+      this.cancelScheduledFrame();
+      this.lastTickMs = performance.now();
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+      return;
+    }
+
+    if (this.animationFrame === null && this.pacingTimer === null) {
       this.lastTickMs = performance.now();
       this.animationFrame = window.requestAnimationFrame(this.tick);
     }
   }
 
+  private scheduleNextFrame(targetFps: number): void {
+    if (this.destroyed || this.animationFrame !== null || this.pacingTimer !== null) return;
+    if (targetFps >= 55) {
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+      return;
+    }
+    const intervalMs = 1000 / Math.max(1, targetFps);
+    // Sleep on a timer before requesting VSync so high-refresh displays (120/144 Hz)
+    // do not wake JS and the compositor on skipped frames.
+    const delayMs = Math.max(4, Math.floor(intervalMs - 12));
+    this.pacingTimer = window.setTimeout(() => {
+      this.pacingTimer = null;
+      if (this.destroyed || this.animationFrame !== null) return;
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+    }, delayMs);
+  }
+
   /**
-   * Runs at smooth native display VSync (60/120/144+ Hz) with zero artificial frame skipping.
-   * Because the atmospheric noise shader runs inside a tiny ~480x270 FBO and all sprites/particles
-   * are single-draw-call GPU batches, each frame takes < 0.25ms on integrated GPUs.
+   * Adaptive VSync-aligned render loop: paces frame cadence to the active scene's
+   * motion speed (60 FPS for lightning, 30 FPS for rain/snow/phenomena, 15 FPS for
+   * slow skies/clouds/fog, 4 FPS when unfocused) and idles completely when a layer
+   * has no visible content.
    */
   private tick(nowMs: number): void {
     this.animationFrame = null;
@@ -915,14 +1189,41 @@ export class AtmosphereEngine {
       return;
     }
 
-    const dt = clamp((nowMs - this.lastTickMs) / 1000, 0.001, 0.05);
+    const activeUniforms = this.currentUniforms ?? this.targetUniforms;
+    if (!activeUniforms || !this.state) return;
+
+    const transitioning = this.transitionDurationMs > 0 && !!this.fromUniforms && !!this.targetUniforms;
+    const lightningActive = this.lightningAge >= 0;
+
+    if (!transitioning && !hasAtmosphereLayerContent(activeUniforms, this.state, lightningActive)) {
+      this.clearCanvasOnce();
+      this.setCanvasIdleHidden(true);
+      this.dirty = false;
+      return;
+    }
+
+    const targetFps = resolveAtmosphereTargetFps(activeUniforms, this.state, {
+      windowFocused: this.windowFocused,
+      lightningActive,
+      transitioning,
+    });
+    const minIntervalMs = 1000 / Math.max(1, targetFps);
+    if (!this.dirty && this.lastRenderMs > 0 && nowMs - this.lastRenderMs < minIntervalMs - 2) {
+      this.scheduleNextFrame(targetFps);
+      return;
+    }
+
+    const maxDt = targetFps <= 6 ? 0.3 : targetFps <= 20 ? 0.12 : 0.06;
+    const dt = clamp((nowMs - this.lastTickMs) / 1000, 0.001, maxDt);
     this.lastTickMs = nowMs;
+    this.lastRenderMs = nowMs;
     this.elapsedSeconds += dt;
     this.dirty = false;
 
-    if (this.transitionDurationMs > 0 && this.fromUniforms && this.targetUniforms) {
+    if (transitioning && this.fromUniforms && this.targetUniforms) {
       const progress = clamp((nowMs - this.transitionStartMs) / this.transitionDurationMs, 0, 1);
       this.currentUniforms = interpolateUniforms(this.fromUniforms, this.targetUniforms, progress);
+      this.atmoFboDirty = true;
       if (progress >= 1) {
         this.transitionDurationMs = 0;
       }
@@ -932,13 +1233,31 @@ export class AtmosphereEngine {
 
     if (this.lightningAge >= 0) {
       this.lightningAge += dt;
+      this.atmoFboDirty = true;
       if (this.lightningAge > 0.68) {
         this.lightningAge = -1;
       }
     }
 
-    this.renderFrame(dt);
-    this.animationFrame = window.requestAnimationFrame(this.tick);
+    this.renderFrame(dt, nowMs);
+
+    const nextUniforms = this.currentUniforms ?? this.targetUniforms;
+    if (
+      nextUniforms &&
+      this.state &&
+      (this.transitionDurationMs > 0 ||
+        hasAtmosphereLayerContent(nextUniforms, this.state, this.lightningAge >= 0))
+    ) {
+      const nextFps = resolveAtmosphereTargetFps(nextUniforms, this.state, {
+        windowFocused: this.windowFocused,
+        lightningActive: this.lightningAge >= 0,
+        transitioning: this.transitionDurationMs > 0,
+      });
+      this.scheduleNextFrame(nextFps);
+    } else {
+      this.clearCanvasOnce();
+      this.setCanvasIdleHidden(true);
+    }
   }
 
   private initWebGL(): void {
@@ -1104,6 +1423,7 @@ export class AtmosphereEngine {
     this.atmoFboTex = tex;
     this.atmoFboW = targetW;
     this.atmoFboH = targetH;
+    this.atmoFboDirty = true;
     return true;
   }
 
@@ -1339,15 +1659,23 @@ export class AtmosphereEngine {
     }
   }
 
-  private renderFrame(dt: number): void {
+  private renderFrame(dt: number, nowMs = performance.now()): void {
     const u = this.currentUniforms;
     if (!u || !this.state) return;
 
-    const clientW = this.root.clientWidth || window.innerWidth || 1;
-    const clientH = this.root.clientHeight || window.innerHeight || 1;
+    const clientW = this.cachedClientW || this.root.clientWidth || window.innerWidth || 1;
+    const clientH = this.cachedClientH || this.root.clientHeight || window.innerHeight || 1;
     if (clientW < 2 || clientH < 2) return;
+    if (this.cachedClientW <= 0) this.cachedClientW = clientW;
+    if (this.cachedClientH <= 0) this.cachedClientH = clientH;
     this.lastClientW = clientW;
-    const fxProfile = resolveViewportFxProfile(clientW, clientH);
+    let fxProfile = this.cachedFxProfile;
+    if (!fxProfile || this.cachedFxProfileW !== clientW || this.cachedFxProfileH !== clientH) {
+      fxProfile = resolveViewportFxProfile(clientW, clientH);
+      this.cachedFxProfile = fxProfile;
+      this.cachedFxProfileW = clientW;
+      this.cachedFxProfileH = clientH;
+    }
 
     if (!this.gl) {
       this.renderHeadlessFallback(u, clientW, clientH);
@@ -1355,8 +1683,8 @@ export class AtmosphereEngine {
     }
 
     const gl = this.gl;
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.35);
-    const maxMainPixels = 2_400_000;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.2);
+    const maxMainPixels = 1_350_000;
     const mainBudget = Math.sqrt(maxMainPixels / Math.max(1, clientW * clientH));
     const effDpr = Math.min(dpr, mainBudget);
     const mainW = Math.max(1, Math.floor(clientW * effDpr));
@@ -1370,21 +1698,37 @@ export class AtmosphereEngine {
     const lightningFlicker = evaluateLightningFlicker(this.lightningAge);
     const frontMaskFlag = this.kind === "front" ? 1 : 0;
 
-    // PASS 1: Render volumetric sky / aurora / god-rays / 4-octave fog into low-res FBO (~135k pixels)
+    // PASS 1: Render slow volumetric sky / aurora / god-rays / fog into low-res FBO (~96k pixels)
+    // and decouple its redraw cadence (~12.5 Hz active, 4 Hz calm) from faster particle frames.
     let fboReady = false;
     if (u.renderAtmosphereShader) {
-      const fboScale = Math.min(0.56, Math.sqrt(138_000 / Math.max(1, clientW * clientH)));
+      const fboScale = Math.min(0.48, Math.sqrt(96_000 / Math.max(1, clientW * clientH)));
       const fboW = Math.max(64, Math.floor(clientW * fboScale));
       const fboH = Math.max(64, Math.floor(clientH * fboScale));
       fboReady = this.ensureAtmosphereFbo(gl, fboW, fboH);
 
-      if (fboReady && this.atmoFbo) {
+      const fogStrength = Math.max(u.fogOpacity, u.mistOpacity * 0.78);
+      const hasAnimatedAtmo =
+        fogStrength > 0.045 ||
+        u.auroraOpacity > 0.004 ||
+        u.glowOpacity > 0.003 ||
+        u.beamOpacity > 0.003;
+      const fboIntervalMs = hasAnimatedAtmo ? 80 : 250;
+      const shouldRedrawFbo =
+        this.atmoFboDirty ||
+        lightningFlicker > 0.005 ||
+        this.transitionDurationMs > 0 ||
+        nowMs - this.lastAtmoFboMs >= fboIntervalMs;
+
+      if (fboReady && this.atmoFbo && shouldRedrawFbo) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.atmoFbo);
         gl.viewport(0, 0, fboW, fboH);
         gl.disable(gl.BLEND);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         this.drawAtmosphereFullscreen(gl, u, fboW, fboH, lightningFlicker, fxProfile);
+        this.atmoFboDirty = false;
+        this.lastAtmoFboMs = nowMs;
       }
     }
 
@@ -2083,8 +2427,11 @@ export class AtmosphereEngine {
 
     // 3. Crystalline & bokeh snowflakes + corner ice-fern frost vignette
     if (u.snowOpacity > 0.01 && exposure !== "underground") {
-      // Corner frost vignette quads
-      const frostAlpha = clamp(u.snowOpacity * (this.kind === "front" ? 0.28 : 0.36), 0, 0.42);
+      // Corner frost vignette quads (avoid duplicating full-screen corner fillrate on front in `both` mode)
+      const renderFrostCorners = this.kind === "back" || this.prefs?.layerMode !== "both";
+      const frostAlpha = renderFrostCorners
+        ? clamp(u.snowOpacity * (this.kind === "front" ? 0.34 : 0.40), 0, 0.46)
+        : 0;
       if (frostAlpha > 0.02) {
         const cornerW = fxProfile.frostCornerW;
         const cornerH = fxProfile.frostCornerH;
@@ -2525,8 +2872,20 @@ export function updateAtmosphereEngine(
   root: HTMLElement,
   kind: "back" | "front",
   options: AtmosphereUpdateOptions,
-): AtmosphereEngine {
+): AtmosphereEngine | null {
   let engine = engines.get(root);
+  if (!options.visible) {
+    if (engine) {
+      // Release unused WebGL2 contexts when a layer is disabled (e.g., effects off or single-layer mode)
+      if (!options.prefs.effectsEnabled || (options.prefs.layerMode !== "both" && options.prefs.layerMode !== kind)) {
+        engine.destroy();
+        engines.delete(root);
+        return null;
+      }
+      engine.update(options);
+    }
+    return engine ?? null;
+  }
   if (!engine) {
     engine = new AtmosphereEngine(root, kind);
     engines.set(root, engine);

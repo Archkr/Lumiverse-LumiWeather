@@ -96,16 +96,30 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
   }
 
-  mat2 rot2(float a) {
-    float c = cos(a);
-    float s = sin(a);
-    return mat2(c, -s, s, c);
+  float fbm2(vec2 p) {
+    mat2 m = mat2(0.87274, -0.48818, 0.48818, 0.87274);
+    float v = 0.52 * smoothNoise(p);
+    p = m * p * 2.03 + vec2(13.7, 7.9);
+    v += 0.26 * smoothNoise(p);
+    return v;
+  }
+
+  float fbm3(vec2 p) {
+    float v = 0.0;
+    float amp = 0.52;
+    mat2 m = mat2(0.87274, -0.48818, 0.48818, 0.87274);
+    for (int i = 0; i < 3; i++) {
+      v += amp * smoothNoise(p);
+      p = m * p * 2.03 + vec2(13.7, 7.9);
+      amp *= 0.5;
+    }
+    return v;
   }
 
   float fbm4(vec2 p) {
     float v = 0.0;
     float amp = 0.52;
-    mat2 m = rot2(0.51);
+    mat2 m = mat2(0.87274, -0.48818, 0.48818, 0.87274);
     for (int i = 0; i < 4; i++) {
       v += amp * smoothNoise(p);
       p = m * p * 2.03 + vec2(13.7, 7.9);
@@ -240,18 +254,19 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
       composePremul(outRgb, outA, hCol, hAlpha, 0.25);
     }
 
-    // 7. Volumetric 4-octave domain-warped fog, rolling valley mist & haboob sandstorm
+    // 7. Volumetric domain-warped fog, rolling valley mist & haboob sandstorm
+    // Skip expensive multi-octave FBM in clear skies where ambient mist is trace (< 4.5%)
     float fogStrength = max(u_fogOpacity, u_mistOpacity * 0.78);
-    if (fogStrength > 0.004) {
+    if (fogStrength > 0.045) {
       vec2 p = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
       float speed = (0.036 + u_isSandstorm * 0.085) * u_windX;
       vec2 flow = vec2(speed * u_time, -0.012 * u_time);
 
       vec2 q = vec2(
-        fbm4(p * 1.65 - flow * 0.8),
-        fbm4(p * 1.65 + vec2(5.2, 1.3) - flow * 0.6)
+        fbm2(p * 1.65 - flow * 0.8),
+        fbm2(p * 1.65 + vec2(5.2, 1.3) - flow * 0.6)
       );
-      float farBank = fbm4(p * 1.35 + q * 0.85 - flow * 0.55);
+      float farBank = fbm3(p * 1.35 + q * 0.85 - flow * 0.55);
       float nearBank = fbm4(p * 2.65 + q * 1.25 - flow * 1.15);
 
       float fFar = smoothstep(0.30, 0.82, farBank);
@@ -278,6 +293,11 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
 
       float fAlpha = clamp(density * fogStrength * 1.18, 0.0, 0.86);
       composePremul(outRgb, outA, fogCol, fAlpha, 0.08);
+    } else if (fogStrength > 0.004) {
+      float hazeGrad = smoothstep(0.28, 1.0, uv.y);
+      vec3 baseMist = mix(u_fogColor.rgb, u_mistColor.rgb, hazeGrad);
+      float fAlpha = clamp(hazeGrad * fogStrength * 0.82, 0.0, 0.12);
+      composePremul(outRgb, outA, baseMist, fAlpha, 0.08);
     }
 
     // 8. Subtle indoor windowpane glass reflection sheen & cool edge vignette
@@ -383,36 +403,23 @@ export const CLOUD_FRAGMENT_SHADER = `
   uniform float u_frontMask;
 
   void main() {
-    // Multi-tap soft feather + contour rim detection within the sprite's padded atlas cell
-    vec2 stepY = vec2(0.0, 0.0085);
-    vec2 stepX = vec2(0.006, 0.0);
-
-    vec4 center = texture2D(u_atlas, v_atlasUv);
-    float aUp = texture2D(u_atlas, v_atlasUv - stepY).a;
-    float aDown = texture2D(u_atlas, v_atlasUv + stepY).a;
-    float aLeft = texture2D(u_atlas, v_atlasUv - stepX).a;
-    float aRight = texture2D(u_atlas, v_atlasUv + stepX).a;
-
-    // Softly feathered silhouette alpha (eliminates jagged or harsh outlines)
-    float softAlpha = center.a * 0.44 + (aUp + aDown + aLeft + aRight) * 0.14;
-
-    // Subtle offset atmospheric drop shadow beneath cloud base
-    float shadowSample = aUp * 0.65;
-    float dropShadow = clamp(shadowSample - softAlpha, 0.0, 1.0) * 0.22;
+    // Single texture tap: feathering, puff relief, and contour rims are pre-baked
+    // once into RGBA during atlas construction (R=relief, G=topRim/shadow, B=bottomRim, A=softAlpha).
+    vec4 baked = texture2D(u_atlas, v_atlasUv);
+    float softAlpha = baked.a;
+    float diffUp = (baked.g - 0.5) * 2.0;
+    float aUp = clamp(softAlpha - diffUp, 0.0, 1.0);
+    float dropShadow = clamp(aUp * 0.65 - softAlpha, 0.0, 1.0) * 0.22;
 
     if (softAlpha < 0.008 && dropShadow < 0.008) {
       discard;
     }
 
-    // Top-facing billow crown rim (where alpha transitions from sky above into cloud dome)
-    float topRim = clamp((softAlpha - aUp) * 2.35, 0.0, 1.0) * smoothstep(0.72, 0.12, v_localUv.y);
-    // Horizon-facing underside rim (for dawn/dusk coral-gold bounce light)
-    float bottomRim = clamp((softAlpha - aDown) * 2.1, 0.0, 1.0) * smoothstep(0.35, 0.92, v_localUv.y);
-
-    // Extract clean internal painted puff relief while neutralizing the raw PNG's dark border line
-    float rawLuma = dot(center.rgb, vec3(0.299, 0.587, 0.114));
-    float interiorMask = smoothstep(0.32, 0.88, center.a);
-    float puffRelief = mix(0.90, clamp(rawLuma * 1.06, 0.55, 1.08), interiorMask);
+    // Top-facing billow crown rim & horizon-facing underside rim
+    float topRim = clamp(diffUp * 2.35, 0.0, 1.0) * smoothstep(0.72, 0.12, v_localUv.y);
+    float bottomRim = baked.b * smoothstep(0.35, 0.92, v_localUv.y);
+    float puffRelief = 0.55 + baked.r * 0.53;
+    float interiorMask = smoothstep(0.32, 0.88, softAlpha);
 
     // 4-stop vertical cloud body gradient:
     // 0.0 (crown) -> upper billow -> heart -> shadowed anvil base
@@ -534,6 +541,15 @@ export const PARTICLE_FRAGMENT_SHADER = `
     vec2 p = v_uv * 2.0 - 1.0; // (-1..1, -1..1)
     float r = length(p);
     int kind = int(v_kind + 0.5);
+
+    // Early-discard corners outside the unit circle for circular/radial SDF kinds
+    // (skips ~21.5% of fragments on stars, moon, ripples, snow, motes, fireflies, droplets, frost).
+    if (
+      r >= 1.0 &&
+      (kind == 0 || kind == 1 || kind == 3 || kind == 6 || kind == 7 || kind == 10 || kind == 11 || kind == 13 || kind == 16)
+    ) {
+      discard;
+    }
 
     vec3 col = vec3(0.0);
     float alpha = 0.0;

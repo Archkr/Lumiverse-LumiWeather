@@ -398,7 +398,7 @@ function createImpulseResponse(ctx: AudioContext, seconds: number): AudioBuffer 
       // High frequencies decay faster than lows, like real air absorption.
       const alpha = 0.92 - 0.82 * t;
       smoothed += alpha * (Math.random() * 2 - 1 - smoothed);
-      const value = smoothed * Math.pow(1 - t, 3.2);
+      const value = smoothed * Math.pow(1 - t, 2.6);
       data[index] = value;
       energy += value * value;
     }
@@ -739,8 +739,19 @@ const AURORA_SPARKLE_NOTES = [440, 554.37, 659.25, 830.61, 987.77, 1108.73] as c
 const FIREFLY_SPARKLE_NOTES = [1318.51, 1479.98, 1661.22, 1975.53, 2217.46, 2637.02, 2959.96] as const;
 const BLOSSOM_SPARKLE_NOTES = [587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51] as const;
 
-const SCHEDULER_INTERVAL_MS = 80;
-const LOOKAHEAD_SECONDS = 0.22;
+const SCHEDULER_INTERVAL_MS = 180;
+const LOOKAHEAD_SECONDS = 0.42;
+const BRANCH_IDLE_STOP_MS = 2600;
+
+type BranchKey = "rainWash" | "rainPatter" | "wind" | "whistle" | "grit" | "air" | "ember" | "pad";
+type ThunderDistanceBucket = "close" | "mid" | "far";
+
+interface LoopBranch {
+  active: boolean;
+  stopTimer: number | null;
+  sources: AudioScheduledSourceNode[];
+  nodes: AudioNode[];
+}
 
 interface PanNode {
   node: AudioNode;
@@ -767,6 +778,10 @@ interface SoundscapeGraph {
   master: GainNode;
   occlusion: BiquadFilterNode;
   wetOcclusion: BiquadFilterNode;
+  reverbSend: GainNode;
+  convolver: ConvolverNode;
+  reverbConnected: boolean;
+  reverbStopTimer: number | null;
   reverbReturn: GainNode;
   /** Outside-world sounds: passes through wall occlusion. */
   bus: GainNode;
@@ -777,10 +792,16 @@ interface SoundscapeGraph {
   white: AudioBuffer;
   brown: AudioBuffer;
   pink: AudioBuffer;
+  rainLight: AudioBuffer | null;
+  rainDense: AudioBuffer | null;
+  fireBed: AudioBuffer | null;
+  thunderPool: Partial<Record<ThunderDistanceBucket, AudioBuffer>>;
 
   rainGain: GainNode;
   rainSwell: GainNode;
   rainWashFilter: BiquadFilterNode;
+  rainLowFilter: BiquadFilterNode;
+  rainHighFilter: BiquadFilterNode;
   patterGain: GainNode;
   patterLightGain: GainNode;
   patterDenseGain: GainNode;
@@ -796,6 +817,7 @@ interface SoundscapeGraph {
   whistleGust: GainNode;
   whistleFilter: BiquadFilterNode;
   gritGain: GainNode;
+  gritFilter: BiquadFilterNode;
   gritGust: GainNode;
 
   airGain: GainNode;
@@ -804,6 +826,9 @@ interface SoundscapeGraph {
 
   emberGain: GainNode;
   fireFlicker: GainNode;
+  emberLowFilter: BiquadFilterNode;
+  emberMidFilter: BiquadFilterNode;
+  emberBedFilter: BiquadFilterNode;
 
   padGain: GainNode;
   padFilter: BiquadFilterNode;
@@ -813,6 +838,8 @@ interface SoundscapeGraph {
   cricketGain: GainNode;
   birdGain: GainNode;
   caveGain: GainNode;
+
+  branches: Record<BranchKey, LoopBranch>;
 }
 
 type GeneratorKey = "gust" | "rainSwell" | "air" | "flicker" | "pad" | "drops" | "pops" | "sparkle" | "bird" | "cave";
@@ -833,7 +860,6 @@ const GENERATOR_KEYS: GeneratorKey[] = ["gust", "rainSwell", "air", "flicker", "
  */
 export class WeatherSoundscape {
   private graph: SoundscapeGraph | null = null;
-  private sources: AudioScheduledSourceNode[] = [];
   private schedulerTimer: number | null = null;
   private suspendTimer: number | null = null;
   private lastProfile: SoundscapeProfile | null = null;
@@ -913,6 +939,18 @@ export class WeatherSoundscape {
       g.cricketGain.gain.setTargetAtTime(profile.cricketGain, now, 1.2);
       g.birdGain.gain.setTargetAtTime(profile.birdGain, now, 1.2);
       g.caveGain.gain.setTargetAtTime(profile.caveDripGain, now, layer);
+
+      // Gate continuous DSP branches and convolution reverb so silent layers
+      // stop running on the WebAudio render thread instead of processing zeros.
+      this.syncReverbActive(g, profile.reverbWet > 0.001);
+      this.syncBranchActive(g, "rainWash", profile.rainWashGain > 0.0005);
+      this.syncBranchActive(g, "rainPatter", profile.rainPatterGain > 0.0005);
+      this.syncBranchActive(g, "wind", profile.windGain > 0.0005);
+      this.syncBranchActive(g, "whistle", profile.windWhistleGain > 0.0005);
+      this.syncBranchActive(g, "grit", profile.sandGritGain > 0.0005);
+      this.syncBranchActive(g, "air", profile.airBedGain > 0.0005);
+      this.syncBranchActive(g, "ember", profile.emberCrackleGain > 0.0005);
+      this.syncBranchActive(g, "pad", profile.shimmerDroneGain > 0.0005);
     } catch {
       // Ignore transient automation errors while the context is closing.
     }
@@ -940,11 +978,19 @@ export class WeatherSoundscape {
       const loudness = profile.thunderGainScale * (1 - distance * 0.52);
       const basePan = clamp((boltPositionPercent - 50) / 65, -0.75, 0.75);
 
-      const strikeBuffer = renderThunderBuffer(ctx, distance);
-      const duration = strikeBuffer.duration;
+      const bucket: ThunderDistanceBucket = distance < 0.34 ? "close" : distance < 0.68 ? "mid" : "far";
+      let strikeBuffer = g.thunderPool[bucket];
+      if (!strikeBuffer) {
+        const canonicalDistance = bucket === "close" ? 0.16 : bucket === "mid" ? 0.5 : 0.84;
+        strikeBuffer = renderThunderBuffer(ctx, canonicalDistance);
+        g.thunderPool[bucket] = strikeBuffer;
+      }
+      const playbackRate = rand(0.88, 1.12);
+      const duration = strikeBuffer.duration / playbackRate;
 
       const source = ctx.createBufferSource();
       source.buffer = strikeBuffer;
+      source.playbackRate.value = playbackRate;
 
       const out = ctx.createGain();
       out.gain.value = loudness;
@@ -974,16 +1020,14 @@ export class WeatherSoundscape {
       window.clearTimeout(this.suspendTimer);
       this.suspendTimer = null;
     }
-    for (const source of this.sources) {
-      try {
-        source.stop();
-        source.disconnect();
-      } catch {
-        // Already stopped
-      }
-    }
-    this.sources = [];
     if (this.graph) {
+      if (this.graph.reverbStopTimer !== null) {
+        window.clearTimeout(this.graph.reverbStopTimer);
+        this.graph.reverbStopTimer = null;
+      }
+      for (const branch of Object.values(this.graph.branches)) {
+        this.stopBranchNow(branch);
+      }
       void this.graph.ctx.close().catch(() => {});
       this.graph = null;
     }
@@ -1474,6 +1518,145 @@ export class WeatherSoundscape {
   // Graph construction
   // --------------------------------------------------------------------------
 
+  private syncReverbActive(g: SoundscapeGraph, active: boolean): void {
+    if (active) {
+      if (g.reverbStopTimer !== null) {
+        window.clearTimeout(g.reverbStopTimer);
+        g.reverbStopTimer = null;
+      }
+      if (!g.reverbConnected) {
+        g.reverbSend.connect(g.convolver);
+        g.reverbConnected = true;
+      }
+      return;
+    }
+    if (g.reverbConnected && g.reverbStopTimer === null) {
+      g.reverbStopTimer = window.setTimeout(() => {
+        g.reverbStopTimer = null;
+        if (this.destroyed || !this.graph || this.graph !== g) return;
+        if ((this.lastProfile?.reverbWet ?? 0) > 0.001) return;
+        try {
+          g.reverbSend.disconnect(g.convolver);
+          g.reverbConnected = false;
+        } catch {
+          g.reverbConnected = false;
+        }
+      }, BRANCH_IDLE_STOP_MS);
+    }
+  }
+
+  private stopBranchNow(branch: LoopBranch): void {
+    if (branch.stopTimer !== null) {
+      window.clearTimeout(branch.stopTimer);
+      branch.stopTimer = null;
+    }
+    for (const source of branch.sources) {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+        // Already stopped
+      }
+    }
+    for (const node of branch.nodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // Already disconnected
+      }
+    }
+    branch.sources = [];
+    branch.nodes = [];
+    branch.active = false;
+  }
+
+  private syncBranchActive(g: SoundscapeGraph, key: BranchKey, active: boolean): void {
+    const branch = g.branches[key];
+    if (active) {
+      if (branch.stopTimer !== null) {
+        window.clearTimeout(branch.stopTimer);
+        branch.stopTimer = null;
+      }
+      if (!branch.active) {
+        this.startBranch(g, key);
+      }
+      return;
+    }
+
+    if (branch.active && branch.stopTimer === null) {
+      branch.stopTimer = window.setTimeout(() => {
+        branch.stopTimer = null;
+        if (this.destroyed || this.graph !== g) return;
+        this.stopBranchNow(branch);
+        if (key === "pad") g.padVoices = [];
+      }, BRANCH_IDLE_STOP_MS);
+    }
+  }
+
+  private startBranch(g: SoundscapeGraph, key: BranchKey): void {
+    const branch = g.branches[key];
+    const audio = g.ctx;
+    const startLoop = (buffer: AudioBuffer, rate: number, destination: AudioNode): void => {
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.playbackRate.value = rate;
+      source.connect(destination);
+      source.start(0, Math.random() * (buffer.duration || 1));
+      branch.sources.push(source);
+    };
+
+    switch (key) {
+      case "rainWash":
+        startLoop(g.pink, 1, g.rainWashFilter);
+        startLoop(g.brown, 1.05, g.rainLowFilter);
+        startLoop(g.pink, 0.93, g.rainHighFilter);
+        break;
+      case "rainPatter":
+        if (!g.rainLight) g.rainLight = createRainTextureBuffer(audio, 6.7, 260);
+        if (!g.rainDense) g.rainDense = createRainTextureBuffer(audio, 5.9, 1350);
+        startLoop(g.rainLight, 1, g.patterLightGain);
+        startLoop(g.rainDense, 1, g.patterDenseGain);
+        break;
+      case "wind":
+        startLoop(g.brown, 1, g.windFilter);
+        break;
+      case "whistle":
+        startLoop(g.pink, 1.07, g.whistleFilter);
+        break;
+      case "grit":
+        startLoop(g.pink, 1.13, g.gritFilter);
+        break;
+      case "air":
+        startLoop(g.pink, 0.81, g.airFilter);
+        break;
+      case "ember":
+        if (!g.fireBed) g.fireBed = createFireBedBuffer(audio, 7.3);
+        startLoop(g.brown, 0.88, g.emberLowFilter);
+        startLoop(g.pink, 0.94, g.emberMidFilter);
+        startLoop(g.fireBed, 0.96, g.emberBedFilter);
+        break;
+      case "pad": {
+        const voices: PadVoice[] = PAD_FREQUENCIES.map((frequency, index) => {
+          const osc = audio.createOscillator();
+          osc.type = index === 0 ? "triangle" : "sine";
+          osc.frequency.value = frequency;
+          const gain = audio.createGain();
+          gain.gain.value = 0.15;
+          osc.connect(gain);
+          gain.connect(g.padFilter);
+          osc.start(0);
+          branch.sources.push(osc);
+          branch.nodes.push(gain);
+          return { osc, gain };
+        });
+        g.padVoices = voices;
+        break;
+      }
+    }
+    branch.active = true;
+  }
+
   private ensureGraph(): boolean {
     if (this.graph) return true;
     const Ctor = resolveAudioContextConstructor();
@@ -1485,12 +1668,11 @@ export class WeatherSoundscape {
       const audio = ctx;
 
       // Distinct, non-multiple loop lengths so beds never phase-align audibly.
+      // Heavy granular textures (`rainLight`, `rainDense`, `fireBed`) are built
+      // lazily only when a scene actually uses rain or embers.
       const pink = createNoiseBuffer(audio, 11.3, "pink");
       const brown = createNoiseBuffer(audio, 9.7, "brown");
       const white = createNoiseBuffer(audio, 2.5, "white", 1);
-      const rainLight = createRainTextureBuffer(audio, 6.7, 260);
-      const rainDense = createRainTextureBuffer(audio, 5.9, 1350);
-      const fireBed = createFireBedBuffer(audio, 7.3);
 
       const gainNode = (value = 0): GainNode => {
         const node = audio.createGain();
@@ -1502,13 +1684,6 @@ export class WeatherSoundscape {
         node.type = type;
         node.frequency.value = frequency;
         node.Q.value = q;
-        return node;
-      };
-      const loop = (buffer: AudioBuffer, rate = 1): AudioBufferSourceNode => {
-        const node = audio.createBufferSource();
-        node.buffer = buffer;
-        node.loop = true;
-        node.playbackRate.value = rate;
         return node;
       };
       const chain = (...nodes: AudioNode[]): void => {
@@ -1530,7 +1705,7 @@ export class WeatherSoundscape {
       const reverbSend = gainNode(1);
       const convolver = audio.createConvolver();
       convolver.normalize = false;
-      convolver.buffer = createImpulseResponse(audio, 3.2);
+      convolver.buffer = createImpulseResponse(audio, 1.4);
       const reverbReturn = gainNode(0.12);
       chain(reverbSend, convolver, reverbReturn, master);
 
@@ -1547,31 +1722,25 @@ export class WeatherSoundscape {
       nearBus.connect(master);
       nearBus.connect(reverbSend);
 
-      const startables: AudioScheduledSourceNode[] = [];
-      const loopStarts = new Map<AudioBufferSourceNode, number>();
-      const addLoop = (source: AudioBufferSourceNode): AudioBufferSourceNode => {
-        startables.push(source);
-        loopStarts.set(source, Math.random() * (source.buffer?.duration ?? 1));
-        return source;
-      };
-
       // ---- Rain: wash + low body + airy hiss, all under one slow "swell" ----
       const rainGain = gainNode(0);
       const rainSwell = gainNode(1);
       const rainWashFilter = filterNode("bandpass", 1350, 0.55);
-      chain(addLoop(loop(pink)), rainWashFilter, rainSwell);
-      chain(addLoop(loop(brown, 1.05)), filterNode("lowpass", 520), gainNode(0.55), rainSwell);
-      chain(addLoop(loop(pink, 0.93)), filterNode("highpass", 4800), gainNode(0.22), rainSwell);
+      const rainLowFilter = filterNode("lowpass", 520);
+      const rainHighFilter = filterNode("highpass", 4800);
+      chain(rainWashFilter, rainSwell);
+      chain(rainLowFilter, gainNode(0.55), rainSwell);
+      chain(rainHighFilter, gainNode(0.22), rainSwell);
       chain(rainSwell, rainGain, bus);
 
-      // Ground rain texture: two pre-rendered micro-impact beds (sparse shower + dense downpour)
+      // Ground rain texture: two lazily pre-rendered micro-impact beds
       // crossfaded by `rainDensity`, plus soft discrete foreground droplets.
       const patterGain = gainNode(0);
       const patterLightGain = gainNode(1);
       const patterDenseGain = gainNode(0);
       const patterFilter = filterNode("bandpass", 1950, 0.65);
-      chain(addLoop(loop(rainLight)), patterLightGain, patterFilter);
-      chain(addLoop(loop(rainDense)), patterDenseGain, patterFilter);
+      patterLightGain.connect(patterFilter);
+      patterDenseGain.connect(patterFilter);
       chain(patterFilter, patterGain, bus);
       const dropsGain = gainNode(0);
       dropsGain.connect(bus);
@@ -1584,44 +1753,39 @@ export class WeatherSoundscape {
       const windGust = gainNode(1);
       const windFilter = filterNode("bandpass", 220, 1.4);
       const windPanNode = this.createPannerFor(audio, 0);
-      chain(addLoop(loop(brown)), windFilter, windGust, windPanNode.node, windGain, bus);
+      chain(windFilter, windGust, windPanNode.node, windGain, bus);
 
       const whistleGain = gainNode(0);
       const whistleGust = gainNode(0);
       const whistleFilter = filterNode("bandpass", 700, 9);
-      chain(addLoop(loop(pink, 1.07)), whistleFilter, whistleGust, whistleGain, bus);
+      chain(whistleFilter, whistleGust, whistleGain, bus);
 
       const gritGain = gainNode(0);
+      const gritFilter = filterNode("highpass", 2600);
       const gritGust = gainNode(1);
-      chain(addLoop(loop(pink, 1.13)), filterNode("highpass", 2600), gritGust, gritGain, bus);
+      chain(gritFilter, gritGust, gritGain, bus);
 
       // ---- Air / room tone ----
       const airGain = gainNode(0);
       const airDrift = gainNode(1);
       const airFilter = filterNode("lowpass", 900, 0.3);
-      chain(addLoop(loop(pink, 0.81)), airFilter, airDrift, airGain, bus);
+      chain(airFilter, airDrift, airGain, bus);
 
       // ---- Embers: warm hearth draft + glowing coal rumble + resin/wood bed + sparse pops ----
       const emberGain = gainNode(0);
       const fireFlicker = gainNode(1);
-      chain(addLoop(loop(brown, 0.88)), filterNode("lowpass", 220), gainNode(0.95), fireFlicker);
-      chain(addLoop(loop(pink, 0.94)), filterNode("bandpass", 420, 0.75), gainNode(0.42), fireFlicker);
+      const emberLowFilter = filterNode("lowpass", 220);
+      const emberMidFilter = filterNode("bandpass", 420, 0.75);
+      const emberBedFilter = filterNode("lowpass", 2400);
+      chain(emberLowFilter, gainNode(0.95), fireFlicker);
+      chain(emberMidFilter, gainNode(0.42), fireFlicker);
       chain(fireFlicker, emberGain);
-      chain(addLoop(loop(fireBed, 0.96)), filterNode("lowpass", 2400), gainNode(0.65), emberGain);
+      chain(emberBedFilter, gainNode(0.65), emberGain);
       emberGain.connect(bus);
 
-      // ---- Shimmer pad: slowly drifting detuned partials ----
+      // ---- Shimmer pad: slowly drifting detuned partials (started lazily) ----
       const padGain = gainNode(0);
       const padFilter = filterNode("lowpass", 1400, 0.4);
-      const padVoices: PadVoice[] = PAD_FREQUENCIES.map((frequency, index) => {
-        const osc = audio.createOscillator();
-        osc.type = index === 0 ? "triangle" : "sine";
-        osc.frequency.value = frequency;
-        const gain = gainNode(0.15);
-        chain(osc, gain, padFilter);
-        startables.push(osc);
-        return { osc, gain };
-      });
       chain(padFilter, padGain, wetBus);
       const sparkleGain = gainNode(0);
       sparkleGain.connect(wetBus);
@@ -1634,18 +1798,22 @@ export class WeatherSoundscape {
       const caveGain = gainNode(0);
       caveGain.connect(nearBus);
 
-      for (const source of startables) {
-        const offset = loopStarts.get(source as AudioBufferSourceNode);
-        if (offset !== undefined) (source as AudioBufferSourceNode).start(0, offset);
-        else source.start(0);
-        this.sources.push(source);
-      }
+      const emptyBranch = (): LoopBranch => ({
+        active: false,
+        stopTimer: null,
+        sources: [],
+        nodes: [],
+      });
 
       this.graph = {
         ctx: audio,
         master,
         occlusion,
         wetOcclusion,
+        reverbSend,
+        convolver,
+        reverbConnected: true,
+        reverbStopTimer: null,
         reverbReturn,
         bus,
         wetBus,
@@ -1653,9 +1821,15 @@ export class WeatherSoundscape {
         white,
         brown,
         pink,
+        rainLight: null,
+        rainDense: null,
+        fireBed: null,
+        thunderPool: {},
         rainGain,
         rainSwell,
         rainWashFilter,
+        rainLowFilter,
+        rainHighFilter,
         patterGain,
         patterLightGain,
         patterDenseGain,
@@ -1670,31 +1844,37 @@ export class WeatherSoundscape {
         whistleGust,
         whistleFilter,
         gritGain,
+        gritFilter,
         gritGust,
         airGain,
         airDrift,
         airFilter,
         emberGain,
         fireFlicker,
+        emberLowFilter,
+        emberMidFilter,
+        emberBedFilter,
         padGain,
         padFilter,
-        padVoices,
+        padVoices: [],
         sparkleGain,
         cricketGain,
         birdGain,
         caveGain,
+        branches: {
+          rainWash: emptyBranch(),
+          rainPatter: emptyBranch(),
+          wind: emptyBranch(),
+          whistle: emptyBranch(),
+          grit: emptyBranch(),
+          air: emptyBranch(),
+          ember: emptyBranch(),
+          pad: emptyBranch(),
+        },
       };
       this.appliedWindCenter = 0;
       return true;
     } catch {
-      for (const source of this.sources) {
-        try {
-          source.stop();
-        } catch {
-          // Never started
-        }
-      }
-      this.sources = [];
       if (ctx) void ctx.close().catch(() => {});
       this.graph = null;
       return false;

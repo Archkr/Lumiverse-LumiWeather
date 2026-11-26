@@ -103,6 +103,7 @@ type HudElements = {
   wind: HTMLDivElement;
   icon: HTMLDivElement;
   temp: HTMLDivElement;
+  summaryViewport: HTMLDivElement;
   summary: HTMLDivElement;
   source: HTMLSpanElement;
   phenomenonBadge: HTMLSpanElement;
@@ -658,6 +659,7 @@ function createHudWidget(
     wind,
     icon,
     temp,
+    summaryViewport,
     summary,
     source,
     phenomenonBadge,
@@ -801,6 +803,7 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.root.dataset.timePhase = phase;
   hud.root.dataset.layer = prefs.layerMode;
   hud.root.dataset.paused = prefs.pauseEffects ? "true" : "false";
+  hud.root.dataset.effects = prefs.effectsEnabled ? "true" : "false";
   hud.root.style.setProperty("--weather-hud-scene-intensity", sceneIntensity.toFixed(2));
 
   // Solar altitude is published for stylesheet use: -90 is solar midnight and
@@ -826,17 +829,41 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     delete hud.phenomenonBadge.dataset.phenomenon;
   }
 
+  const iconKey = `${displayState.condition}:${phase}`;
   const iconMarkup = conditionIcon(displayState.condition, phase);
-  hud.icon.innerHTML = iconMarkup;
+  if (hud.icon.dataset.iconKey !== iconKey) {
+    hud.icon.dataset.iconKey = iconKey;
+    hud.icon.innerHTML = iconMarkup;
+  }
   const iconLabel = conditionIconLabel(displayState.condition, phase);
   hud.icon.setAttribute("role", "img");
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
-  hud.summary.textContent = summaryText;
-  hud.summary.title = summaryText;
-  hud.summary.dataset.tickerText = summaryText;
+  const summaryChanged = hud.summary.dataset.tickerText !== summaryText;
+  if (summaryChanged) {
+    hud.summary.textContent = summaryText;
+    hud.summary.title = summaryText;
+    hud.summary.dataset.tickerText = summaryText;
+    // Measure overflow only when summary text changes so short summaries stay static
+    // and never trigger an infinite CSS ticker animation on the compositor.
+    hud.summaryViewport.dataset.overflow = "false";
+    const viewportW = hud.summaryViewport.clientWidth;
+    if (viewportW > 0) {
+      if (hud.summary.scrollWidth > viewportW + 1) {
+        hud.summaryViewport.dataset.overflow = "true";
+      }
+    } else if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        if (!hud.summaryViewport.isConnected) return;
+        const measuredW = hud.summaryViewport.clientWidth;
+        if (measuredW > 0 && hud.summary.scrollWidth > measuredW + 1) {
+          hud.summaryViewport.dataset.overflow = "true";
+        }
+      });
+    }
+  }
   const windBase = `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`;
   const windExtras: string[] = [];
   if (exposure !== "outdoor") windExtras.push(exposure);
@@ -861,7 +888,11 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
       : "Waiting";
   const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
   hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
-  hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  const toggleIconKey = mobilePanel ? "close" : expanded ? "up" : "down";
+  if (hud.drawerToggleIcon.dataset.toggleIconKey !== toggleIconKey) {
+    hud.drawerToggleIcon.dataset.toggleIconKey = toggleIconKey;
+    hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  }
   hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   hud.drawerToggle.setAttribute(
     "aria-label",
@@ -869,7 +900,10 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   );
 
   if (hud.launcherButton && hud.launcherIcon) {
-    hud.launcherIcon.innerHTML = iconMarkup;
+    if (hud.launcherIcon.dataset.iconKey !== iconKey) {
+      hud.launcherIcon.dataset.iconKey = iconKey;
+      hud.launcherIcon.innerHTML = iconMarkup;
+    }
     const launcherLabel = state
       ? `Open LumiWeather: ${displayState.location}, ${displayState.condition}, ${formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit)}`
       : "Open LumiWeather: waiting for a weather update";
@@ -1179,18 +1213,31 @@ export function setup(ctx: SpindleFrontendContext) {
   };
 
   let hostObserver: MutationObserver | null = null;
+  let hostRetryTimer: number | null = null;
   const stopHostObserver = () => {
     hostObserver?.disconnect();
     hostObserver = null;
+    if (hostRetryTimer !== null) {
+      window.clearTimeout(hostRetryTimer);
+      hostRetryTimer = null;
+    }
   };
 
   const ensureHostObserver = () => {
+    if (!activeChatId || !currentPrefs.effectsEnabled) {
+      stopHostObserver();
+      return;
+    }
     if (hostObserver || !document.body) return;
     // Chat/background hosts can be replaced without a route or viewport change.
     // Ignore mutations inside our own FX/HUD roots or when both hosts remain
     // connected with our roots attached, avoiding expensive DOM queries on every
     // streamed chat token.
     hostObserver = new MutationObserver((records) => {
+      if (!activeChatId || !currentPrefs.effectsEnabled) {
+        stopHostObserver();
+        return;
+      }
       if (
         backFx.host &&
         backFx.host.isConnected &&
@@ -1212,13 +1259,26 @@ export function setup(ctx: SpindleFrontendContext) {
           }
         }
         if (!relevant) return;
+        queueFxRootAttach();
+        return;
       }
-      queueFxRootAttach();
+      // Hosts not mounted yet (e.g. view transitioning): debounce queries instead
+      // of running `resolveSceneHosts()` on every animation frame.
+      if (hostRetryTimer === null && hostSyncFrame === null) {
+        hostRetryTimer = window.setTimeout(() => {
+          hostRetryTimer = null;
+          queueFxRootAttach();
+        }, 200);
+      }
     });
     hostObserver.observe(document.body, { childList: true, subtree: true });
   };
 
   const queueFxRootAttach = () => {
+    if (hostRetryTimer !== null) {
+      window.clearTimeout(hostRetryTimer);
+      hostRetryTimer = null;
+    }
     if (hostSyncFrame !== null) return;
     hostSyncFrame = window.requestAnimationFrame(() => {
       const changed = attachFxRoots();
@@ -1447,17 +1507,25 @@ export function setup(ctx: SpindleFrontendContext) {
     applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, showFront, scheduleStormFlash);
     soundscape.sync(currentState, currentPrefs, showEffects);
     scheduleStormFlash();
+    ensureHostObserver();
   };
 
-  // The one-second tick only exists to advance a live clock. All other HUD fields
-  // are pushed by scene changes, so a tick skips the full sync whenever both clock
-  // sources are frozen and nothing the timer affects depends on the wall clock.
+  // The one-second tick only exists to advance a live clock. Only update the
+  // clock text nodes unless the wall-clock time phase itself rolls over,
+  // avoiding full HUD DOM/SVG rebuilds every second during manual scene locks.
   const clockTimer = window.setInterval(() => {
-    if (!hud) return;
+    if (!hud || document.visibilityState === "hidden") return;
     const clockMode = currentPrefs.clockMode;
     if (clockMode === "story") return;
     if (clockMode === "auto" && currentState?.source !== "manual") return;
-    syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
+    const displayState = currentState ?? makeDefaultWeatherState();
+    const liveDate = resolveClockDate(displayState, clockMode);
+    const nextPhase = resolveHudTimePhase(displayState, liveDate);
+    if (hud.root.dataset.timePhase !== nextPhase) {
+      syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
+      return;
+    }
+    syncHudClock(hud, displayState, currentState !== null, liveDate);
   }, 1000);
   cleanups.push(() => window.clearInterval(clockTimer));
 

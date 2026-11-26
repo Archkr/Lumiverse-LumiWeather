@@ -104,16 +104,30 @@ var ATMOSPHERE_FRAGMENT_SHADER = `
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
   }
 
-  mat2 rot2(float a) {
-    float c = cos(a);
-    float s = sin(a);
-    return mat2(c, -s, s, c);
+  float fbm2(vec2 p) {
+    mat2 m = mat2(0.87274, -0.48818, 0.48818, 0.87274);
+    float v = 0.52 * smoothNoise(p);
+    p = m * p * 2.03 + vec2(13.7, 7.9);
+    v += 0.26 * smoothNoise(p);
+    return v;
+  }
+
+  float fbm3(vec2 p) {
+    float v = 0.0;
+    float amp = 0.52;
+    mat2 m = mat2(0.87274, -0.48818, 0.48818, 0.87274);
+    for (int i = 0; i < 3; i++) {
+      v += amp * smoothNoise(p);
+      p = m * p * 2.03 + vec2(13.7, 7.9);
+      amp *= 0.5;
+    }
+    return v;
   }
 
   float fbm4(vec2 p) {
     float v = 0.0;
     float amp = 0.52;
-    mat2 m = rot2(0.51);
+    mat2 m = mat2(0.87274, -0.48818, 0.48818, 0.87274);
     for (int i = 0; i < 4; i++) {
       v += amp * smoothNoise(p);
       p = m * p * 2.03 + vec2(13.7, 7.9);
@@ -248,18 +262,19 @@ var ATMOSPHERE_FRAGMENT_SHADER = `
       composePremul(outRgb, outA, hCol, hAlpha, 0.25);
     }
 
-    // 7. Volumetric 4-octave domain-warped fog, rolling valley mist & haboob sandstorm
+    // 7. Volumetric domain-warped fog, rolling valley mist & haboob sandstorm
+    // Skip expensive multi-octave FBM in clear skies where ambient mist is trace (< 4.5%)
     float fogStrength = max(u_fogOpacity, u_mistOpacity * 0.78);
-    if (fogStrength > 0.004) {
+    if (fogStrength > 0.045) {
       vec2 p = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
       float speed = (0.036 + u_isSandstorm * 0.085) * u_windX;
       vec2 flow = vec2(speed * u_time, -0.012 * u_time);
 
       vec2 q = vec2(
-        fbm4(p * 1.65 - flow * 0.8),
-        fbm4(p * 1.65 + vec2(5.2, 1.3) - flow * 0.6)
+        fbm2(p * 1.65 - flow * 0.8),
+        fbm2(p * 1.65 + vec2(5.2, 1.3) - flow * 0.6)
       );
-      float farBank = fbm4(p * 1.35 + q * 0.85 - flow * 0.55);
+      float farBank = fbm3(p * 1.35 + q * 0.85 - flow * 0.55);
       float nearBank = fbm4(p * 2.65 + q * 1.25 - flow * 1.15);
 
       float fFar = smoothstep(0.30, 0.82, farBank);
@@ -286,6 +301,11 @@ var ATMOSPHERE_FRAGMENT_SHADER = `
 
       float fAlpha = clamp(density * fogStrength * 1.18, 0.0, 0.86);
       composePremul(outRgb, outA, fogCol, fAlpha, 0.08);
+    } else if (fogStrength > 0.004) {
+      float hazeGrad = smoothstep(0.28, 1.0, uv.y);
+      vec3 baseMist = mix(u_fogColor.rgb, u_mistColor.rgb, hazeGrad);
+      float fAlpha = clamp(hazeGrad * fogStrength * 0.82, 0.0, 0.12);
+      composePremul(outRgb, outA, baseMist, fAlpha, 0.08);
     }
 
     // 8. Subtle indoor windowpane glass reflection sheen & cool edge vignette
@@ -380,36 +400,23 @@ var CLOUD_FRAGMENT_SHADER = `
   uniform float u_frontMask;
 
   void main() {
-    // Multi-tap soft feather + contour rim detection within the sprite's padded atlas cell
-    vec2 stepY = vec2(0.0, 0.0085);
-    vec2 stepX = vec2(0.006, 0.0);
-
-    vec4 center = texture2D(u_atlas, v_atlasUv);
-    float aUp = texture2D(u_atlas, v_atlasUv - stepY).a;
-    float aDown = texture2D(u_atlas, v_atlasUv + stepY).a;
-    float aLeft = texture2D(u_atlas, v_atlasUv - stepX).a;
-    float aRight = texture2D(u_atlas, v_atlasUv + stepX).a;
-
-    // Softly feathered silhouette alpha (eliminates jagged or harsh outlines)
-    float softAlpha = center.a * 0.44 + (aUp + aDown + aLeft + aRight) * 0.14;
-
-    // Subtle offset atmospheric drop shadow beneath cloud base
-    float shadowSample = aUp * 0.65;
-    float dropShadow = clamp(shadowSample - softAlpha, 0.0, 1.0) * 0.22;
+    // Single texture tap: feathering, puff relief, and contour rims are pre-baked
+    // once into RGBA during atlas construction (R=relief, G=topRim/shadow, B=bottomRim, A=softAlpha).
+    vec4 baked = texture2D(u_atlas, v_atlasUv);
+    float softAlpha = baked.a;
+    float diffUp = (baked.g - 0.5) * 2.0;
+    float aUp = clamp(softAlpha - diffUp, 0.0, 1.0);
+    float dropShadow = clamp(aUp * 0.65 - softAlpha, 0.0, 1.0) * 0.22;
 
     if (softAlpha < 0.008 && dropShadow < 0.008) {
       discard;
     }
 
-    // Top-facing billow crown rim (where alpha transitions from sky above into cloud dome)
-    float topRim = clamp((softAlpha - aUp) * 2.35, 0.0, 1.0) * smoothstep(0.72, 0.12, v_localUv.y);
-    // Horizon-facing underside rim (for dawn/dusk coral-gold bounce light)
-    float bottomRim = clamp((softAlpha - aDown) * 2.1, 0.0, 1.0) * smoothstep(0.35, 0.92, v_localUv.y);
-
-    // Extract clean internal painted puff relief while neutralizing the raw PNG's dark border line
-    float rawLuma = dot(center.rgb, vec3(0.299, 0.587, 0.114));
-    float interiorMask = smoothstep(0.32, 0.88, center.a);
-    float puffRelief = mix(0.90, clamp(rawLuma * 1.06, 0.55, 1.08), interiorMask);
+    // Top-facing billow crown rim & horizon-facing underside rim
+    float topRim = clamp(diffUp * 2.35, 0.0, 1.0) * smoothstep(0.72, 0.12, v_localUv.y);
+    float bottomRim = baked.b * smoothstep(0.35, 0.92, v_localUv.y);
+    float puffRelief = 0.55 + baked.r * 0.53;
+    float interiorMask = smoothstep(0.32, 0.88, softAlpha);
 
     // 4-stop vertical cloud body gradient:
     // 0.0 (crown) -> upper billow -> heart -> shadowed anvil base
@@ -525,6 +532,15 @@ var PARTICLE_FRAGMENT_SHADER = `
     vec2 p = v_uv * 2.0 - 1.0; // (-1..1, -1..1)
     float r = length(p);
     int kind = int(v_kind + 0.5);
+
+    // Early-discard corners outside the unit circle for circular/radial SDF kinds
+    // (skips ~21.5% of fragments on stars, moon, ripples, snow, motes, fireflies, droplets, frost).
+    if (
+      r >= 1.0 &&
+      (kind == 0 || kind == 1 || kind == 3 || kind == 6 || kind == 7 || kind == 10 || kind == 11 || kind == 13 || kind == 16)
+    ) {
+      discard;
+    }
 
     vec3 col = vec3(0.0);
     float alpha = 0.0;
@@ -1518,7 +1534,7 @@ function resolveAtmosphereUniformTarget(state, tokens, prefs, kind) {
     skyOpacity: isFront && isBoth ? 0 : tokens.skyOpacity,
     glowOpacity: isFront && isBoth ? 0 : tokens.glowOpacity,
     beamOpacity: isFront && isBoth ? 0 : tokens.beamOpacity,
-    cloudOpacity: isFront && isBoth ? tokens.cloudOpacity * 0.24 : tokens.cloudOpacity,
+    cloudOpacity: isFront && isBoth ? tokens.cloudOpacity >= 0.08 ? tokens.cloudOpacity * 0.24 : 0 : tokens.cloudOpacity,
     horizonOpacity: isFront && isBoth ? 0 : tokens.horizonOpacity,
     mistOpacity: isFront && isBoth ? tokens.mistOpacity * 0.32 : tokens.mistOpacity,
     fogOpacity: isFront && isBoth ? tokens.fogOpacity * 0.28 : tokens.fogOpacity,
@@ -1621,6 +1637,103 @@ function evaluateLightningFlicker(ageSec) {
     return 0.38 + (ageSec - 0.28) / 0.07 * 0.26;
   return 0.64 * Math.pow(1 - (ageSec - 0.35) / 0.33, 1.8);
 }
+function smoothstepJs(edge0, edge1, x) {
+  const t = clamp((x - edge0) / Math.max(0.000001, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+function bakeCloudAtlasPixels(src, width, height, cols = ATLAS_COLS, rows = ATLAS_ROWS) {
+  const out = new Uint8ClampedArray(src.length);
+  const cellW = Math.floor(width / cols);
+  const cellH = Math.floor(height / rows);
+  const stepX = Math.max(1, Math.round(width * 0.006));
+  const stepY = Math.max(1, Math.round(height * 0.0085));
+  for (let row = 0;row < rows; row += 1) {
+    const y0 = row * cellH;
+    const y1 = Math.min(height - 1, (row + 1) * cellH - 1);
+    for (let col = 0;col < cols; col += 1) {
+      const x0 = col * cellW;
+      const x1 = Math.min(width - 1, (col + 1) * cellW - 1);
+      for (let y = y0;y <= y1; y += 1) {
+        const yUp = Math.max(y0, y - stepY);
+        const yDown = Math.min(y1, y + stepY);
+        const rowOff = y * width;
+        const upOff = yUp * width;
+        const downOff = yDown * width;
+        for (let x = x0;x <= x1; x += 1) {
+          const xLeft = Math.max(x0, x - stepX);
+          const xRight = Math.min(x1, x + stepX);
+          const idx = (rowOff + x) * 4;
+          const cA = src[idx + 3] / 255;
+          const aUp = src[(upOff + x) * 4 + 3] / 255;
+          const aDown = src[(downOff + x) * 4 + 3] / 255;
+          const aLeft = src[(rowOff + xLeft) * 4 + 3] / 255;
+          const aRight = src[(rowOff + xRight) * 4 + 3] / 255;
+          const softAlpha = cA * 0.44 + (aUp + aDown + aLeft + aRight) * 0.14;
+          if (softAlpha <= 0 && aUp <= 0 && aDown <= 0) {
+            out[idx] = 168;
+            out[idx + 1] = 128;
+            out[idx + 2] = 0;
+            out[idx + 3] = 0;
+            continue;
+          }
+          const rawLuma = (src[idx] * 0.299 + src[idx + 1] * 0.587 + src[idx + 2] * 0.114) / 255;
+          const interiorMask = smoothstepJs(0.32, 0.88, cA);
+          const puffRelief = lerp(0.9, clamp(rawLuma * 1.06, 0.55, 1.08), interiorMask);
+          out[idx] = Math.round(clamp((puffRelief - 0.55) / 0.53, 0, 1) * 255);
+          out[idx + 1] = Math.round(clamp(0.5 + (softAlpha - aUp) * 0.5, 0, 1) * 255);
+          out[idx + 2] = Math.round(clamp((softAlpha - aDown) * 2.1, 0, 1) * 255);
+          out[idx + 3] = Math.round(clamp(softAlpha, 0, 1) * 255);
+        }
+      }
+    }
+  }
+  return out;
+}
+function hasAtmosphereLayerContent(u, state, lightningActive) {
+  if (u.renderAtmosphereShader)
+    return true;
+  if (lightningActive)
+    return true;
+  if (u.cloudOpacity > 0.005 && u.isUnderground < 0.5)
+    return true;
+  if (u.starOpacity > 0.005 || u.moonlightOpacity > 0.005)
+    return true;
+  if (u.rainOpacity > 0.01 && u.rainDensity > 0.01 && u.isUnderground < 0.5)
+    return true;
+  if (u.snowOpacity > 0.01 && u.isUnderground < 0.5)
+    return true;
+  const phenomenon = state.phenomenon ?? "none";
+  const exposure = state.exposure ?? "outdoor";
+  if (u.moteOpacity > 0.008 && phenomenon === "none")
+    return true;
+  if (u.phenomenonOpacity > 0.01 && phenomenon !== "none" && phenomenon !== "aurora")
+    return true;
+  if (u.windowDropletOpacity > 0.01 && exposure === "indoor")
+    return true;
+  const condition = state.condition;
+  if (exposure !== "underground" && exposure !== "indoor" && (condition === "cloudy" || condition === "rain" || condition === "storm" || phenomenon === "sandstorm")) {
+    return true;
+  }
+  return false;
+}
+function resolveAtmosphereTargetFps(u, state, options) {
+  if (options.lightningActive)
+    return 60;
+  if (!options.windowFocused)
+    return options.transitioning ? 15 : 4;
+  if (options.transitioning)
+    return 30;
+  const phenomenon = state.phenomenon ?? "none";
+  const exposure = state.exposure ?? "outdoor";
+  const hasFastRain = u.rainOpacity > 0.01 && u.rainDensity > 0.01 && u.isUnderground < 0.5;
+  const hasSnow = u.snowOpacity > 0.01 && u.isUnderground < 0.5;
+  const hasFastPhenomenon = u.phenomenonOpacity > 0.01 && phenomenon !== "none" && phenomenon !== "aurora";
+  const hasWindowDrops = u.windowDropletOpacity > 0.01 && exposure === "indoor";
+  if (hasFastRain || hasSnow || hasFastPhenomenon || hasWindowDrops) {
+    return 30;
+  }
+  return 15;
+}
 var sharedCloudAtlasCanvas = null;
 var sharedCloudAtlasLoading = false;
 var activeEngines = new Set;
@@ -1639,7 +1752,7 @@ function ensureSharedCloudAtlas() {
       const canvas = document.createElement("canvas");
       canvas.width = ATLAS_SIZE;
       canvas.height = ATLAS_SIZE;
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (!ctx)
         return;
       ctx.clearRect(0, 0, ATLAS_SIZE, ATLAS_SIZE);
@@ -1657,6 +1770,10 @@ function ensureSharedCloudAtlas() {
         const row = Math.floor(i / ATLAS_COLS);
         ctx.drawImage(img, col * cellW + padX, row * cellH + padY, drawW, drawH);
       }
+      const raw = ctx.getImageData(0, 0, ATLAS_SIZE, ATLAS_SIZE);
+      const baked = bakeCloudAtlasPixels(raw.data, ATLAS_SIZE, ATLAS_SIZE, ATLAS_COLS, ATLAS_ROWS);
+      raw.data.set(baked);
+      ctx.putImageData(raw, 0, 0);
       sharedCloudAtlasCanvas = canvas;
       for (const engine of activeEngines) {
         engine.notifyAtlasReady();
@@ -1776,12 +1893,25 @@ class AtmosphereEngine {
   destroyed = false;
   dirty = true;
   animationFrame = null;
+  pacingTimer = null;
   elapsedSeconds = Math.random() * 40;
   lastTickMs = 0;
+  lastRenderMs = 0;
+  lastAtmoFboMs = 0;
+  atmoFboDirty = true;
+  cachedClientW = 0;
+  cachedClientH = 0;
+  cachedFxProfileW = 0;
+  cachedFxProfileH = 0;
+  cachedFxProfile = null;
   lastClientW = 1280;
+  windowFocused = typeof document === "undefined" ? true : document.hasFocus();
+  canvasHiddenForIdle = false;
   resizeObserver = null;
   onContextLost;
   onContextRestored;
+  onWindowFocus;
+  onWindowBlur;
   lightningAge = -1;
   lightningX = 0.5;
   lightningSegments = [];
@@ -1814,10 +1944,7 @@ class AtmosphereEngine {
       if (this.destroyed)
         return;
       this.resetGlHandles();
-      if (this.animationFrame !== null) {
-        window.cancelAnimationFrame(this.animationFrame);
-        this.animationFrame = null;
-      }
+      this.cancelScheduledFrame();
     };
     this.onContextRestored = () => {
       if (this.destroyed)
@@ -1827,15 +1954,44 @@ class AtmosphereEngine {
         this.fallbackCtx2d = this.canvas.getContext("2d", { alpha: true });
       }
       this.dirty = true;
+      this.atmoFboDirty = true;
       this.syncLoopState();
+    };
+    this.onWindowFocus = () => {
+      if (this.destroyed)
+        return;
+      this.windowFocused = true;
+      this.dirty = true;
+      this.atmoFboDirty = true;
+      this.cancelScheduledFrame();
+      this.syncLoopState();
+    };
+    this.onWindowBlur = () => {
+      if (this.destroyed)
+        return;
+      this.windowFocused = false;
     };
     this.canvas.addEventListener("webglcontextlost", this.onContextLost);
     this.canvas.addEventListener("webglcontextrestored", this.onContextRestored);
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", this.onWindowFocus);
+      window.addEventListener("blur", this.onWindowBlur);
+    }
     if (typeof ResizeObserver !== "undefined") {
-      this.resizeObserver = new ResizeObserver(() => {
+      this.resizeObserver = new ResizeObserver((entries) => {
         if (this.destroyed)
           return;
+        const entry = entries[entries.length - 1];
+        if (entry) {
+          const w = Math.round(entry.contentRect.width);
+          const h = Math.round(entry.contentRect.height);
+          if (w > 0 && h > 0) {
+            this.cachedClientW = w;
+            this.cachedClientH = h;
+          }
+        }
         this.dirty = true;
+        this.atmoFboDirty = true;
         this.syncLoopState();
       });
       this.resizeObserver.observe(this.root);
@@ -1869,6 +2025,7 @@ class AtmosphereEngine {
     this.paused = options.paused;
     this.reducedMotion = options.reducedMotion;
     this.dirty = true;
+    this.atmoFboDirty = true;
     this.syncLoopState();
   }
   triggerLightning(boltPositionPercent = 50) {
@@ -1877,13 +2034,25 @@ class AtmosphereEngine {
     this.lightningX = clamp(boltPositionPercent / 100, 0.12, 0.88);
     this.lightningAge = 0;
     if (this.kind === "back" || this.prefs?.layerMode === "front") {
-      const clientW = this.root.clientWidth || this.lastClientW;
+      const clientW = this.cachedClientW || this.root.clientWidth || this.lastClientW;
       this.generateLightningBolt(this.lightningX, clientW);
     } else {
       this.lightningSegments = [];
     }
     this.dirty = true;
+    this.atmoFboDirty = true;
+    this.cancelScheduledFrame();
     this.syncLoopState();
+  }
+  cancelScheduledFrame() {
+    if (this.animationFrame !== null) {
+      window.cancelAnimationFrame(this.animationFrame);
+      this.animationFrame = null;
+    }
+    if (this.pacingTimer !== null) {
+      window.clearTimeout(this.pacingTimer);
+      this.pacingTimer = null;
+    }
   }
   resetGlHandles() {
     this.gl = null;
@@ -1898,6 +2067,7 @@ class AtmosphereEngine {
     this.atmoFboTex = null;
     this.atmoFboW = 0;
     this.atmoFboH = 0;
+    this.atmoFboDirty = true;
     this.cloudAtlasTex = null;
     this.cloudAtlasUploaded = false;
     this.atmoLocs = {};
@@ -1916,10 +2086,11 @@ class AtmosphereEngine {
     }
     this.canvas.removeEventListener("webglcontextlost", this.onContextLost);
     this.canvas.removeEventListener("webglcontextrestored", this.onContextRestored);
-    if (this.animationFrame !== null) {
-      window.cancelAnimationFrame(this.animationFrame);
-      this.animationFrame = null;
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", this.onWindowFocus);
+      window.removeEventListener("blur", this.onWindowBlur);
     }
+    this.cancelScheduledFrame();
     const gl = this.gl;
     if (gl) {
       if (this.quadBuffer)
@@ -1942,9 +2113,27 @@ class AtmosphereEngine {
         gl.deleteProgram(this.cloudProgram);
       if (this.particleProgram)
         gl.deleteProgram(this.particleProgram);
+      try {
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
+      } catch {}
     }
     this.resetGlHandles();
     this.canvas.remove();
+  }
+  setCanvasIdleHidden(hidden) {
+    if (this.canvasHiddenForIdle === hidden)
+      return;
+    this.canvasHiddenForIdle = hidden;
+    this.canvas.style.visibility = hidden ? "hidden" : "";
+  }
+  clearCanvasOnce() {
+    if (this.gl) {
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+      this.gl.clearColor(0, 0, 0, 0);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    } else if (this.fallbackCtx2d) {
+      this.fallbackCtx2d.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
   }
   syncLoopState() {
     if (this.destroyed)
@@ -1952,28 +2141,56 @@ class AtmosphereEngine {
     const docVisible = typeof document === "undefined" || document.visibilityState !== "hidden";
     const shouldAnimate = this.visible && docVisible && !this.paused && !this.reducedMotion;
     if (!this.visible || !docVisible) {
-      if (this.animationFrame !== null) {
-        window.cancelAnimationFrame(this.animationFrame);
-        this.animationFrame = null;
-      }
+      this.cancelScheduledFrame();
       return;
     }
-    if (!shouldAnimate) {
-      if (this.animationFrame !== null) {
-        window.cancelAnimationFrame(this.animationFrame);
-        this.animationFrame = null;
+    const activeUniforms = this.targetUniforms ?? this.currentUniforms;
+    const hasContent = activeUniforms !== null && this.state !== null && (this.transitionDurationMs > 0 || hasAtmosphereLayerContent(activeUniforms, this.state, this.lightningAge >= 0));
+    if (!hasContent) {
+      this.cancelScheduledFrame();
+      if (this.dirty) {
+        this.clearCanvasOnce();
+        this.dirty = false;
       }
+      this.setCanvasIdleHidden(true);
+      return;
+    }
+    this.setCanvasIdleHidden(false);
+    if (!shouldAnimate) {
+      this.cancelScheduledFrame();
       if (this.dirty) {
         this.currentUniforms = this.targetUniforms;
-        this.renderFrame(0);
+        this.renderFrame(0, performance.now());
         this.dirty = false;
       }
       return;
     }
-    if (this.animationFrame === null) {
+    if (this.dirty) {
+      this.cancelScheduledFrame();
+      this.lastTickMs = performance.now();
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+      return;
+    }
+    if (this.animationFrame === null && this.pacingTimer === null) {
       this.lastTickMs = performance.now();
       this.animationFrame = window.requestAnimationFrame(this.tick);
     }
+  }
+  scheduleNextFrame(targetFps) {
+    if (this.destroyed || this.animationFrame !== null || this.pacingTimer !== null)
+      return;
+    if (targetFps >= 55) {
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+      return;
+    }
+    const intervalMs = 1000 / Math.max(1, targetFps);
+    const delayMs = Math.max(4, Math.floor(intervalMs - 12));
+    this.pacingTimer = window.setTimeout(() => {
+      this.pacingTimer = null;
+      if (this.destroyed || this.animationFrame !== null)
+        return;
+      this.animationFrame = window.requestAnimationFrame(this.tick);
+    }, delayMs);
   }
   tick(nowMs) {
     this.animationFrame = null;
@@ -1984,13 +2201,37 @@ class AtmosphereEngine {
       this.syncLoopState();
       return;
     }
-    const dt = clamp((nowMs - this.lastTickMs) / 1000, 0.001, 0.05);
+    const activeUniforms = this.currentUniforms ?? this.targetUniforms;
+    if (!activeUniforms || !this.state)
+      return;
+    const transitioning = this.transitionDurationMs > 0 && !!this.fromUniforms && !!this.targetUniforms;
+    const lightningActive = this.lightningAge >= 0;
+    if (!transitioning && !hasAtmosphereLayerContent(activeUniforms, this.state, lightningActive)) {
+      this.clearCanvasOnce();
+      this.setCanvasIdleHidden(true);
+      this.dirty = false;
+      return;
+    }
+    const targetFps = resolveAtmosphereTargetFps(activeUniforms, this.state, {
+      windowFocused: this.windowFocused,
+      lightningActive,
+      transitioning
+    });
+    const minIntervalMs = 1000 / Math.max(1, targetFps);
+    if (!this.dirty && this.lastRenderMs > 0 && nowMs - this.lastRenderMs < minIntervalMs - 2) {
+      this.scheduleNextFrame(targetFps);
+      return;
+    }
+    const maxDt = targetFps <= 6 ? 0.3 : targetFps <= 20 ? 0.12 : 0.06;
+    const dt = clamp((nowMs - this.lastTickMs) / 1000, 0.001, maxDt);
     this.lastTickMs = nowMs;
+    this.lastRenderMs = nowMs;
     this.elapsedSeconds += dt;
     this.dirty = false;
-    if (this.transitionDurationMs > 0 && this.fromUniforms && this.targetUniforms) {
+    if (transitioning && this.fromUniforms && this.targetUniforms) {
       const progress = clamp((nowMs - this.transitionStartMs) / this.transitionDurationMs, 0, 1);
       this.currentUniforms = interpolateUniforms(this.fromUniforms, this.targetUniforms, progress);
+      this.atmoFboDirty = true;
       if (progress >= 1) {
         this.transitionDurationMs = 0;
       }
@@ -1999,12 +2240,24 @@ class AtmosphereEngine {
     }
     if (this.lightningAge >= 0) {
       this.lightningAge += dt;
+      this.atmoFboDirty = true;
       if (this.lightningAge > 0.68) {
         this.lightningAge = -1;
       }
     }
-    this.renderFrame(dt);
-    this.animationFrame = window.requestAnimationFrame(this.tick);
+    this.renderFrame(dt, nowMs);
+    const nextUniforms = this.currentUniforms ?? this.targetUniforms;
+    if (nextUniforms && this.state && (this.transitionDurationMs > 0 || hasAtmosphereLayerContent(nextUniforms, this.state, this.lightningAge >= 0))) {
+      const nextFps = resolveAtmosphereTargetFps(nextUniforms, this.state, {
+        windowFocused: this.windowFocused,
+        lightningActive: this.lightningAge >= 0,
+        transitioning: this.transitionDurationMs > 0
+      });
+      this.scheduleNextFrame(nextFps);
+    } else {
+      this.clearCanvasOnce();
+      this.setCanvasIdleHidden(true);
+    }
   }
   initWebGL() {
     try {
@@ -2147,6 +2400,7 @@ class AtmosphereEngine {
     this.atmoFboTex = tex;
     this.atmoFboW = targetW;
     this.atmoFboH = targetH;
+    this.atmoFboDirty = true;
     return true;
   }
   ensureCloudAtlasTexture(gl) {
@@ -2347,23 +2601,33 @@ class AtmosphereEngine {
       y = nextY;
     }
   }
-  renderFrame(dt) {
+  renderFrame(dt, nowMs = performance.now()) {
     const u = this.currentUniforms;
     if (!u || !this.state)
       return;
-    const clientW = this.root.clientWidth || window.innerWidth || 1;
-    const clientH = this.root.clientHeight || window.innerHeight || 1;
+    const clientW = this.cachedClientW || this.root.clientWidth || window.innerWidth || 1;
+    const clientH = this.cachedClientH || this.root.clientHeight || window.innerHeight || 1;
     if (clientW < 2 || clientH < 2)
       return;
+    if (this.cachedClientW <= 0)
+      this.cachedClientW = clientW;
+    if (this.cachedClientH <= 0)
+      this.cachedClientH = clientH;
     this.lastClientW = clientW;
-    const fxProfile = resolveViewportFxProfile(clientW, clientH);
+    let fxProfile = this.cachedFxProfile;
+    if (!fxProfile || this.cachedFxProfileW !== clientW || this.cachedFxProfileH !== clientH) {
+      fxProfile = resolveViewportFxProfile(clientW, clientH);
+      this.cachedFxProfile = fxProfile;
+      this.cachedFxProfileW = clientW;
+      this.cachedFxProfileH = clientH;
+    }
     if (!this.gl) {
       this.renderHeadlessFallback(u, clientW, clientH);
       return;
     }
     const gl = this.gl;
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.35);
-    const maxMainPixels = 2400000;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.2);
+    const maxMainPixels = 1350000;
     const mainBudget = Math.sqrt(maxMainPixels / Math.max(1, clientW * clientH));
     const effDpr = Math.min(dpr, mainBudget);
     const mainW = Math.max(1, Math.floor(clientW * effDpr));
@@ -2376,17 +2640,23 @@ class AtmosphereEngine {
     const frontMaskFlag = this.kind === "front" ? 1 : 0;
     let fboReady = false;
     if (u.renderAtmosphereShader) {
-      const fboScale = Math.min(0.56, Math.sqrt(138000 / Math.max(1, clientW * clientH)));
+      const fboScale = Math.min(0.48, Math.sqrt(96000 / Math.max(1, clientW * clientH)));
       const fboW = Math.max(64, Math.floor(clientW * fboScale));
       const fboH = Math.max(64, Math.floor(clientH * fboScale));
       fboReady = this.ensureAtmosphereFbo(gl, fboW, fboH);
-      if (fboReady && this.atmoFbo) {
+      const fogStrength = Math.max(u.fogOpacity, u.mistOpacity * 0.78);
+      const hasAnimatedAtmo = fogStrength > 0.045 || u.auroraOpacity > 0.004 || u.glowOpacity > 0.003 || u.beamOpacity > 0.003;
+      const fboIntervalMs = hasAnimatedAtmo ? 80 : 250;
+      const shouldRedrawFbo = this.atmoFboDirty || lightningFlicker > 0.005 || this.transitionDurationMs > 0 || nowMs - this.lastAtmoFboMs >= fboIntervalMs;
+      if (fboReady && this.atmoFbo && shouldRedrawFbo) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.atmoFbo);
         gl.viewport(0, 0, fboW, fboH);
         gl.disable(gl.BLEND);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         this.drawAtmosphereFullscreen(gl, u, fboW, fboH, lightningFlicker, fxProfile);
+        this.atmoFboDirty = false;
+        this.lastAtmoFboMs = nowMs;
       }
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2810,7 +3080,8 @@ class AtmosphereEngine {
       }
     }
     if (u.snowOpacity > 0.01 && exposure !== "underground") {
-      const frostAlpha = clamp(u.snowOpacity * (this.kind === "front" ? 0.28 : 0.36), 0, 0.42);
+      const renderFrostCorners = this.kind === "back" || this.prefs?.layerMode !== "both";
+      const frostAlpha = renderFrostCorners ? clamp(u.snowOpacity * (this.kind === "front" ? 0.34 : 0.4), 0, 0.46) : 0;
       if (frostAlpha > 0.02) {
         const cornerW = fxProfile.frostCornerW;
         const cornerH = fxProfile.frostCornerH;
@@ -3003,6 +3274,17 @@ class AtmosphereEngine {
 var engines = new WeakMap;
 function updateAtmosphereEngine(root, kind, options) {
   let engine = engines.get(root);
+  if (!options.visible) {
+    if (engine) {
+      if (!options.prefs.effectsEnabled || options.prefs.layerMode !== "both" && options.prefs.layerMode !== kind) {
+        engine.destroy();
+        engines.delete(root);
+        return null;
+      }
+      engine.update(options);
+    }
+    return engine ?? null;
+  }
   if (!engine) {
     engine = new AtmosphereEngine(root, kind);
     engines.set(root, engine);
@@ -3775,7 +4057,7 @@ function createImpulseResponse(ctx, seconds) {
       const t = index / length;
       const alpha = 0.92 - 0.82 * t;
       smoothed += alpha * (Math.random() * 2 - 1 - smoothed);
-      const value = smoothed * Math.pow(1 - t, 3.2);
+      const value = smoothed * Math.pow(1 - t, 2.6);
       data[index] = value;
       energy += value * value;
     }
@@ -4052,13 +4334,13 @@ var PAD_FREQUENCIES = [110, 220, 277.18, 329.63, 493.88];
 var AURORA_SPARKLE_NOTES = [440, 554.37, 659.25, 830.61, 987.77, 1108.73];
 var FIREFLY_SPARKLE_NOTES = [1318.51, 1479.98, 1661.22, 1975.53, 2217.46, 2637.02, 2959.96];
 var BLOSSOM_SPARKLE_NOTES = [587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51];
-var SCHEDULER_INTERVAL_MS = 80;
-var LOOKAHEAD_SECONDS = 0.22;
+var SCHEDULER_INTERVAL_MS = 180;
+var LOOKAHEAD_SECONDS = 0.42;
+var BRANCH_IDLE_STOP_MS = 2600;
 var GENERATOR_KEYS = ["gust", "rainSwell", "air", "flicker", "pad", "drops", "pops", "sparkle", "bird", "cave"];
 
 class WeatherSoundscape {
   graph = null;
-  sources = [];
   schedulerTimer = null;
   suspendTimer = null;
   lastProfile = null;
@@ -4127,6 +4409,15 @@ class WeatherSoundscape {
       g.cricketGain.gain.setTargetAtTime(profile.cricketGain, now, 1.2);
       g.birdGain.gain.setTargetAtTime(profile.birdGain, now, 1.2);
       g.caveGain.gain.setTargetAtTime(profile.caveDripGain, now, layer);
+      this.syncReverbActive(g, profile.reverbWet > 0.001);
+      this.syncBranchActive(g, "rainWash", profile.rainWashGain > 0.0005);
+      this.syncBranchActive(g, "rainPatter", profile.rainPatterGain > 0.0005);
+      this.syncBranchActive(g, "wind", profile.windGain > 0.0005);
+      this.syncBranchActive(g, "whistle", profile.windWhistleGain > 0.0005);
+      this.syncBranchActive(g, "grit", profile.sandGritGain > 0.0005);
+      this.syncBranchActive(g, "air", profile.airBedGain > 0.0005);
+      this.syncBranchActive(g, "ember", profile.emberCrackleGain > 0.0005);
+      this.syncBranchActive(g, "pad", profile.shimmerDroneGain > 0.0005);
     } catch {}
     this.startScheduler();
     return profile;
@@ -4147,10 +4438,18 @@ class WeatherSoundscape {
       const t0 = ctx.currentTime + 0.12 + distance * 2.4 + Math.random() * 0.18;
       const loudness = profile.thunderGainScale * (1 - distance * 0.52);
       const basePan = clamp((boltPositionPercent - 50) / 65, -0.75, 0.75);
-      const strikeBuffer = renderThunderBuffer(ctx, distance);
-      const duration = strikeBuffer.duration;
+      const bucket = distance < 0.34 ? "close" : distance < 0.68 ? "mid" : "far";
+      let strikeBuffer = g.thunderPool[bucket];
+      if (!strikeBuffer) {
+        const canonicalDistance = bucket === "close" ? 0.16 : bucket === "mid" ? 0.5 : 0.84;
+        strikeBuffer = renderThunderBuffer(ctx, canonicalDistance);
+        g.thunderPool[bucket] = strikeBuffer;
+      }
+      const playbackRate = rand(0.88, 1.12);
+      const duration = strikeBuffer.duration / playbackRate;
       const source = ctx.createBufferSource();
       source.buffer = strikeBuffer;
+      source.playbackRate.value = playbackRate;
       const out = ctx.createGain();
       out.gain.value = loudness;
       const panner = this.createPanner(basePan);
@@ -4175,14 +4474,14 @@ class WeatherSoundscape {
       window.clearTimeout(this.suspendTimer);
       this.suspendTimer = null;
     }
-    for (const source of this.sources) {
-      try {
-        source.stop();
-        source.disconnect();
-      } catch {}
-    }
-    this.sources = [];
     if (this.graph) {
+      if (this.graph.reverbStopTimer !== null) {
+        window.clearTimeout(this.graph.reverbStopTimer);
+        this.graph.reverbStopTimer = null;
+      }
+      for (const branch of Object.values(this.graph.branches)) {
+        this.stopBranchNow(branch);
+      }
       this.graph.ctx.close().catch(() => {});
       this.graph = null;
     }
@@ -4612,6 +4911,142 @@ class WeatherSoundscape {
     }
     return at - t + rand(1.8, 8);
   }
+  syncReverbActive(g, active) {
+    if (active) {
+      if (g.reverbStopTimer !== null) {
+        window.clearTimeout(g.reverbStopTimer);
+        g.reverbStopTimer = null;
+      }
+      if (!g.reverbConnected) {
+        g.reverbSend.connect(g.convolver);
+        g.reverbConnected = true;
+      }
+      return;
+    }
+    if (g.reverbConnected && g.reverbStopTimer === null) {
+      g.reverbStopTimer = window.setTimeout(() => {
+        g.reverbStopTimer = null;
+        if (this.destroyed || !this.graph || this.graph !== g)
+          return;
+        if ((this.lastProfile?.reverbWet ?? 0) > 0.001)
+          return;
+        try {
+          g.reverbSend.disconnect(g.convolver);
+          g.reverbConnected = false;
+        } catch {
+          g.reverbConnected = false;
+        }
+      }, BRANCH_IDLE_STOP_MS);
+    }
+  }
+  stopBranchNow(branch) {
+    if (branch.stopTimer !== null) {
+      window.clearTimeout(branch.stopTimer);
+      branch.stopTimer = null;
+    }
+    for (const source of branch.sources) {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {}
+    }
+    for (const node of branch.nodes) {
+      try {
+        node.disconnect();
+      } catch {}
+    }
+    branch.sources = [];
+    branch.nodes = [];
+    branch.active = false;
+  }
+  syncBranchActive(g, key, active) {
+    const branch = g.branches[key];
+    if (active) {
+      if (branch.stopTimer !== null) {
+        window.clearTimeout(branch.stopTimer);
+        branch.stopTimer = null;
+      }
+      if (!branch.active) {
+        this.startBranch(g, key);
+      }
+      return;
+    }
+    if (branch.active && branch.stopTimer === null) {
+      branch.stopTimer = window.setTimeout(() => {
+        branch.stopTimer = null;
+        if (this.destroyed || this.graph !== g)
+          return;
+        this.stopBranchNow(branch);
+        if (key === "pad")
+          g.padVoices = [];
+      }, BRANCH_IDLE_STOP_MS);
+    }
+  }
+  startBranch(g, key) {
+    const branch = g.branches[key];
+    const audio = g.ctx;
+    const startLoop = (buffer, rate, destination) => {
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.playbackRate.value = rate;
+      source.connect(destination);
+      source.start(0, Math.random() * (buffer.duration || 1));
+      branch.sources.push(source);
+    };
+    switch (key) {
+      case "rainWash":
+        startLoop(g.pink, 1, g.rainWashFilter);
+        startLoop(g.brown, 1.05, g.rainLowFilter);
+        startLoop(g.pink, 0.93, g.rainHighFilter);
+        break;
+      case "rainPatter":
+        if (!g.rainLight)
+          g.rainLight = createRainTextureBuffer(audio, 6.7, 260);
+        if (!g.rainDense)
+          g.rainDense = createRainTextureBuffer(audio, 5.9, 1350);
+        startLoop(g.rainLight, 1, g.patterLightGain);
+        startLoop(g.rainDense, 1, g.patterDenseGain);
+        break;
+      case "wind":
+        startLoop(g.brown, 1, g.windFilter);
+        break;
+      case "whistle":
+        startLoop(g.pink, 1.07, g.whistleFilter);
+        break;
+      case "grit":
+        startLoop(g.pink, 1.13, g.gritFilter);
+        break;
+      case "air":
+        startLoop(g.pink, 0.81, g.airFilter);
+        break;
+      case "ember":
+        if (!g.fireBed)
+          g.fireBed = createFireBedBuffer(audio, 7.3);
+        startLoop(g.brown, 0.88, g.emberLowFilter);
+        startLoop(g.pink, 0.94, g.emberMidFilter);
+        startLoop(g.fireBed, 0.96, g.emberBedFilter);
+        break;
+      case "pad": {
+        const voices = PAD_FREQUENCIES.map((frequency, index) => {
+          const osc = audio.createOscillator();
+          osc.type = index === 0 ? "triangle" : "sine";
+          osc.frequency.value = frequency;
+          const gain = audio.createGain();
+          gain.gain.value = 0.15;
+          osc.connect(gain);
+          gain.connect(g.padFilter);
+          osc.start(0);
+          branch.sources.push(osc);
+          branch.nodes.push(gain);
+          return { osc, gain };
+        });
+        g.padVoices = voices;
+        break;
+      }
+    }
+    branch.active = true;
+  }
   ensureGraph() {
     if (this.graph)
       return true;
@@ -4625,9 +5060,6 @@ class WeatherSoundscape {
       const pink = createNoiseBuffer(audio, 11.3, "pink");
       const brown = createNoiseBuffer(audio, 9.7, "brown");
       const white = createNoiseBuffer(audio, 2.5, "white", 1);
-      const rainLight = createRainTextureBuffer(audio, 6.7, 260);
-      const rainDense = createRainTextureBuffer(audio, 5.9, 1350);
-      const fireBed = createFireBedBuffer(audio, 7.3);
       const gainNode = (value = 0) => {
         const node = audio.createGain();
         node.gain.value = value;
@@ -4638,13 +5070,6 @@ class WeatherSoundscape {
         node.type = type;
         node.frequency.value = frequency;
         node.Q.value = q;
-        return node;
-      };
-      const loop = (buffer, rate = 1) => {
-        const node = audio.createBufferSource();
-        node.buffer = buffer;
-        node.loop = true;
-        node.playbackRate.value = rate;
         return node;
       };
       const chain = (...nodes) => {
@@ -4664,7 +5089,7 @@ class WeatherSoundscape {
       const reverbSend = gainNode(1);
       const convolver = audio.createConvolver();
       convolver.normalize = false;
-      convolver.buffer = createImpulseResponse(audio, 3.2);
+      convolver.buffer = createImpulseResponse(audio, 1.4);
       const reverbReturn = gainNode(0.12);
       chain(reverbSend, convolver, reverbReturn, master);
       const bus = gainNode(1);
@@ -4679,26 +5104,21 @@ class WeatherSoundscape {
       chain(wetOcclusion, wetBoost, reverbSend);
       nearBus.connect(master);
       nearBus.connect(reverbSend);
-      const startables = [];
-      const loopStarts = new Map;
-      const addLoop = (source) => {
-        startables.push(source);
-        loopStarts.set(source, Math.random() * (source.buffer?.duration ?? 1));
-        return source;
-      };
       const rainGain = gainNode(0);
       const rainSwell = gainNode(1);
       const rainWashFilter = filterNode("bandpass", 1350, 0.55);
-      chain(addLoop(loop(pink)), rainWashFilter, rainSwell);
-      chain(addLoop(loop(brown, 1.05)), filterNode("lowpass", 520), gainNode(0.55), rainSwell);
-      chain(addLoop(loop(pink, 0.93)), filterNode("highpass", 4800), gainNode(0.22), rainSwell);
+      const rainLowFilter = filterNode("lowpass", 520);
+      const rainHighFilter = filterNode("highpass", 4800);
+      chain(rainWashFilter, rainSwell);
+      chain(rainLowFilter, gainNode(0.55), rainSwell);
+      chain(rainHighFilter, gainNode(0.22), rainSwell);
       chain(rainSwell, rainGain, bus);
       const patterGain = gainNode(0);
       const patterLightGain = gainNode(1);
       const patterDenseGain = gainNode(0);
       const patterFilter = filterNode("bandpass", 1950, 0.65);
-      chain(addLoop(loop(rainLight)), patterLightGain, patterFilter);
-      chain(addLoop(loop(rainDense)), patterDenseGain, patterFilter);
+      patterLightGain.connect(patterFilter);
+      patterDenseGain.connect(patterFilter);
       chain(patterFilter, patterGain, bus);
       const dropsGain = gainNode(0);
       dropsGain.connect(bus);
@@ -4708,36 +5128,31 @@ class WeatherSoundscape {
       const windGust = gainNode(1);
       const windFilter = filterNode("bandpass", 220, 1.4);
       const windPanNode = this.createPannerFor(audio, 0);
-      chain(addLoop(loop(brown)), windFilter, windGust, windPanNode.node, windGain, bus);
+      chain(windFilter, windGust, windPanNode.node, windGain, bus);
       const whistleGain = gainNode(0);
       const whistleGust = gainNode(0);
       const whistleFilter = filterNode("bandpass", 700, 9);
-      chain(addLoop(loop(pink, 1.07)), whistleFilter, whistleGust, whistleGain, bus);
+      chain(whistleFilter, whistleGust, whistleGain, bus);
       const gritGain = gainNode(0);
+      const gritFilter = filterNode("highpass", 2600);
       const gritGust = gainNode(1);
-      chain(addLoop(loop(pink, 1.13)), filterNode("highpass", 2600), gritGust, gritGain, bus);
+      chain(gritFilter, gritGust, gritGain, bus);
       const airGain = gainNode(0);
       const airDrift = gainNode(1);
       const airFilter = filterNode("lowpass", 900, 0.3);
-      chain(addLoop(loop(pink, 0.81)), airFilter, airDrift, airGain, bus);
+      chain(airFilter, airDrift, airGain, bus);
       const emberGain = gainNode(0);
       const fireFlicker = gainNode(1);
-      chain(addLoop(loop(brown, 0.88)), filterNode("lowpass", 220), gainNode(0.95), fireFlicker);
-      chain(addLoop(loop(pink, 0.94)), filterNode("bandpass", 420, 0.75), gainNode(0.42), fireFlicker);
+      const emberLowFilter = filterNode("lowpass", 220);
+      const emberMidFilter = filterNode("bandpass", 420, 0.75);
+      const emberBedFilter = filterNode("lowpass", 2400);
+      chain(emberLowFilter, gainNode(0.95), fireFlicker);
+      chain(emberMidFilter, gainNode(0.42), fireFlicker);
       chain(fireFlicker, emberGain);
-      chain(addLoop(loop(fireBed, 0.96)), filterNode("lowpass", 2400), gainNode(0.65), emberGain);
+      chain(emberBedFilter, gainNode(0.65), emberGain);
       emberGain.connect(bus);
       const padGain = gainNode(0);
       const padFilter = filterNode("lowpass", 1400, 0.4);
-      const padVoices = PAD_FREQUENCIES.map((frequency, index) => {
-        const osc = audio.createOscillator();
-        osc.type = index === 0 ? "triangle" : "sine";
-        osc.frequency.value = frequency;
-        const gain = gainNode(0.15);
-        chain(osc, gain, padFilter);
-        startables.push(osc);
-        return { osc, gain };
-      });
       chain(padFilter, padGain, wetBus);
       const sparkleGain = gainNode(0);
       sparkleGain.connect(wetBus);
@@ -4747,19 +5162,21 @@ class WeatherSoundscape {
       birdGain.connect(wetBus);
       const caveGain = gainNode(0);
       caveGain.connect(nearBus);
-      for (const source of startables) {
-        const offset = loopStarts.get(source);
-        if (offset !== undefined)
-          source.start(0, offset);
-        else
-          source.start(0);
-        this.sources.push(source);
-      }
+      const emptyBranch = () => ({
+        active: false,
+        stopTimer: null,
+        sources: [],
+        nodes: []
+      });
       this.graph = {
         ctx: audio,
         master,
         occlusion,
         wetOcclusion,
+        reverbSend,
+        convolver,
+        reverbConnected: true,
+        reverbStopTimer: null,
         reverbReturn,
         bus,
         wetBus,
@@ -4767,9 +5184,15 @@ class WeatherSoundscape {
         white,
         brown,
         pink,
+        rainLight: null,
+        rainDense: null,
+        fireBed: null,
+        thunderPool: {},
         rainGain,
         rainSwell,
         rainWashFilter,
+        rainLowFilter,
+        rainHighFilter,
         patterGain,
         patterLightGain,
         patterDenseGain,
@@ -4784,29 +5207,37 @@ class WeatherSoundscape {
         whistleGust,
         whistleFilter,
         gritGain,
+        gritFilter,
         gritGust,
         airGain,
         airDrift,
         airFilter,
         emberGain,
         fireFlicker,
+        emberLowFilter,
+        emberMidFilter,
+        emberBedFilter,
         padGain,
         padFilter,
-        padVoices,
+        padVoices: [],
         sparkleGain,
         cricketGain,
         birdGain,
-        caveGain
+        caveGain,
+        branches: {
+          rainWash: emptyBranch(),
+          rainPatter: emptyBranch(),
+          wind: emptyBranch(),
+          whistle: emptyBranch(),
+          grit: emptyBranch(),
+          air: emptyBranch(),
+          ember: emptyBranch(),
+          pad: emptyBranch()
+        }
       };
       this.appliedWindCenter = 0;
       return true;
     } catch {
-      for (const source of this.sources) {
-        try {
-          source.stop();
-        } catch {}
-      }
-      this.sources = [];
       if (ctx)
         ctx.close().catch(() => {});
       this.graph = null;
@@ -5683,162 +6114,6 @@ function createSettingsUI(sendToBackend) {
 
 // src/ui/styles.ts
 var WEATHER_HUD_CSS = `
-@property --weather-bg-start {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #4d77ad;
-}
-
-@property --weather-bg-mid {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #7fa8de;
-}
-
-@property --weather-bg-end {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #d8ebff;
-}
-
-@property --weather-glow {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(255, 243, 202, 0.78);
-}
-
-@property --weather-beam-color {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(255, 244, 212, 0.44);
-}
-
-@property --weather-horizon-color {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(185, 212, 244, 0.28);
-}
-
-@property --weather-cloud-core {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(237, 244, 255, 0.34);
-}
-
-@property --weather-cloud-edge {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(255, 255, 255, 0.12);
-}
-
-@property --weather-fog-color {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(236, 241, 255, 0.18);
-}
-
-@property --weather-mist-color {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgba(228, 238, 248, 0.24);
-}
-
-@property --weather-sky-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.05;
-}
-
-@property --weather-glow-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.1;
-}
-
-@property --weather-beam-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.12;
-}
-
-@property --weather-cloud-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.06;
-}
-
-@property --weather-horizon-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.04;
-}
-
-@property --weather-mist-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.03;
-}
-
-@property --weather-fog-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-rain-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-snow-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-mote-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.04;
-}
-
-@property --weather-star-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-moonlight-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-aurora-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-window-droplet-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-phenomenon-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-@property --weather-flash-opacity {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0.26;
-}
-
 .weather-settings-card {
   width: 100%;
   border: 1px solid var(--lumiverse-border);
@@ -6184,13 +6459,12 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-settings-card::after {
-  width: 260px;
-  height: 260px;
-  right: -130px;
-  top: 88px;
+  width: 280px;
+  height: 280px;
+  right: -136px;
+  top: 78px;
   border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 30%, transparent), transparent 68%);
-  filter: blur(10px);
+  background: radial-gradient(circle, color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 24%, transparent), transparent 72%);
 }
 
 .weather-settings-card-header {
@@ -6204,12 +6478,11 @@ var WEATHER_HUD_CSS = `
 
 .weather-settings-header-glow {
   position: absolute;
-  inset: -32px auto auto -26px;
-  width: 176px;
-  height: 100px;
+  inset: -36px auto auto -30px;
+  width: 192px;
+  height: 112px;
   border-radius: 50%;
-  background: radial-gradient(ellipse, rgba(132, 191, 255, 0.24), transparent 70%);
-  filter: blur(8px);
+  background: radial-gradient(ellipse, rgba(132, 191, 255, 0.2), transparent 72%);
   pointer-events: none;
 }
 
@@ -6299,13 +6572,12 @@ var WEATHER_HUD_CSS = `
 
 .weather-settings-preview-glow {
   position: absolute;
-  width: 150px;
-  height: 150px;
-  right: -44px;
-  bottom: -90px;
+  width: 164px;
+  height: 164px;
+  right: -48px;
+  bottom: -94px;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--lumi-scene-glow, rgba(121, 185, 255, 0.38)), transparent 70%);
-  filter: blur(4px);
+  background: radial-gradient(circle, var(--lumi-scene-glow, rgba(121, 185, 255, 0.34)), transparent 72%);
 }
 
 .weather-settings-preview-label,
@@ -6388,7 +6660,6 @@ var WEATHER_HUD_CSS = `
     linear-gradient(144deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 44%, rgba(0, 0, 0, 0.04)),
     var(--lumi-glass-soft);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11), 0 12px 26px rgba(4, 13, 27, 0.1);
-  backdrop-filter: blur(16px) saturate(135%);
 }
 
 .weather-settings-section,
@@ -6705,14 +6976,16 @@ var WEATHER_HUD_CSS = `
 .weather-hud-widget::after {
   content: "";
   position: absolute;
-  inset: auto -10% -36% 26%;
-  height: 66%;
-  background: radial-gradient(circle at center, color-mix(in srgb, var(--weather-hud-aura-secondary) 90%, transparent) 0%, transparent 68%);
+  inset: auto -18% -44% 18%;
+  height: 78%;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--weather-hud-aura-secondary) 78%, transparent) 0%,
+    color-mix(in srgb, var(--weather-hud-aura-secondary) 32%, transparent) 38%,
+    transparent 74%
+  );
   /* Sun altitude (-90 midnight to +90 noon) softens the aura toward night. */
   opacity: calc((0.35 + 0.55 * (var(--weather-sun-altitude, 0) + 90) / 180) * var(--weather-hud-scene-intensity));
-  filter: blur(30px);
-  transform: translate3d(0, 0, 0);
-  animation: weather-hud-drift 12s ease-in-out infinite alternate;
   pointer-events: none;
 }
 
@@ -7207,26 +7480,48 @@ var WEATHER_HUD_CSS = `
   max-width: 100%;
   min-height: 15px;
   overflow: hidden;
+}
+
+.weather-hud-summary-viewport[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
   mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
 
 .weather-hud-summary {
   --weather-hud-summary-gap: 28px;
-  display: flex;
-  width: max-content;
-  min-width: max-content;
-  align-items: center;
-  gap: var(--weather-hud-summary-gap);
+  display: block;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   line-height: 1.35;
   color: var(--weather-hud-text-soft);
   white-space: nowrap;
-  will-change: transform;
-  animation: weather-hud-summary-ticker 12s linear infinite;
 }
 
 .weather-hud-summary::after {
+  content: none;
+}
+
+.weather-hud-widget:not([data-paused="true"]):not([data-effects="false"]):not([data-reduced-motion="true"])
+  .weather-hud-summary-viewport[data-overflow="true"]
+  .weather-hud-summary {
+  display: flex;
+  width: max-content;
+  min-width: max-content;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  align-items: center;
+  gap: var(--weather-hud-summary-gap);
+  animation: weather-hud-summary-ticker 12s linear infinite;
+}
+
+.weather-hud-widget:not([data-paused="true"]):not([data-effects="false"]):not([data-reduced-motion="true"])
+  .weather-hud-summary-viewport[data-overflow="true"]
+  .weather-hud-summary::after {
   content: attr(data-ticker-text);
   flex: 0 0 auto;
 }
@@ -7429,21 +7724,11 @@ var WEATHER_HUD_CSS = `
 }
 
 .weather-hud-widget[data-paused="true"]::after {
-  animation-play-state: paused;
   opacity: calc(0.55 * var(--weather-hud-scene-intensity));
 }
 
 .weather-hud-widget[data-paused="true"] .weather-hud-summary {
-  animation-play-state: paused;
-}
-
-@keyframes weather-hud-drift {
-  0% {
-    transform: translate3d(-5%, 0, 0) scale(1);
-  }
-  100% {
-    transform: translate3d(6%, -4%, 0) scale(1.08);
-  }
+  animation: none;
 }
 
 @keyframes weather-hud-summary-ticker {
@@ -7462,39 +7747,8 @@ var WEATHER_HUD_CSS = `
   pointer-events: none;
   opacity: 0;
   isolation: isolate;
-  contain: paint;
+  contain: strict;
   transition: opacity 320ms ease;
-}
-
-.weather-fx-root.weather-scene-blending {
-  transition:
-    opacity 320ms ease,
-    --weather-bg-start 1200ms ease,
-    --weather-bg-mid 1200ms ease,
-    --weather-bg-end 1200ms ease,
-    --weather-glow 900ms ease,
-    --weather-beam-color 900ms ease,
-    --weather-horizon-color 900ms ease,
-    --weather-cloud-core 900ms ease,
-    --weather-cloud-edge 900ms ease,
-    --weather-fog-color 900ms ease,
-    --weather-mist-color 900ms ease,
-    --weather-sky-opacity 800ms ease,
-    --weather-glow-opacity 800ms ease,
-    --weather-beam-opacity 800ms ease,
-    --weather-cloud-opacity 800ms ease,
-    --weather-horizon-opacity 800ms ease,
-    --weather-mist-opacity 800ms ease,
-    --weather-fog-opacity 800ms ease,
-    --weather-rain-opacity 600ms ease,
-    --weather-snow-opacity 600ms ease,
-    --weather-mote-opacity 600ms ease,
-    --weather-star-opacity 800ms ease,
-    --weather-moonlight-opacity 800ms ease,
-    --weather-aurora-opacity 900ms ease,
-    --weather-window-droplet-opacity 700ms ease,
-    --weather-phenomenon-opacity 700ms ease,
-    --weather-flash-opacity 300ms ease;
 }
 
 .weather-fx-root.weather-visible {
@@ -7513,1033 +7767,17 @@ var WEATHER_HUD_CSS = `
   display: none;
 }
 
-.weather-fx-shader-canvas,
-.weather-fx-particle-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  pointer-events: none;
-}
-
 .weather-fx-shader-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
   z-index: 1;
-}
-
-.weather-fx-particle-canvas {
-  z-index: 2;
-}
-
-.weather-fx-procedural-fog-layer {
-  position: absolute;
-  inset: 0;
-  opacity: var(--weather-procedural-fog-opacity, 0);
-  pointer-events: none;
-  transition: opacity 800ms ease;
-}
-
-.weather-fx-root[data-kind="front"] .weather-fx-procedural-fog-layer {
-  opacity: calc(var(--weather-procedural-fog-opacity, 0) * 0.48);
-  mix-blend-mode: screen;
-}
-
-.weather-fx-procedural-fog-layer::before {
-  content: "";
-  position: absolute;
-  inset: -8%;
-  background:
-    radial-gradient(ellipse at 18% 72%, rgba(202, 216, 225, 0.26), transparent 46%),
-    radial-gradient(ellipse at 78% 28%, rgba(182, 202, 215, 0.2), transparent 50%);
-  filter: blur(30px);
-  opacity: 0.8;
-  transition: opacity 400ms ease;
-}
-
-.weather-fx-root[data-kind="front"] .weather-fx-procedural-fog-layer::before {
-  opacity: 0.34;
-}
-
-.weather-fx-root.weather-fog-webgl-ready .weather-fx-procedural-fog-layer::before {
-  opacity: 0;
-}
-
-.weather-fx-root.weather-paused *,
-.weather-fx-root.weather-paused *::before,
-.weather-fx-root.weather-paused *::after {
-  animation-play-state: paused !important;
-}
-
-.weather-fx-sky,
-.weather-fx-glow,
-.weather-fx-beams,
-.weather-fx-clouds,
-.weather-fx-horizon,
-.weather-fx-mist,
-.weather-fx-fog,
-.weather-fx-procedural-fog-layer,
-.weather-fx-procedural-fog,
-.weather-fx-motes,
-.weather-fx-stars,
-.weather-fx-moonlight,
-.weather-fx-aurora,
-.weather-fx-phenomenon,
-.weather-fx-windowpane,
-.weather-fx-rain,
-.weather-fx-snow,
-.weather-fx-wind-gusts,
-.weather-fx-rain-splashes,
-.weather-fx-rain-ripples,
-.weather-fx-frost,
-.weather-fx-lightning,
-.weather-fx-lightning-glow,
-.weather-fx-flash {
-  position: absolute;
-  inset: 0;
-}
-
-/* Keep the painted edges outside the clip through the full drift/sway cycle.
-   3vmax covers the 1vw drift and 1deg rotation, including tall mobile scenes. */
-.weather-fx-sky,
-.weather-fx-glow,
-.weather-fx-beams {
-  inset: -3vmax;
-}
-
-.weather-fx-sky {
-  background: linear-gradient(180deg, var(--weather-bg-start) 0%, var(--weather-bg-mid) 46%, var(--weather-bg-end) 100%);
-  opacity: var(--weather-sky-opacity);
-  mix-blend-mode: normal;
-  filter: saturate(1.08) brightness(1.04);
-  animation: weather-sky-shift 24s ease-in-out infinite alternate;
-}
-
-.weather-fx-glow {
-  background:
-    radial-gradient(circle at 18% 18%, var(--weather-glow), transparent 34%),
-    radial-gradient(circle at 82% 22%, color-mix(in srgb, var(--weather-glow) 74%, white 14%), transparent 30%);
-  opacity: var(--weather-glow-opacity);
-  mix-blend-mode: screen;
-  animation: weather-glow-drift 18s ease-in-out infinite alternate;
-}
-
-.weather-fx-beams {
-  background:
-    radial-gradient(circle at 20% 16%, var(--weather-beam-color), transparent 26%),
-    linear-gradient(120deg, transparent 30%, color-mix(in srgb, var(--weather-beam-color) 58%, transparent) 48%, transparent 62%);
-  opacity: var(--weather-beam-opacity);
-  mix-blend-mode: screen;
-  animation: weather-beam-sway 14s ease-in-out infinite alternate;
-}
-
-.weather-fx-stars {
-  opacity: var(--weather-star-opacity);
-  mix-blend-mode: screen;
-}
-
-.weather-fx-star {
-  position: absolute;
-  left: var(--star-left);
-  top: var(--star-top);
-  width: var(--star-size);
-  height: var(--star-size);
-  border-radius: 50%;
-  background: rgba(231, 241, 255, 0.96);
-  box-shadow: 0 0 5px rgba(162, 198, 255, 0.62);
-  opacity: var(--star-opacity-scale);
-  animation: weather-star-twinkle var(--star-duration) ease-in-out infinite;
-  animation-delay: var(--star-delay);
-  animation-play-state: paused;
-}
-
-.weather-fx-moonlight {
-  inset: -3vmax;
-  background:
-    radial-gradient(ellipse at 86% 14%, rgba(183, 210, 255, 0.55), rgba(115, 151, 226, 0.23) 22%, transparent 57%),
-    radial-gradient(ellipse at 12% 75%, rgba(89, 123, 185, 0.16), transparent 60%);
-  opacity: var(--weather-moonlight-opacity);
-  mix-blend-mode: screen;
-  animation: weather-glow-drift 22s ease-in-out infinite alternate;
-  animation-play-state: paused;
-}
-
-.weather-fx-root.weather-visible.weather-night-active .weather-fx-star,
-.weather-fx-root.weather-visible.weather-night-active .weather-fx-moonlight {
-  animation-play-state: running;
-}
-
-.weather-fx-aurora {
-  inset: -4vmax;
-  opacity: var(--weather-aurora-opacity, 0);
-  mix-blend-mode: screen;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.weather-fx-aurora-ribbon {
-  position: absolute;
-  top: var(--aurora-top, -8%);
-  left: var(--aurora-left, -10%);
-  width: var(--aurora-width, 64vw);
-  height: var(--aurora-height, 42vh);
-  border-radius: 50%;
-  background: linear-gradient(
-    118deg,
-    transparent 8%,
-    hsla(var(--aurora-hue-a, 154), 92%, 64%, 0.55) 36%,
-    hsla(var(--aurora-hue-b, 272), 86%, 68%, 0.42) 68%,
-    transparent 92%
-  );
-  filter: blur(28px) saturate(1.25);
-  transform: rotate(var(--aurora-skew, -12deg));
-  animation: weather-aurora-wave var(--aurora-duration, 18s) ease-in-out infinite alternate;
-  animation-delay: var(--aurora-delay, 0s);
-}
-
-.weather-fx-phenomenon {
-  opacity: var(--weather-phenomenon-opacity, 0);
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.weather-fx-phenomenon-particle {
-  position: absolute;
-  left: var(--p-left, 50%);
-  top: var(--p-top, 10%);
-  width: var(--p-size, 6px);
-  height: var(--p-size, 6px);
-  opacity: var(--p-opacity, 0.75);
-  animation-duration: var(--p-duration, 9s);
-  animation-delay: var(--p-delay, 0s);
-  animation-iteration-count: infinite;
-}
-
-.weather-fx-phenomenon[data-phenomenon="blossoms"] .weather-fx-phenomenon-particle {
-  width: calc(var(--p-size, 7px) * 1.35);
-  height: calc(var(--p-size, 7px) * 0.82);
-  border-radius: 80% 18% 80% 18%;
-  background: linear-gradient(135deg, rgba(255, 224, 238, 0.96), rgba(255, 166, 203, 0.86));
-  box-shadow: 0 0 8px rgba(255, 188, 217, 0.45);
-  animation-name: weather-phenomenon-blossom;
-  animation-timing-function: linear;
-}
-
-.weather-fx-phenomenon[data-phenomenon="embers"] .weather-fx-phenomenon-particle {
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 240, 186, 0.98) 0%, rgba(255, 126, 46, 0.92) 56%, transparent 100%);
-  box-shadow: 0 0 12px rgba(255, 118, 38, 0.85);
-  mix-blend-mode: screen;
-  animation-name: weather-phenomenon-ember;
-  animation-timing-function: ease-in-out;
-}
-
-.weather-fx-phenomenon[data-phenomenon="ashfall"] .weather-fx-phenomenon-particle {
-  border-radius: 42% 58% 62% 38%;
-  background: rgba(212, 216, 224, 0.78);
-  box-shadow: 0 0 4px rgba(145, 152, 165, 0.32);
-  animation-name: weather-phenomenon-ash;
-  animation-timing-function: linear;
-}
-
-.weather-fx-phenomenon[data-phenomenon="fireflies"] .weather-fx-phenomenon-particle {
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(246, 255, 182, 0.98) 0%, rgba(176, 245, 86, 0.84) 55%, transparent 100%);
-  box-shadow: 0 0 14px rgba(190, 255, 102, 0.88);
-  mix-blend-mode: screen;
-  animation-name: weather-phenomenon-firefly;
-  animation-timing-function: ease-in-out;
-}
-
-.weather-fx-phenomenon[data-phenomenon="sandstorm"] .weather-fx-phenomenon-particle {
-  width: calc(var(--p-size, 4px) * 6.5);
-  height: calc(var(--p-size, 4px) * 0.45);
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(235, 192, 132, 0.72), transparent);
-  filter: blur(1px);
-  animation-name: weather-phenomenon-sand;
-  animation-timing-function: linear;
-}
-
-.weather-fx-windowpane {
-  opacity: var(--weather-window-droplet-opacity, 0);
-  pointer-events: none;
-  overflow: hidden;
-  background:
-    radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(168, 200, 232, 0.08) 100%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0%, transparent 42%, rgba(195, 222, 255, 0.04) 100%);
-}
-
-.weather-fx-window-drop {
-  position: absolute;
-  left: var(--wdrop-left, 50%);
-  top: var(--wdrop-top, 20%);
-  width: var(--wdrop-width, 3px);
-  height: var(--wdrop-height, 18px);
-  border-radius: 999px;
-  background: linear-gradient(
-    180deg,
-    rgba(232, 244, 255, 0.05) 0%,
-    rgba(225, 241, 255, var(--wdrop-opacity, 0.45)) 68%,
-    rgba(255, 255, 255, 0.86) 100%
-  );
-  box-shadow: 0 1px 4px rgba(12, 26, 46, 0.22);
-  animation: weather-window-rivulet var(--wdrop-duration, 8s) ease-in-out infinite;
-  animation-delay: var(--wdrop-delay, 0s);
-}
-
-.weather-fx-horizon {
-  background: linear-gradient(180deg, transparent 0%, transparent 48%, var(--weather-horizon-color) 100%);
-  opacity: var(--weather-horizon-opacity);
-  filter: blur(20px);
-  transform: translateY(6%);
-}
-
-.weather-fx-cloud,
-.weather-fx-fog-band,
-.weather-fx-mist-plume,
-.weather-fx-mote,
-.weather-fx-rain-drop,
-.weather-fx-snow-flake,
-.weather-fx-wind-gust,
-.weather-fx-rain-splash,
-.weather-fx-rain-ripple {
-  position: absolute;
-}
-
-.weather-fx-cloud,
-.weather-fx-fog-band,
-.weather-fx-mist-plume,
-.weather-fx-mote,
-.weather-fx-wind-gust {
-  will-change: auto;
-}
-
-.weather-fx-root.weather-visible .weather-fx-cloud,
-.weather-fx-root.weather-visible .weather-fx-fog-band,
-.weather-fx-root.weather-visible .weather-fx-mist-plume,
-.weather-fx-root.weather-visible .weather-fx-mote,
-.weather-fx-root.weather-visible .weather-fx-wind-gust,
-.weather-fx-root.weather-visible .weather-fx-rain-drop,
-.weather-fx-root.weather-visible .weather-fx-snow-flake {
-  will-change: transform, opacity;
-}
-
-.weather-fx-cloud {
-  --cloud-base-y: 0vh;
-  --cloud-detail-opacity: 0.2;
-  width: var(--cloud-width);
-  height: var(--cloud-height);
-  top: var(--cloud-top);
-  left: var(--cloud-left);
-  filter: blur(var(--cloud-blur)) drop-shadow(0 10px 18px rgba(7, 15, 28, 0.14));
-  opacity: calc(var(--weather-cloud-opacity) * var(--cloud-opacity-scale));
-  scale: var(--weather-cloud-size-scale, 1);
-  transform-origin: 50% 58%;
-  animation: weather-cloud-drift var(--cloud-duration) linear infinite;
-  animation-delay: var(--cloud-delay);
-}
-
-.weather-fx-cloud::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--weather-cloud-edge) 72%, var(--weather-cloud-core)) 0%,
-    var(--weather-cloud-core) 58%,
-    color-mix(in srgb, var(--weather-cloud-core) 78%, rgba(4, 12, 24, 0.3)) 100%
-  );
-  -webkit-mask: var(--cloud-image) no-repeat center 58% / cover;
-  mask: var(--cloud-image) no-repeat center 58% / cover;
-  pointer-events: none;
-}
-
-.weather-fx-cloud img {
-  position: relative;
-  z-index: 2;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center 58%;
-  opacity: var(--cloud-detail-opacity);
-  filter: grayscale(1) contrast(0.9) brightness(0.92);
-  user-select: none;
-  pointer-events: none;
-}
-
-.weather-fx-procedural-fog {
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  opacity: 1;
-  filter: blur(0.45px) saturate(0.92);
-  pointer-events: none;
-}
-
-.weather-fx-root[data-condition="fog"] .weather-fx-fog,
-.weather-fx-root[data-condition="fog"] .weather-fx-mist {
-  opacity: 0;
-}
-
-.weather-fx-fog-band {
-  width: var(--fog-width);
-  height: var(--fog-height);
-  top: var(--fog-top);
-  left: var(--fog-left);
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, var(--weather-fog-color), transparent);
-  filter: blur(20px);
-  opacity: calc(var(--weather-fog-opacity) * var(--fog-opacity-scale));
-  animation: weather-fog-drift var(--fog-duration) ease-in-out infinite;
-  animation-delay: var(--fog-delay);
-}
-
-.weather-fx-mist-plume {
-  width: var(--mist-width);
-  height: var(--mist-height);
-  left: var(--mist-left);
-  bottom: var(--mist-bottom);
-  border-radius: 999px;
-  background: radial-gradient(circle at center, var(--weather-mist-color), transparent 68%);
-  filter: blur(22px);
-  opacity: calc(var(--weather-mist-opacity) * var(--mist-opacity-scale));
-  animation: weather-mist-roll var(--mist-duration) ease-in-out infinite;
-  animation-delay: var(--mist-delay);
-}
-
-.weather-fx-mote {
-  left: var(--mote-left);
-  top: var(--mote-top);
-  width: var(--mote-size);
-  height: var(--mote-size);
-  border-radius: 50%;
-  background: rgba(255, 247, 224, 0.95);
-  box-shadow: 0 0 10px rgba(255, 245, 214, 0.4);
-  opacity: calc(var(--weather-mote-opacity) * var(--mote-opacity-scale));
-  animation: weather-mote-drift var(--mote-duration) ease-in-out infinite;
-  animation-delay: var(--mote-delay);
-}
-
-.weather-fx-rain-drop {
-  top: var(--drop-top);
-  left: var(--drop-left);
-  width: var(--drop-width);
-  height: var(--drop-length);
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.02) 10%,
-    var(--weather-rain-color) 50%,
-    rgba(255, 255, 255, 0.9) 95%,
-    rgba(255, 255, 255, 1) 100%
-  );
-  border-radius: 999px;
-  opacity: 0;
-  scale: var(--weather-rain-particle-scale, 1);
-  transform-origin: 50% 0;
-  transform: rotate(var(--weather-rain-angle, 11deg));
-  filter: drop-shadow(0 0 2px rgba(191, 221, 255, 0.24));
-  animation: weather-rain-fall var(--drop-duration) linear infinite;
-  animation-delay: var(--drop-delay);
-  animation-play-state: paused;
-}
-
-.weather-fx-rain-ripple-front {
-  --ripple-opacity-scale: 0.78;
-  border-color: rgba(226, 242, 255, 0.78);
-  filter: drop-shadow(0 0 4px rgba(209, 232, 255, 0.58));
-}
-
-.weather-fx-rain-drop-front {
-  filter: drop-shadow(0 0 5px rgba(209, 229, 255, 0.34));
-}
-
-.weather-fx-rain-drop.weather-density-hidden {
-  opacity: 0 !important;
-  animation-play-state: paused !important;
-}
-
-/* Density is expressed as a per-particle opacity multiplier rather than a binary
-   hidden class, so intensity changes read as a swell instead of a flicker. */
-.weather-fx-rain-drop {
-  --drop-opacity-scale: var(--drop-density-scale, 1);
-}
-
-.weather-fx-rain-splashes,
-.weather-fx-rain-ripples {
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 180ms ease;
-}
-
-.weather-fx-root.weather-rain-active .weather-fx-rain-splashes,
-.weather-fx-root.weather-rain-active .weather-fx-rain-ripples {
-  opacity: 1;
-}
-
-.weather-fx-rain-splash {
-  --splash-color: rgba(205, 231, 255, 0.9);
-  --splash-dot-color: rgba(236, 247, 255, 0.98);
-  --splash-opacity-scale: 0.94;
-  bottom: var(--splash-bottom);
-  left: var(--splash-left);
-  width: var(--splash-size);
-  height: var(--splash-height, var(--splash-size));
-  transform-origin: 50% 100%;
-  scale: var(--weather-rain-particle-scale, 1);
-  opacity: 0;
-  filter: drop-shadow(0 0 3px rgba(194, 225, 255, 0.58));
-  animation: weather-splash var(--impact-duration, 0.9s) ease-out infinite;
-  animation-delay: var(--impact-delay, 0s);
-  animation-play-state: paused;
-}
-
-.weather-fx-rain-splash::before,
-.weather-fx-rain-splash::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.weather-fx-rain-splash::before {
-  top: auto;
-  height: 48%;
-  border: 1.8px solid var(--splash-color);
-  border-radius: 50%;
-  clip-path: inset(0 0 48% 0);
-}
-
-.weather-fx-rain-splash::after {
-  background:
-    radial-gradient(circle at 15% 70%, var(--splash-dot-color) 0 1.1px, transparent 2px),
-    radial-gradient(circle at 50% 5%, var(--splash-dot-color) 0 1.3px, transparent 2.2px),
-    radial-gradient(circle at 84% 66%, var(--splash-dot-color) 0 1.1px, transparent 2px);
-}
-
-.weather-fx-rain-splash-front {
-  --splash-color: rgba(226, 242, 255, 0.98);
-  --splash-dot-color: rgba(248, 252, 255, 1);
-  --splash-opacity-scale: 1;
-}
-
-.weather-fx-rain-ripple {
-  --ripple-opacity-scale: 0.64;
-  bottom: var(--ripple-bottom);
-  left: var(--ripple-left);
-  width: var(--ripple-size);
-  height: calc(var(--ripple-size) * 0.4);
-  border: 1.4px solid rgba(205, 231, 255, 0.62);
-  border-radius: 50%;
-  scale: var(--weather-rain-particle-scale, 1);
-  opacity: 0;
-  filter: drop-shadow(0 0 2px rgba(191, 221, 255, 0.42));
-  animation: weather-ripple var(--impact-duration, 0.9s) ease-out infinite;
-  animation-delay: var(--impact-delay, 0s);
-  animation-play-state: paused;
-}
-
-.weather-fx-rain-splash.weather-density-hidden,
-.weather-fx-rain-ripple.weather-density-hidden {
-  display: none;
-}
-
-.weather-fx-wind-gusts {
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 600ms ease;
-}
-
-.weather-fx-root[data-condition="cloudy"] .weather-fx-wind-gusts {
-  opacity: 0.65;
-}
-
-.weather-fx-root[data-condition="rain"] .weather-fx-wind-gusts {
-  opacity: 0.72;
-}
-
-.weather-fx-root[data-condition="storm"] .weather-fx-wind-gusts {
-  opacity: 1;
-}
-
-.weather-fx-wind-gust {
-  top: var(--gust-top);
-  left: var(--gust-left);
-  width: var(--gust-width);
-  height: var(--gust-height);
-  color: rgba(235, 245, 255, var(--gust-opacity));
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 35%, #000 68%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 35%, #000 68%, transparent);
-  animation: weather-wind-gust var(--gust-duration) linear infinite;
-  animation-delay: var(--gust-delay);
-  animation-play-state: paused;
-}
-
-.weather-fx-wind-gust svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.weather-fx-root[data-condition="cloudy"] .weather-fx-wind-gust,
-.weather-fx-root[data-condition="rain"] .weather-fx-wind-gust,
-.weather-fx-root[data-condition="storm"] .weather-fx-wind-gust {
-  animation-play-state: running;
-}
-
-.weather-fx-snow-flake {
-  top: var(--flake-top);
-  left: var(--flake-left);
-  width: var(--flake-size);
-  height: var(--flake-size);
-  border-radius: 50%;
-  background-color: var(--weather-snow-color);
-  opacity: 0;
-  box-shadow: 0 0 var(--flake-glow) rgba(255, 255, 255, 0.72);
-  animation:
-    weather-snow-fall var(--flake-duration) linear infinite,
-    weather-snow-shimmer var(--flake-shimmer-duration) ease-in-out infinite;
-  animation-delay: var(--flake-delay), var(--flake-delay);
-  animation-play-state: paused;
-}
-
-.weather-fx-snow-flake-front {
-  box-shadow: 0 0 var(--flake-glow) rgba(255, 255, 255, 0.82);
-}
-
-.weather-fx-frost {
-  pointer-events: none;
-  opacity: 0;
-  background:
-    radial-gradient(ellipse 40% 50% at 0% 0%, rgba(220, 235, 255, 0.25), transparent 60%),
-    radial-gradient(ellipse 40% 50% at 100% 0%, rgba(220, 235, 255, 0.2), transparent 60%),
-    radial-gradient(ellipse 50% 60% at 0% 100%, rgba(220, 235, 255, 0.3), transparent 55%),
-    radial-gradient(ellipse 50% 60% at 100% 100%, rgba(220, 235, 255, 0.25), transparent 55%),
-    radial-gradient(ellipse 60% 30% at 50% 0%, rgba(210, 230, 255, 0.12), transparent 50%),
-    radial-gradient(ellipse 30% 80% at 0% 50%, rgba(210, 230, 255, 0.1), transparent 50%),
-    radial-gradient(ellipse 30% 80% at 100% 50%, rgba(210, 230, 255, 0.1), transparent 50%);
-  mix-blend-mode: screen;
-  filter: blur(3px);
-  transition: opacity 1000ms ease;
-}
-
-.weather-fx-root[data-condition="snow"] .weather-fx-frost {
-  opacity: 0.6;
-}
-
-.weather-fx-lightning {
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.weather-fx-lightning-bolt {
-  position: absolute;
-  top: 0;
-  width: 26%;
-  height: 100%;
-  opacity: 0;
-  filter:
-    drop-shadow(0 0 4px rgba(200, 220, 255, 0.9))
-    drop-shadow(0 0 14px rgba(160, 190, 255, 0.5))
-    drop-shadow(0 0 30px rgba(120, 160, 255, 0.3));
-}
-
-.weather-fx-lightning-bolt[data-bolt-index="0"] { left: 10%; }
-.weather-fx-lightning-bolt[data-bolt-index="1"] { left: 38%; }
-.weather-fx-lightning-bolt[data-bolt-index="2"] { left: 62%; }
-
-.weather-fx-lightning-bolt.weather-lightning-strike {
-  animation: weather-lightning-strike 650ms ease-out forwards;
-}
-
-.weather-fx-lightning-glow {
-  pointer-events: none;
-  opacity: 0;
-  background: radial-gradient(
-    ellipse 50% 60% at var(--weather-lightning-x, 50%) 15%,
-    rgba(210, 230, 255, 0.5) 0%,
-    rgba(180, 210, 255, 0.2) 20%,
-    transparent 50%
-  );
-  mix-blend-mode: screen;
-}
-
-.weather-fx-root.weather-lightning-glow-flash .weather-fx-lightning-glow {
-  animation: weather-lightning-glow-flash 650ms ease-out forwards;
-}
-
-.weather-fx-flash {
-  background:
-    radial-gradient(circle at 34% 22%, rgba(232, 241, 255, 0.9), transparent 32%),
-    radial-gradient(circle at 50% 10%, rgba(220, 235, 255, 0.6), transparent 40%),
-    rgba(219, 231, 255, 0.48);
-  opacity: 0;
-  mix-blend-mode: screen;
-}
-
-.weather-fx-root.weather-storm-flash .weather-fx-flash {
-  animation: weather-flash-sequence 650ms ease-out;
-}
-
-.weather-fx-root[data-condition="rain"] .weather-fx-cloud,
-.weather-fx-root[data-condition="storm"] .weather-fx-cloud {
-  --cloud-base-y: -0.8vh;
-  --cloud-detail-opacity: 0.16;
-  filter: blur(var(--cloud-blur)) drop-shadow(0 12px 20px rgba(3, 10, 20, 0.24));
-}
-
-.weather-fx-root[data-condition="storm"] .weather-fx-cloud {
-  --cloud-detail-opacity: 0.1;
-  filter: blur(var(--cloud-blur)) brightness(0.9) drop-shadow(0 14px 24px rgba(1, 6, 14, 0.34));
-}
-
-.weather-fx-root[data-condition="cloudy"] .weather-fx-cloud {
-  --cloud-detail-opacity: 0.18;
-  filter: blur(var(--cloud-blur)) drop-shadow(0 10px 18px rgba(7, 15, 28, 0.16));
-}
-
-.weather-fx-root[data-condition="snow"] .weather-fx-cloud {
-  --cloud-detail-opacity: 0.24;
-  filter: blur(var(--cloud-blur)) brightness(1.02) drop-shadow(0 10px 18px rgba(70, 92, 122, 0.14));
-}
-
-.weather-fx-root.weather-storm-flash .weather-fx-clouds {
-  animation: weather-cloud-lightning 650ms ease-out;
-}
-
-.weather-fx-root.weather-rain-active .weather-fx-rain-drop,
-.weather-fx-root.weather-snow-active .weather-fx-snow-flake {
-  animation-play-state: running;
-  will-change: transform, opacity;
-}
-
-.weather-fx-root.weather-rain-active .weather-fx-rain-drop {
-  opacity: calc(var(--weather-rain-opacity) * var(--drop-opacity-scale));
-}
-
-.weather-fx-root.weather-snow-active .weather-fx-snow-flake {
-  opacity: calc(var(--weather-snow-opacity) * var(--flake-opacity-scale));
-}
-
-.weather-fx-root.weather-rain-active .weather-fx-rain-splash,
-.weather-fx-root.weather-rain-active .weather-fx-rain-ripple {
-  animation-play-state: running;
-}
-
-.weather-fx-root.weather-reduced-motion .weather-fx-cloud,
-.weather-fx-root.weather-reduced-motion .weather-fx-fog-band,
-.weather-fx-root.weather-reduced-motion .weather-fx-mist-plume,
-.weather-fx-root.weather-reduced-motion .weather-fx-mote,
-.weather-fx-root.weather-reduced-motion .weather-fx-star,
-.weather-fx-root.weather-reduced-motion .weather-fx-rain-drop,
-.weather-fx-root.weather-reduced-motion .weather-fx-snow-flake,
-.weather-fx-root.weather-reduced-motion .weather-fx-wind-gust,
-.weather-fx-root.weather-reduced-motion .weather-fx-rain-splash,
-.weather-fx-root.weather-reduced-motion .weather-fx-rain-ripple {
-  animation: none;
-}
-
-.weather-fx-root.weather-reduced-motion .weather-fx-sky,
-.weather-fx-root.weather-reduced-motion .weather-fx-glow,
-.weather-fx-root.weather-reduced-motion .weather-fx-beams {
-  animation: none;
-}
-
-.weather-fx-root.weather-reduced-motion .weather-fx-moonlight,
-.weather-fx-root.weather-reduced-motion .weather-fx-aurora-ribbon,
-.weather-fx-root.weather-reduced-motion .weather-fx-phenomenon-particle,
-.weather-fx-root.weather-reduced-motion .weather-fx-window-drop {
-  animation: none;
-}
-
-.weather-fx-root.weather-reduced-motion .weather-fx-cloud {
-  transform: translate3d(var(--cloud-drift-x-mid), var(--cloud-base-y), 0) scale(var(--cloud-scale));
-}
-
-.weather-fx-root.weather-reduced-motion.weather-rain-active .weather-fx-rain-drop {
-  opacity: var(--weather-particle-opacity-static, 0.08);
-}
-
-.weather-fx-root.weather-reduced-motion .weather-fx-wind-gusts {
-  display: none;
-}
-
-.weather-fx-root.weather-reduced-motion.weather-snow-active .weather-fx-snow-flake {
-  opacity: 0;
-}
-
-.weather-fx-root.weather-reduced-motion.weather-snow-active .weather-fx-snow-flake:nth-child(4n) {
-  opacity: var(--weather-particle-opacity-static, 0.08);
-}
-
-.weather-fx-root.weather-reduced-motion.weather-rain-active .weather-fx-rain-drop {
-  transform: translate3d(0, 48vh, 0) rotate(var(--weather-rain-angle, 11deg));
-}
-
-.weather-fx-root.weather-reduced-motion.weather-snow-active .weather-fx-snow-flake {
-  transform: translate3d(var(--flake-drift-b), var(--flake-static-y), 0);
-}
-
-@keyframes weather-sky-shift {
-  0% { transform: scale(1) translate3d(0, 0, 0); }
-  100% { transform: scale(1.04) translate3d(0, -1.6vh, 0); }
-}
-
-@keyframes weather-glow-drift {
-  0% { transform: translate3d(-1vw, 0, 0) scale(1); }
-  100% { transform: translate3d(1vw, -1vh, 0) scale(1.08); }
-}
-
-@keyframes weather-beam-sway {
-  0% { transform: translate3d(-1vw, 0, 0) rotate(-1deg); }
-  100% { transform: translate3d(1vw, -0.6vh, 0) rotate(1deg); }
-}
-
-@keyframes weather-cloud-drift {
-  0% {
-    transform: translate3d(var(--cloud-drift-x-start), var(--cloud-base-y), 0) scale(var(--cloud-scale));
-  }
-  48% {
-    transform: translate3d(var(--cloud-drift-x-mid), calc(var(--cloud-base-y) + var(--cloud-drift-y)), 0) scale(var(--cloud-scale-mid));
-  }
-  100% {
-    transform: translate3d(var(--cloud-drift-x-end), var(--cloud-base-y), 0) scale(var(--cloud-scale));
-  }
-}
-
-@keyframes weather-cloud-lightning {
-  0%, 100% { filter: brightness(1) saturate(1); }
-  12% { filter: brightness(1.72) saturate(0.82); }
-  24% { filter: brightness(1.12) saturate(0.94); }
-  36% { filter: brightness(1.48) saturate(0.86); }
-  58% { filter: brightness(1.06) saturate(0.98); }
-}
-
-@keyframes weather-fog-drift {
-  0%, 100% { transform: translate3d(-2vw, 0, 0); }
-  50% { transform: translate3d(2vw, -1vh, 0); }
-}
-
-@keyframes weather-mist-roll {
-  0%, 100% { transform: translate3d(-2vw, 1vh, 0); }
-  50% { transform: translate3d(2vw, -1vh, 0); }
-}
-
-@keyframes weather-mote-drift {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
-  50% { transform: translate3d(var(--mote-drift-x), var(--mote-drift-y), 0) scale(1.12); }
-}
-
-@keyframes weather-star-twinkle {
-  0%, 100% { opacity: calc(var(--star-opacity-scale) * 0.55); }
-  50% { opacity: var(--star-opacity-scale); }
-}
-
-@keyframes weather-aurora-wave {
-  0% {
-    transform: translate3d(-4vw, 0, 0) rotate(var(--aurora-skew, -12deg)) scaleY(0.92);
-    opacity: 0.72;
-  }
-  50% {
-    transform: translate3d(3vw, -2vh, 0) rotate(calc(var(--aurora-skew, -12deg) + 4deg)) scaleY(1.14);
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(6vw, 1.5vh, 0) rotate(calc(var(--aurora-skew, -12deg) - 3deg)) scaleY(0.96);
-    opacity: 0.8;
-  }
-}
-
-@keyframes weather-phenomenon-blossom {
-  0% {
-    transform: translate3d(0, -10vh, 0) rotate(0deg);
-    opacity: 0;
-  }
-  12% {
-    opacity: var(--p-opacity, 0.8);
-  }
-  88% {
-    opacity: var(--p-opacity, 0.8);
-  }
-  100% {
-    transform: translate3d(var(--p-drift-x, 18vw), 112vh, 0) rotate(var(--p-rotate, 240deg));
-    opacity: 0;
-  }
-}
-
-@keyframes weather-phenomenon-ember {
-  0% {
-    transform: translate3d(0, 108vh, 0) scale(0.75);
-    opacity: 0;
-  }
-  18% {
-    opacity: var(--p-opacity, 0.85);
-  }
-  82% {
-    opacity: calc(var(--p-opacity, 0.85) * 0.7);
-  }
-  100% {
-    transform: translate3d(var(--p-drift-x, 12vw), -12vh, 0) scale(0.35);
-    opacity: 0;
-  }
-}
-
-@keyframes weather-phenomenon-ash {
-  0% {
-    transform: translate3d(0, -8vh, 0) rotate(0deg);
-    opacity: 0;
-  }
-  15% {
-    opacity: var(--p-opacity, 0.65);
-  }
-  100% {
-    transform: translate3d(var(--p-drift-x, 10vw), 110vh, 0) rotate(var(--p-rotate, 180deg));
-    opacity: 0;
-  }
-}
-
-@keyframes weather-phenomenon-firefly {
-  0%, 100% {
-    transform: translate3d(0, 0, 0) scale(0.65);
-    opacity: 0.12;
-  }
-  35% {
-    transform: translate3d(calc(var(--p-drift-x, 8vw) * 0.45), var(--p-drift-y, -6vh), 0) scale(1.18);
-    opacity: var(--p-opacity, 0.92);
-  }
-  70% {
-    transform: translate3d(var(--p-drift-x, 8vw), calc(var(--p-drift-y, -6vh) * -0.5), 0) scale(0.85);
-    opacity: 0.28;
-  }
-}
-
-@keyframes weather-phenomenon-sand {
-  0% {
-    transform: translate3d(-24vw, 0, 0);
-    opacity: 0;
-  }
-  15% {
-    opacity: var(--p-opacity, 0.65);
-  }
-  85% {
-    opacity: var(--p-opacity, 0.65);
-  }
-  100% {
-    transform: translate3d(124vw, 6vh, 0);
-    opacity: 0;
-  }
-}
-
-@keyframes weather-window-rivulet {
-  0% {
-    transform: translate3d(0, -4vh, 0) scaleY(0.82);
-    opacity: 0;
-  }
-  16% {
-    opacity: var(--wdrop-opacity, 0.5);
-  }
-  78% {
-    opacity: var(--wdrop-opacity, 0.5);
-  }
-  100% {
-    transform: translate3d(0.4vw, 24vh, 0) scaleY(1.18);
-    opacity: 0;
-  }
-}
-
-@keyframes weather-rain-fall {
-  0% { transform: translate3d(0, 0, 0) rotate(var(--weather-rain-angle, 11deg)); opacity: 0; }
-  12% { opacity: calc(var(--weather-rain-opacity) * var(--drop-opacity-scale)); }
-  100% { transform: translate3d(var(--drop-drift), var(--weather-rain-fall-distance, 118vh), 0) rotate(var(--weather-rain-angle, 11deg)); opacity: 0; }
-}
-
-@keyframes weather-snow-fall {
-  0% { transform: translate3d(0, 0, 0); }
-  25% { transform: translate3d(var(--flake-drift-a), 29vh, 0); }
-  50% { transform: translate3d(var(--flake-drift-b), 58vh, 0); }
-  75% { transform: translate3d(var(--flake-drift-c), 87vh, 0); }
-  100% { transform: translate3d(var(--flake-drift-end), 116vh, 0); }
-}
-
-@keyframes weather-snow-shimmer {
-  0%, 100% { filter: brightness(0.78); }
-  50% { filter: brightness(1.22); }
-}
-
-@keyframes weather-splash {
-  0% { transform: translate3d(0, 2px, 0) scale(0.2) rotate(0deg); opacity: 0; }
-  18% { opacity: calc(var(--weather-rain-opacity) * var(--splash-opacity-scale)); }
-  42% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1) rotate(var(--splash-tilt, 0deg)); }
-  62% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35) rotate(var(--splash-tilt, 0deg)); opacity: 0; }
-  100% { transform: translate3d(0, var(--splash-lift, -7px), 0) scale(1.35) rotate(var(--splash-tilt, 0deg)); opacity: 0; }
-}
-
-@keyframes weather-ripple {
-  0% { transform: scale(0.15); opacity: 0; }
-  18% { opacity: calc(var(--weather-rain-opacity) * var(--ripple-opacity-scale)); }
-  100% { transform: scale(3); opacity: 0; }
-}
-
-@keyframes weather-wind-gust {
-  0% { transform: translate3d(-18vw, 0, 0); opacity: 0; }
-  8% { opacity: 1; }
-  35% { transform: translate3d(46vw, -5px, 0); }
-  70% { transform: translate3d(108vw, 4px, 0); opacity: 1; }
-  100% { transform: translate3d(168vw, 0, 0); opacity: 0; }
-}
-
-@keyframes weather-lightning-strike {
-  0% { opacity: 0; }
-  2% { opacity: 1; }
-  8% { opacity: 0.15; }
-  14% { opacity: 0.95; }
-  22% { opacity: 0.08; }
-  30% { opacity: 0.6; }
-  45% { opacity: 0.02; }
-  52% { opacity: 0.35; }
-  70% { opacity: 0; }
-  100% { opacity: 0; }
-}
-
-@keyframes weather-lightning-glow-flash {
-  0% { opacity: 0; }
-  3% { opacity: 0.7; }
-  10% { opacity: 0.08; }
-  17% { opacity: 0.55; }
-  28% { opacity: 0.04; }
-  38% { opacity: 0.3; }
-  60% { opacity: 0; }
-  100% { opacity: 0; }
-}
-
-@keyframes weather-flash-sequence {
-  0% { opacity: 0; }
-  3% { opacity: var(--weather-flash-opacity); }
-  10% { opacity: calc(var(--weather-flash-opacity) * 0.12); }
-  17% { opacity: calc(var(--weather-flash-opacity) * 0.82); }
-  28% { opacity: calc(var(--weather-flash-opacity) * 0.06); }
-  38% { opacity: calc(var(--weather-flash-opacity) * 0.4); }
-  60% { opacity: 0; }
-  100% { opacity: 0; }
 }
 
 @media (max-width: 768px) {
-  .weather-fx-root {
-    --weather-cloud-size-scale: 0.62;
-    --weather-rain-fall-distance: 160vh;
-    --weather-rain-particle-scale: 0.68;
-  }
-
-  .weather-fx-cloud {
-    transform-origin: 50% 0;
-  }
-
   .weather-settings-card-header {
     align-items: start;
   }
@@ -8574,24 +7812,6 @@ var WEATHER_HUD_CSS = `
   .weather-hud-time {
     font-size: 24px;
   }
-}
-
-.weather-hud-widget[data-reduced-motion="true"]::after {
-  animation: none;
-}
-
-.weather-hud-widget[data-reduced-motion="true"] .weather-hud-summary {
-  display: block;
-  width: auto;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  animation: none;
-}
-
-.weather-hud-widget[data-reduced-motion="true"] .weather-hud-summary::after {
-  content: none;
 }
 `;
 
@@ -9074,6 +8294,7 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     wind,
     icon,
     temp,
+    summaryViewport,
     summary,
     source,
     phenomenonBadge,
@@ -9192,6 +8413,7 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   hud.root.dataset.timePhase = phase;
   hud.root.dataset.layer = prefs.layerMode;
   hud.root.dataset.paused = prefs.pauseEffects ? "true" : "false";
+  hud.root.dataset.effects = prefs.effectsEnabled ? "true" : "false";
   hud.root.style.setProperty("--weather-hud-scene-intensity", sceneIntensity.toFixed(2));
   const solar = resolveSolarArc(displayState.date, displayState.time);
   const lunar = resolveLunarPhase(displayState.date, displayState.time);
@@ -9211,17 +8433,40 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
     hud.phenomenonBadge.textContent = "";
     delete hud.phenomenonBadge.dataset.phenomenon;
   }
+  const iconKey = `${displayState.condition}:${phase}`;
   const iconMarkup = conditionIcon(displayState.condition, phase);
-  hud.icon.innerHTML = iconMarkup;
+  if (hud.icon.dataset.iconKey !== iconKey) {
+    hud.icon.dataset.iconKey = iconKey;
+    hud.icon.innerHTML = iconMarkup;
+  }
   const iconLabel = conditionIconLabel(displayState.condition, phase);
   hud.icon.setAttribute("role", "img");
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
   const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
-  hud.summary.textContent = summaryText;
-  hud.summary.title = summaryText;
-  hud.summary.dataset.tickerText = summaryText;
+  const summaryChanged = hud.summary.dataset.tickerText !== summaryText;
+  if (summaryChanged) {
+    hud.summary.textContent = summaryText;
+    hud.summary.title = summaryText;
+    hud.summary.dataset.tickerText = summaryText;
+    hud.summaryViewport.dataset.overflow = "false";
+    const viewportW = hud.summaryViewport.clientWidth;
+    if (viewportW > 0) {
+      if (hud.summary.scrollWidth > viewportW + 1) {
+        hud.summaryViewport.dataset.overflow = "true";
+      }
+    } else if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        if (!hud.summaryViewport.isConnected)
+          return;
+        const measuredW = hud.summaryViewport.clientWidth;
+        if (measuredW > 0 && hud.summary.scrollWidth > measuredW + 1) {
+          hud.summaryViewport.dataset.overflow = "true";
+        }
+      });
+    }
+  }
   const windBase = `Wind ${displayState.wind}${displayState.windDirection === "none" ? "" : ` from ${displayState.windDirection}`}`;
   const windExtras = [];
   if (exposure !== "outdoor")
@@ -9236,11 +8481,18 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   hud.source.textContent = hud.root.dataset.error === "true" ? "Update failed" : permissionLimited ? "Permission needed" : state ? displayState.source === "manual" ? "Scene lock" : "Story sync" : "Waiting";
   const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
   hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
-  hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  const toggleIconKey = mobilePanel ? "close" : expanded ? "up" : "down";
+  if (hud.drawerToggleIcon.dataset.toggleIconKey !== toggleIconKey) {
+    hud.drawerToggleIcon.dataset.toggleIconKey = toggleIconKey;
+    hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  }
   hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   hud.drawerToggle.setAttribute("aria-label", mobilePanel ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls");
   if (hud.launcherButton && hud.launcherIcon) {
-    hud.launcherIcon.innerHTML = iconMarkup;
+    if (hud.launcherIcon.dataset.iconKey !== iconKey) {
+      hud.launcherIcon.dataset.iconKey = iconKey;
+      hud.launcherIcon.innerHTML = iconMarkup;
+    }
     const launcherLabel = state ? `Open LumiWeather: ${displayState.location}, ${displayState.condition}, ${formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit)}` : "Open LumiWeather: waiting for a weather update";
     hud.launcherButton.setAttribute("aria-label", launcherLabel);
     hud.launcherButton.title = launcherLabel;
@@ -9483,14 +8735,27 @@ function setup(ctx) {
     return backChanged || frontChanged;
   };
   let hostObserver = null;
+  let hostRetryTimer = null;
   const stopHostObserver = () => {
     hostObserver?.disconnect();
     hostObserver = null;
+    if (hostRetryTimer !== null) {
+      window.clearTimeout(hostRetryTimer);
+      hostRetryTimer = null;
+    }
   };
   const ensureHostObserver = () => {
+    if (!activeChatId || !currentPrefs.effectsEnabled) {
+      stopHostObserver();
+      return;
+    }
     if (hostObserver || !document.body)
       return;
     hostObserver = new MutationObserver((records) => {
+      if (!activeChatId || !currentPrefs.effectsEnabled) {
+        stopHostObserver();
+        return;
+      }
       if (backFx.host && backFx.host.isConnected && backFx.root.parentElement === backFx.host && frontFx.host && frontFx.host.isConnected && frontFx.root.parentElement === frontFx.host) {
         let relevant = false;
         for (let i = 0;i < records.length; i += 1) {
@@ -9506,12 +8771,23 @@ function setup(ctx) {
         }
         if (!relevant)
           return;
+        queueFxRootAttach();
+        return;
       }
-      queueFxRootAttach();
+      if (hostRetryTimer === null && hostSyncFrame === null) {
+        hostRetryTimer = window.setTimeout(() => {
+          hostRetryTimer = null;
+          queueFxRootAttach();
+        }, 200);
+      }
     });
     hostObserver.observe(document.body, { childList: true, subtree: true });
   };
   const queueFxRootAttach = () => {
+    if (hostRetryTimer !== null) {
+      window.clearTimeout(hostRetryTimer);
+      hostRetryTimer = null;
+    }
     if (hostSyncFrame !== null)
       return;
     hostSyncFrame = window.requestAnimationFrame(() => {
@@ -9713,16 +8989,24 @@ function setup(ctx) {
     applySceneState(frontFx, sceneState, currentPrefs, reducedMotion, showFront, scheduleStormFlash);
     soundscape.sync(currentState, currentPrefs, showEffects);
     scheduleStormFlash();
+    ensureHostObserver();
   };
   const clockTimer = window.setInterval(() => {
-    if (!hud)
+    if (!hud || document.visibilityState === "hidden")
       return;
     const clockMode = currentPrefs.clockMode;
     if (clockMode === "story")
       return;
     if (clockMode === "auto" && currentState?.source !== "manual")
       return;
-    syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
+    const displayState = currentState ?? makeDefaultWeatherState();
+    const liveDate = resolveClockDate(displayState, clockMode);
+    const nextPhase = resolveHudTimePhase2(displayState, liveDate);
+    if (hud.root.dataset.timePhase !== nextPhase) {
+      syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
+      return;
+    }
+    syncHudClock(hud, displayState, currentState !== null, liveDate);
   }, 1000);
   cleanups.push(() => window.clearInterval(clockTimer));
   const onMotionChange = () => updateScene();

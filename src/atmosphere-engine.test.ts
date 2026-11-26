@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { parseCssColorToRgba, resolveAtmosphereUniformTarget } from "./atmosphere-engine";
+import {
+  bakeCloudAtlasPixels,
+  hasAtmosphereLayerContent,
+  parseCssColorToRgba,
+  resolveAtmosphereTargetFps,
+  resolveAtmosphereUniformTarget,
+} from "./atmosphere-engine";
 import {
   ATMOSPHERE_FRAGMENT_SHADER,
   CLOUD_FRAGMENT_SHADER,
@@ -8,6 +14,7 @@ import {
 } from "./atmosphere-shaders";
 import { DEFAULT_PREFS, makeDefaultWeatherState } from "./shared";
 import { resolveSceneTokens } from "./scene-tokens";
+import { WEATHER_HUD_CSS } from "./ui/styles";
 
 describe("parseCssColorToRgba", () => {
   test("parses #rgb and #rrggbb hex strings into normalized RGBA tuples", () => {
@@ -213,5 +220,144 @@ describe("resolveAtmosphereUniformTarget", () => {
     expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("uniform vec2 u_moonPos;");
     expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("auroraAspect");
     expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("beamTargetAngle");
+  });
+
+  test("paces frame rate by scene motion and throttles unfocused windows", () => {
+    const clearNight = {
+      ...makeDefaultWeatherState(),
+      condition: "clear" as const,
+      palette: "night" as const,
+      intensity: 0.5,
+    };
+    const clearBack = resolveAtmosphereUniformTarget(
+      clearNight,
+      resolveSceneTokens(clearNight, 0.5),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(
+      resolveAtmosphereTargetFps(clearBack, clearNight, {
+        windowFocused: true,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(15);
+    expect(
+      resolveAtmosphereTargetFps(clearBack, clearNight, {
+        windowFocused: false,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(4);
+
+    const storm = {
+      ...makeDefaultWeatherState(),
+      condition: "storm" as const,
+      palette: "storm" as const,
+      intensity: 0.9,
+    };
+    const stormBack = resolveAtmosphereUniformTarget(
+      storm,
+      resolveSceneTokens(storm, 0.9),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(
+      resolveAtmosphereTargetFps(stormBack, storm, {
+        windowFocused: true,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(30);
+    expect(
+      resolveAtmosphereTargetFps(stormBack, storm, {
+        windowFocused: true,
+        lightningActive: true,
+        transitioning: false,
+      }),
+    ).toBe(60);
+  });
+
+  test("detects empty front layers on clear nights so idle canvases stop animating", () => {
+    const clearNight = {
+      ...makeDefaultWeatherState(),
+      condition: "clear" as const,
+      palette: "night" as const,
+      intensity: 0.6,
+    };
+    const tokens = resolveSceneTokens(clearNight, 0.6);
+    const frontUniforms = resolveAtmosphereUniformTarget(
+      clearNight,
+      tokens,
+      { ...DEFAULT_PREFS, layerMode: "both" },
+      "front",
+    );
+    const backUniforms = resolveAtmosphereUniformTarget(
+      clearNight,
+      tokens,
+      { ...DEFAULT_PREFS, layerMode: "both" },
+      "back",
+    );
+
+    expect(hasAtmosphereLayerContent(frontUniforms, clearNight, false)).toBe(false);
+    expect(hasAtmosphereLayerContent(backUniforms, clearNight, false)).toBe(true);
+
+    const rain = {
+      ...makeDefaultWeatherState(),
+      condition: "rain" as const,
+      palette: "day" as const,
+      intensity: 0.8,
+    };
+    const rainFront = resolveAtmosphereUniformTarget(
+      rain,
+      resolveSceneTokens(rain, 0.8),
+      { ...DEFAULT_PREFS, layerMode: "both" },
+      "front",
+    );
+    expect(hasAtmosphereLayerContent(rainFront, rain, false)).toBe(true);
+  });
+
+  test("pre-bakes cloud atlas feathering and rim channels for single-tap shader reads", () => {
+    const w = 32;
+    const h = 32;
+    const src = new Uint8ClampedArray(w * h * 4);
+    // Draw a solid white cloud rectangle in the middle of a 1x1 cell
+    for (let y = 10; y <= 20; y += 1) {
+      for (let x = 8; x <= 23; x += 1) {
+        const idx = (y * w + x) * 4;
+        src[idx] = 240;
+        src[idx + 1] = 240;
+        src[idx + 2] = 240;
+        src[idx + 3] = 255;
+      }
+    }
+
+    const baked = bakeCloudAtlasPixels(src, w, h, 1, 1);
+
+    // Transparent corner gets neutral mipmap padding
+    expect(baked[0]).toBe(168);
+    expect(baked[1]).toBe(128);
+    expect(baked[2]).toBe(0);
+    expect(baked[3]).toBe(0);
+
+    // Top cloud edge encodes positive top-rim delta (G > 128)
+    const topEdgeIdx = (10 * w + 15) * 4;
+    expect(baked[topEdgeIdx + 1]).toBeGreaterThan(128);
+    expect(baked[topEdgeIdx + 3]).toBeGreaterThan(100);
+
+    // Bottom cloud edge encodes positive bottom-rim (B > 0)
+    const bottomEdgeIdx = (20 * w + 15) * 4;
+    expect(baked[bottomEdgeIdx + 2]).toBeGreaterThan(0);
+
+    // Cloud fragment shader uses a single atlas texture fetch instead of 5 live taps
+    const atlasFetches = CLOUD_FRAGMENT_SHADER.match(/texture2D\s*\(\s*u_atlas/g) ?? [];
+    expect(atlasFetches.length).toBe(1);
+  });
+
+  test("gates FBM fog in clear skies and strips legacy HUD blur animations and @property rules", () => {
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("if (fogStrength > 0.045)");
+    expect(WEATHER_HUD_CSS).not.toContain("@property --weather-");
+    expect(WEATHER_HUD_CSS).not.toContain("weather-hud-drift");
+    expect(WEATHER_HUD_CSS).not.toContain("filter: blur(30px)");
   });
 });
