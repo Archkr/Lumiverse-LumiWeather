@@ -83,6 +83,7 @@ export interface AtmosphereUniforms {
   isIndoor: number;
   isUnderground: number;
   backdropBoost: number;
+  backdropDarken: number;
   renderAtmosphereShader: boolean;
 }
 
@@ -311,9 +312,17 @@ export function measureHostBackgroundOpacity(root: HTMLElement | null): number {
   }
 
   if (maxOpacity < 0.99 && typeof document !== "undefined") {
+    const chatBackdrop = document.querySelector('[class*="chatBackdrop"]');
+    if (chatBackdrop && chatBackdrop !== chatView) {
+      inspectContainerChildren(chatBackdrop);
+    }
     const globalSceneBg = document.querySelector('[class*="sceneBackgroundLayer"]');
     inspectLayer(globalSceneBg);
-    if (globalSceneBg?.parentElement && globalSceneBg.parentElement !== chatView) {
+    if (
+      globalSceneBg?.parentElement &&
+      globalSceneBg.parentElement !== chatView &&
+      globalSceneBg.parentElement !== chatBackdrop
+    ) {
       inspectContainerChildren(globalSceneBg.parentElement);
     }
     const fixedLayers = document.querySelectorAll('[class*="fixed"]');
@@ -385,11 +394,13 @@ export function resolveAtmosphereUniformTarget(
     rawCloudEdge,
   );
 
-  // When Lumiverse's wallpaper/scene background is opaque (e.g. 100%), lift atmospheric
-  // lighting grade, cloud density, and precipitation contrast so night/storm/dusk moods
-  // and particles remain clearly visible over vivid artwork.
-  const exposureLiftScale = exposure === "underground" ? 0.28 : exposure === "indoor" ? 0.52 : 1;
+  // When Lumiverse's wallpaper/scene background is opaque (e.g. 100%), apply a clean
+  // atmospheric shadow grade (`backdropDarken`) plus targeted sky/cloud/particle contrast
+  // so dark weather (night, storm, rain, dusk, overcast, cavern) dims bright daylight
+  // wallpapers naturally without milky haze.
+  const exposureLiftScale = exposure === "underground" ? 0.35 : exposure === "indoor" ? 0.78 : 1;
   const bgLift = safeBackdropBoost * exposureLiftScale;
+  let backdropDarken = 0;
   let skyOpacityLift = 0;
   let horizonOpacityLift = 0;
   let glowOpacityLift = 0;
@@ -397,29 +408,47 @@ export function resolveAtmosphereUniformTarget(
   let fogOpacityLift = 0;
   let mistOpacityLift = 0;
 
-  if (bgLift > 0.001) {
-    if (state.condition === "storm") {
-      skyOpacityLift = 0.34 * bgLift;
-      horizonOpacityLift = 0.10 * bgLift;
-      mistOpacityLift = 0.08 * bgLift;
+  if (safeBackdropBoost > 0.001) {
+    if (exposure === "underground") {
+      backdropDarken = 0.54 * safeBackdropBoost;
+      skyOpacityLift = 0.08 * safeBackdropBoost;
+    } else if (state.condition === "storm") {
+      backdropDarken = (state.palette === "night" ? 0.64 : 0.52) * bgLift;
+      skyOpacityLift = 0.18 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
     } else if (state.palette === "night") {
-      skyOpacityLift = (state.condition === "clear" ? 0.36 : 0.30) * bgLift;
-      horizonOpacityLift = 0.08 * bgLift;
+      backdropDarken = (state.condition === "clear" ? 0.58 : 0.56) * bgLift;
+      skyOpacityLift = (state.condition === "clear" ? 0.22 : 0.18) * bgLift;
+      horizonOpacityLift = 0.05 * bgLift;
     } else if (state.condition === "rain") {
-      skyOpacityLift = 0.24 * bgLift;
-      mistOpacityLift = 0.08 * bgLift;
-    } else if (state.palette === "dusk" || state.palette === "dawn") {
+      backdropDarken = 0.40 * bgLift;
+      skyOpacityLift = 0.16 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
+    } else if (state.palette === "dusk") {
+      backdropDarken = 0.36 * bgLift;
       skyOpacityLift = 0.18 * bgLift;
       horizonOpacityLift = 0.16 * bgLift;
       glowOpacityLift = 0.10 * bgLift;
+    } else if (state.palette === "dawn") {
+      backdropDarken = 0.24 * bgLift;
+      skyOpacityLift = 0.16 * bgLift;
+      horizonOpacityLift = 0.16 * bgLift;
+      glowOpacityLift = 0.10 * bgLift;
     } else if (state.condition === "fog") {
-      skyOpacityLift = 0.14 * bgLift;
-      fogOpacityLift = 0.14 * bgLift;
-      mistOpacityLift = 0.12 * bgLift;
-    } else if (state.condition === "cloudy" || state.condition === "snow") {
+      backdropDarken = 0.22 * bgLift;
       skyOpacityLift = 0.12 * bgLift;
-      mistOpacityLift = 0.06 * bgLift;
+      fogOpacityLift = 0.12 * bgLift;
+      mistOpacityLift = 0.10 * bgLift;
+    } else if (state.condition === "cloudy") {
+      backdropDarken = 0.20 * bgLift;
+      skyOpacityLift = 0.12 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
+    } else if (state.condition === "snow") {
+      backdropDarken = 0.18 * bgLift;
+      skyOpacityLift = 0.10 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
     } else {
+      backdropDarken = 0.04 * bgLift;
       skyOpacityLift = 0.06 * bgLift;
       glowOpacityLift = 0.14 * bgLift;
       beamOpacityLift = 0.14 * bgLift;
@@ -483,6 +512,7 @@ export function resolveAtmosphereUniformTarget(
     isIndoor: exposure === "indoor" ? 1 : 0,
     isUnderground: exposure === "underground" ? 1 : 0,
     backdropBoost: safeBackdropBoost,
+    backdropDarken: isFront && isBoth ? 0 : clamp(backdropDarken, 0, 0.72),
     renderAtmosphereShader,
   };
 }
@@ -547,6 +577,7 @@ function interpolateUniforms(from: AtmosphereUniforms, to: AtmosphereUniforms, t
     isIndoor: lerp(from.isIndoor, to.isIndoor, ease),
     isUnderground: lerp(from.isUnderground, to.isUnderground, ease),
     backdropBoost: lerp(from.backdropBoost, to.backdropBoost, ease),
+    backdropDarken: lerp(from.backdropDarken, to.backdropDarken, ease),
     renderAtmosphereShader: to.renderAtmosphereShader,
   };
 }
@@ -1518,6 +1549,7 @@ export class AtmosphereEngine {
         "u_isIndoor",
         "u_lightningFlash",
         "u_lightningX",
+        "u_backdropDarken",
       ];
       for (const name of atmoUniformNames) {
         this.atmoLocs[name] = gl.getUniformLocation(atmoProgram, name);
@@ -2034,6 +2066,7 @@ export class AtmosphereEngine {
     gl.uniform1f(loc.u_isIndoor ?? null, u.isIndoor);
     gl.uniform1f(loc.u_lightningFlash ?? null, lightningFlicker * (0.45 + u.flashOpacity));
     gl.uniform1f(loc.u_lightningX ?? null, this.lightningX);
+    gl.uniform1f(loc.u_backdropDarken ?? null, u.backdropDarken);
 
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }

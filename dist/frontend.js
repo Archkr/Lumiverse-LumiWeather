@@ -81,6 +81,7 @@ var ATMOSPHERE_FRAGMENT_SHADER = `
   uniform float u_isIndoor;
   uniform float u_lightningFlash;
   uniform float u_lightningX;
+  uniform float u_backdropDarken;
 
   float hash21(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
@@ -148,6 +149,18 @@ var ATMOSPHERE_FRAGMENT_SHADER = `
     float aspect = u_resolution.x / max(1.0, u_resolution.y);
     vec3 outRgb = vec3(0.0);
     float outA = 0.0;
+
+    // 0. Adaptive dark ambient lighting grade for opaque backgrounds (night, storm, rain, dusk, cavern)
+    // Darkens bright daylight wallpapers cleanly toward deep atmospheric shadow instead of milky haze,
+    // and momentarily lifts during lightning flashes so strikes illuminate the scene.
+    if (u_backdropDarken > 0.003) {
+      float flashLift = 1.0 - clamp(u_lightningFlash * 0.58, 0.0, 0.62);
+      float edgeDepth = smoothstep(0.15, 0.95, length((uv - vec2(0.5, 0.52)) * vec2(1.15, 1.0)));
+      float vertGrade = mix(1.06, 0.92, smoothstep(0.0, 1.0, uv.y));
+      float darkAlpha = clamp(u_backdropDarken * vertGrade * (0.94 + 0.12 * edgeDepth) * flashLift, 0.0, 0.78);
+      vec3 darkInk = mix(vec3(0.015, 0.028, 0.055), u_bgStart.rgb * 0.42, 0.55);
+      composePremul(outRgb, outA, darkInk, darkAlpha, 0.0);
+    }
 
     // 1. Multi-stop vertical + diagonal atmospheric sky gradient
     if (u_skyOpacity > 0.003) {
@@ -295,7 +308,9 @@ var ATMOSPHERE_FRAGMENT_SHADER = `
         fogCol = mix(deepOchre, brightSand, clamp(fNear * 0.8 + (1.0 - uv.y) * 0.3, 0.0, 1.0));
       } else {
         vec3 baseMist = mix(u_fogColor.rgb, u_mistColor.rgb, smoothstep(0.35, 0.95, uv.y));
-        vec3 pearlCrest = mix(baseMist, vec3(0.94, 0.97, 1.0), 0.32);
+        float skyLuma = dot(u_bgMid.rgb, vec3(0.299, 0.587, 0.114));
+        float pearlWeight = smoothstep(0.14, 0.48, skyLuma) * 0.32;
+        vec3 pearlCrest = mix(baseMist, vec3(0.94, 0.97, 1.0), pearlWeight);
         fogCol = mix(baseMist, pearlCrest, fNear * 0.65);
       }
 
@@ -1565,9 +1580,13 @@ function measureHostBackgroundOpacity(root) {
     inspectContainerChildren(chatView);
   }
   if (maxOpacity < 0.99 && typeof document !== "undefined") {
+    const chatBackdrop = document.querySelector('[class*="chatBackdrop"]');
+    if (chatBackdrop && chatBackdrop !== chatView) {
+      inspectContainerChildren(chatBackdrop);
+    }
     const globalSceneBg = document.querySelector('[class*="sceneBackgroundLayer"]');
     inspectLayer(globalSceneBg);
-    if (globalSceneBg?.parentElement && globalSceneBg.parentElement !== chatView) {
+    if (globalSceneBg?.parentElement && globalSceneBg.parentElement !== chatView && globalSceneBg.parentElement !== chatBackdrop) {
       inspectContainerChildren(globalSceneBg.parentElement);
     }
     const fixedLayers = document.querySelectorAll('[class*="fixed"]');
@@ -1610,37 +1629,56 @@ function resolveAtmosphereUniformTarget(state, tokens, prefs, kind, backdropBoos
   const fogColor = parseCssColorToRgba(tokens.fogColor);
   const mistColor = parseCssColorToRgba(tokens.mistColor);
   const cloudPalette = resolveCloudLightingPalette(state.palette, state.condition, bgStart, bgEnd, glow, rawCloudCore, rawCloudEdge);
-  const exposureLiftScale = exposure === "underground" ? 0.28 : exposure === "indoor" ? 0.52 : 1;
+  const exposureLiftScale = exposure === "underground" ? 0.35 : exposure === "indoor" ? 0.78 : 1;
   const bgLift = safeBackdropBoost * exposureLiftScale;
+  let backdropDarken = 0;
   let skyOpacityLift = 0;
   let horizonOpacityLift = 0;
   let glowOpacityLift = 0;
   let beamOpacityLift = 0;
   let fogOpacityLift = 0;
   let mistOpacityLift = 0;
-  if (bgLift > 0.001) {
-    if (state.condition === "storm") {
-      skyOpacityLift = 0.34 * bgLift;
-      horizonOpacityLift = 0.1 * bgLift;
-      mistOpacityLift = 0.08 * bgLift;
+  if (safeBackdropBoost > 0.001) {
+    if (exposure === "underground") {
+      backdropDarken = 0.54 * safeBackdropBoost;
+      skyOpacityLift = 0.08 * safeBackdropBoost;
+    } else if (state.condition === "storm") {
+      backdropDarken = (state.palette === "night" ? 0.64 : 0.52) * bgLift;
+      skyOpacityLift = 0.18 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
     } else if (state.palette === "night") {
-      skyOpacityLift = (state.condition === "clear" ? 0.36 : 0.3) * bgLift;
-      horizonOpacityLift = 0.08 * bgLift;
+      backdropDarken = (state.condition === "clear" ? 0.58 : 0.56) * bgLift;
+      skyOpacityLift = (state.condition === "clear" ? 0.22 : 0.18) * bgLift;
+      horizonOpacityLift = 0.05 * bgLift;
     } else if (state.condition === "rain") {
-      skyOpacityLift = 0.24 * bgLift;
-      mistOpacityLift = 0.08 * bgLift;
-    } else if (state.palette === "dusk" || state.palette === "dawn") {
+      backdropDarken = 0.4 * bgLift;
+      skyOpacityLift = 0.16 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
+    } else if (state.palette === "dusk") {
+      backdropDarken = 0.36 * bgLift;
       skyOpacityLift = 0.18 * bgLift;
       horizonOpacityLift = 0.16 * bgLift;
       glowOpacityLift = 0.1 * bgLift;
+    } else if (state.palette === "dawn") {
+      backdropDarken = 0.24 * bgLift;
+      skyOpacityLift = 0.16 * bgLift;
+      horizonOpacityLift = 0.16 * bgLift;
+      glowOpacityLift = 0.1 * bgLift;
     } else if (state.condition === "fog") {
-      skyOpacityLift = 0.14 * bgLift;
-      fogOpacityLift = 0.14 * bgLift;
-      mistOpacityLift = 0.12 * bgLift;
-    } else if (state.condition === "cloudy" || state.condition === "snow") {
+      backdropDarken = 0.22 * bgLift;
       skyOpacityLift = 0.12 * bgLift;
-      mistOpacityLift = 0.06 * bgLift;
+      fogOpacityLift = 0.12 * bgLift;
+      mistOpacityLift = 0.1 * bgLift;
+    } else if (state.condition === "cloudy") {
+      backdropDarken = 0.2 * bgLift;
+      skyOpacityLift = 0.12 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
+    } else if (state.condition === "snow") {
+      backdropDarken = 0.18 * bgLift;
+      skyOpacityLift = 0.1 * bgLift;
+      mistOpacityLift = 0.04 * bgLift;
     } else {
+      backdropDarken = 0.04 * bgLift;
       skyOpacityLift = 0.06 * bgLift;
       glowOpacityLift = 0.14 * bgLift;
       beamOpacityLift = 0.14 * bgLift;
@@ -1691,6 +1729,7 @@ function resolveAtmosphereUniformTarget(state, tokens, prefs, kind, backdropBoos
     isIndoor: exposure === "indoor" ? 1 : 0,
     isUnderground: exposure === "underground" ? 1 : 0,
     backdropBoost: safeBackdropBoost,
+    backdropDarken: isFront && isBoth ? 0 : clamp(backdropDarken, 0, 0.72),
     renderAtmosphereShader
   };
 }
@@ -1754,6 +1793,7 @@ function interpolateUniforms(from, to, t) {
     isIndoor: lerp(from.isIndoor, to.isIndoor, ease),
     isUnderground: lerp(from.isUnderground, to.isUnderground, ease),
     backdropBoost: lerp(from.backdropBoost, to.backdropBoost, ease),
+    backdropDarken: lerp(from.backdropDarken, to.backdropDarken, ease),
     renderAtmosphereShader: to.renderAtmosphereShader
   };
 }
@@ -2471,7 +2511,8 @@ class AtmosphereEngine {
         "u_isSandstorm",
         "u_isIndoor",
         "u_lightningFlash",
-        "u_lightningX"
+        "u_lightningX",
+        "u_backdropDarken"
       ];
       for (const name of atmoUniformNames) {
         this.atmoLocs[name] = gl.getUniformLocation(atmoProgram, name);
@@ -2898,6 +2939,7 @@ class AtmosphereEngine {
     gl.uniform1f(loc.u_isIndoor ?? null, u.isIndoor);
     gl.uniform1f(loc.u_lightningFlash ?? null, lightningFlicker * (0.45 + u.flashOpacity));
     gl.uniform1f(loc.u_lightningX ?? null, this.lightningX);
+    gl.uniform1f(loc.u_backdropDarken ?? null, u.backdropDarken);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
   renderCloudPass(gl, u, clientW, clientH, dt, lightningFlicker, frontMaskFlag, fxProfile) {
@@ -3723,20 +3765,20 @@ function resolveSceneTokens(state, intensity) {
       horizon: "rgba(224, 149, 114, 0.34)"
     },
     night: {
-      start: "#05101d",
-      mid: "#10253c",
-      end: "#274768",
-      glow: "rgba(143, 180, 255, 0.48)",
-      beam: "rgba(130, 164, 234, 0.2)",
-      horizon: "rgba(74, 104, 154, 0.26)"
+      start: "#040c18",
+      mid: "#0a182b",
+      end: "#152b44",
+      glow: "rgba(128, 166, 240, 0.42)",
+      beam: "rgba(116, 150, 222, 0.18)",
+      horizon: "rgba(48, 74, 118, 0.22)"
     },
     storm: {
-      start: "#04101a",
-      mid: "#13283a",
-      end: "#33475f",
-      glow: "rgba(188, 220, 255, 0.26)",
-      beam: "rgba(168, 203, 236, 0.16)",
-      horizon: "rgba(108, 139, 170, 0.26)"
+      start: "#030912",
+      mid: "#0a1624",
+      end: "#162638",
+      glow: "rgba(156, 192, 232, 0.22)",
+      beam: "rgba(136, 174, 212, 0.12)",
+      horizon: "rgba(56, 80, 108, 0.2)"
     },
     mist: {
       start: "#213141",
@@ -3757,12 +3799,12 @@ function resolveSceneTokens(state, intensity) {
   };
   const basePalette = paletteMap[state.palette];
   const palette = state.condition === "storm" ? paletteMap.storm : state.condition === "rain" ? {
-    start: state.palette === "night" ? "#07131f" : "#102032",
-    mid: state.palette === "night" ? "#1d3148" : "#324b67",
-    end: state.palette === "night" ? "#41566e" : "#61748b",
-    glow: "rgba(176, 206, 240, 0.22)",
-    beam: "rgba(135, 165, 198, 0.1)",
-    horizon: "rgba(120, 147, 174, 0.24)"
+    start: state.palette === "night" ? "#050d17" : "#0c1928",
+    mid: state.palette === "night" ? "#101f32" : "#21364e",
+    end: state.palette === "night" ? "#1e3046" : "#3f556c",
+    glow: state.palette === "night" ? "rgba(128, 162, 208, 0.16)" : "rgba(162, 194, 228, 0.2)",
+    beam: "rgba(125, 155, 188, 0.1)",
+    horizon: state.palette === "night" ? "rgba(54, 76, 104, 0.18)" : "rgba(96, 122, 150, 0.2)"
   } : state.condition === "cloudy" && (state.palette === "dawn" || state.palette === "dusk") ? {
     ...basePalette,
     end: state.palette === "dawn" ? "#9baec3" : "#7f90a6",
@@ -3807,41 +3849,41 @@ function resolveSceneTokens(state, intensity) {
       if (state.palette === "night") {
         values.moonlightOpacity = 0.09;
       }
-      cloudCore = "rgba(205, 216, 231, 0.34)";
-      cloudEdge = "rgba(238, 244, 255, 0.12)";
-      fogColor = "rgba(210, 223, 239, 0.18)";
-      mistColor = "rgba(217, 227, 239, 0.2)";
+      cloudCore = state.palette === "night" ? "rgba(88, 104, 128, 0.42)" : "rgba(205, 216, 231, 0.34)";
+      cloudEdge = state.palette === "night" ? "rgba(148, 168, 196, 0.14)" : "rgba(238, 244, 255, 0.12)";
+      fogColor = state.palette === "night" ? "rgba(44, 58, 78, 0.22)" : "rgba(210, 223, 239, 0.18)";
+      mistColor = state.palette === "night" ? "rgba(54, 70, 92, 0.22)" : "rgba(217, 227, 239, 0.2)";
       break;
     case "rain":
       values.skyOpacity = 0.2;
       values.glowOpacity = 0.06;
       values.beamOpacity = 0;
       values.cloudOpacity = 0.7;
-      values.horizonOpacity = 0.16;
-      values.mistOpacity = 0.22;
-      values.fogOpacity = 0.12;
+      values.horizonOpacity = 0.14;
+      values.mistOpacity = 0.18;
+      values.fogOpacity = 0.1;
       values.rainOpacity = 0.82;
       values.moteOpacity = 0;
-      cloudCore = "rgba(87, 106, 128, 0.48)";
-      cloudEdge = "rgba(158, 178, 201, 0.12)";
-      fogColor = "rgba(162, 180, 198, 0.2)";
-      mistColor = "rgba(174, 188, 204, 0.22)";
+      cloudCore = state.palette === "night" ? "rgba(52, 68, 88, 0.56)" : "rgba(87, 106, 128, 0.48)";
+      cloudEdge = state.palette === "night" ? "rgba(112, 134, 162, 0.14)" : "rgba(158, 178, 201, 0.12)";
+      fogColor = state.palette === "night" ? "rgba(38, 52, 70, 0.22)" : "rgba(104, 122, 144, 0.2)";
+      mistColor = state.palette === "night" ? "rgba(48, 64, 84, 0.22)" : "rgba(118, 136, 156, 0.22)";
       break;
     case "storm":
       values.skyOpacity = 0.24;
       values.glowOpacity = 0.05;
       values.beamOpacity = 0;
       values.cloudOpacity = 0.86;
-      values.horizonOpacity = 0.24;
-      values.mistOpacity = 0.28;
-      values.fogOpacity = 0.18;
+      values.horizonOpacity = 0.16;
+      values.mistOpacity = 0.2;
+      values.fogOpacity = 0.14;
       values.rainOpacity = 1.04;
       values.flashOpacity = 0.64;
       values.moteOpacity = 0;
-      cloudCore = "rgba(56, 73, 93, 0.62)";
-      cloudEdge = "rgba(118, 138, 163, 0.12)";
-      fogColor = "rgba(130, 149, 171, 0.22)";
-      mistColor = "rgba(151, 167, 186, 0.24)";
+      cloudCore = "rgba(42, 56, 74, 0.66)";
+      cloudEdge = "rgba(102, 122, 148, 0.14)";
+      fogColor = "rgba(32, 44, 62, 0.26)";
+      mistColor = "rgba(44, 58, 78, 0.26)";
       break;
     case "snow":
       values.skyOpacity = 0.15;
@@ -3853,10 +3895,10 @@ function resolveSceneTokens(state, intensity) {
       values.fogOpacity = 0.08;
       values.snowOpacity = 0.84;
       values.moteOpacity = 0.02;
-      cloudCore = "rgba(232, 238, 247, 0.34)";
-      cloudEdge = "rgba(255, 255, 255, 0.14)";
-      fogColor = "rgba(230, 236, 245, 0.22)";
-      mistColor = "rgba(225, 233, 242, 0.22)";
+      cloudCore = state.palette === "night" ? "rgba(96, 114, 138, 0.38)" : "rgba(232, 238, 247, 0.34)";
+      cloudEdge = state.palette === "night" ? "rgba(164, 184, 210, 0.16)" : "rgba(255, 255, 255, 0.14)";
+      fogColor = state.palette === "night" ? "rgba(48, 64, 86, 0.22)" : "rgba(230, 236, 245, 0.22)";
+      mistColor = state.palette === "night" ? "rgba(58, 76, 98, 0.22)" : "rgba(225, 233, 242, 0.22)";
       break;
     case "fog":
       values.skyOpacity = 0.12;
@@ -3867,10 +3909,10 @@ function resolveSceneTokens(state, intensity) {
       values.mistOpacity = 0.38;
       values.fogOpacity = 0.68;
       values.moteOpacity = 0.01;
-      cloudCore = "rgba(186, 198, 207, 0.28)";
-      cloudEdge = "rgba(232, 239, 244, 0.1)";
-      fogColor = "rgba(223, 230, 236, 0.26)";
-      mistColor = "rgba(217, 224, 231, 0.28)";
+      cloudCore = state.palette === "night" ? "rgba(76, 92, 112, 0.34)" : "rgba(186, 198, 207, 0.28)";
+      cloudEdge = state.palette === "night" ? "rgba(136, 154, 176, 0.12)" : "rgba(232, 239, 244, 0.1)";
+      fogColor = state.palette === "night" ? "rgba(52, 66, 84, 0.28)" : "rgba(223, 230, 236, 0.26)";
+      mistColor = state.palette === "night" ? "rgba(62, 76, 94, 0.28)" : "rgba(217, 224, 231, 0.28)";
       break;
     case "clear":
     default:

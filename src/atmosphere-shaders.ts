@@ -73,6 +73,7 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
   uniform float u_isIndoor;
   uniform float u_lightningFlash;
   uniform float u_lightningX;
+  uniform float u_backdropDarken;
 
   float hash21(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
@@ -140,6 +141,18 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
     float aspect = u_resolution.x / max(1.0, u_resolution.y);
     vec3 outRgb = vec3(0.0);
     float outA = 0.0;
+
+    // 0. Adaptive dark ambient lighting grade for opaque backgrounds (night, storm, rain, dusk, cavern)
+    // Darkens bright daylight wallpapers cleanly toward deep atmospheric shadow instead of milky haze,
+    // and momentarily lifts during lightning flashes so strikes illuminate the scene.
+    if (u_backdropDarken > 0.003) {
+      float flashLift = 1.0 - clamp(u_lightningFlash * 0.58, 0.0, 0.62);
+      float edgeDepth = smoothstep(0.15, 0.95, length((uv - vec2(0.5, 0.52)) * vec2(1.15, 1.0)));
+      float vertGrade = mix(1.06, 0.92, smoothstep(0.0, 1.0, uv.y));
+      float darkAlpha = clamp(u_backdropDarken * vertGrade * (0.94 + 0.12 * edgeDepth) * flashLift, 0.0, 0.78);
+      vec3 darkInk = mix(vec3(0.015, 0.028, 0.055), u_bgStart.rgb * 0.42, 0.55);
+      composePremul(outRgb, outA, darkInk, darkAlpha, 0.0);
+    }
 
     // 1. Multi-stop vertical + diagonal atmospheric sky gradient
     if (u_skyOpacity > 0.003) {
@@ -287,7 +300,9 @@ export const ATMOSPHERE_FRAGMENT_SHADER = `
         fogCol = mix(deepOchre, brightSand, clamp(fNear * 0.8 + (1.0 - uv.y) * 0.3, 0.0, 1.0));
       } else {
         vec3 baseMist = mix(u_fogColor.rgb, u_mistColor.rgb, smoothstep(0.35, 0.95, uv.y));
-        vec3 pearlCrest = mix(baseMist, vec3(0.94, 0.97, 1.0), 0.32);
+        float skyLuma = dot(u_bgMid.rgb, vec3(0.299, 0.587, 0.114));
+        float pearlWeight = smoothstep(0.14, 0.48, skyLuma) * 0.32;
+        vec3 pearlCrest = mix(baseMist, vec3(0.94, 0.97, 1.0), pearlWeight);
         fogCol = mix(baseMist, pearlCrest, fNear * 0.65);
       }
 

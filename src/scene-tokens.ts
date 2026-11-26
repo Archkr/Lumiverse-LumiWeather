@@ -43,20 +43,20 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
       horizon: "rgba(224, 149, 114, 0.34)",
     },
     night: {
-      start: "#05101d",
-      mid: "#10253c",
-      end: "#274768",
-      glow: "rgba(143, 180, 255, 0.48)",
-      beam: "rgba(130, 164, 234, 0.2)",
-      horizon: "rgba(74, 104, 154, 0.26)",
+      start: "#040c18",
+      mid: "#0a182b",
+      end: "#152b44",
+      glow: "rgba(128, 166, 240, 0.42)",
+      beam: "rgba(116, 150, 222, 0.18)",
+      horizon: "rgba(48, 74, 118, 0.22)",
     },
     storm: {
-      start: "#04101a",
-      mid: "#13283a",
-      end: "#33475f",
-      glow: "rgba(188, 220, 255, 0.26)",
-      beam: "rgba(168, 203, 236, 0.16)",
-      horizon: "rgba(108, 139, 170, 0.26)",
+      start: "#030912",
+      mid: "#0a1624",
+      end: "#162638",
+      glow: "rgba(156, 192, 232, 0.22)",
+      beam: "rgba(136, 174, 212, 0.12)",
+      horizon: "rgba(56, 80, 108, 0.2)",
     },
     mist: {
       start: "#213141",
@@ -82,12 +82,12 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
       ? paletteMap.storm
       : state.condition === "rain"
         ? {
-            start: state.palette === "night" ? "#07131f" : "#102032",
-            mid: state.palette === "night" ? "#1d3148" : "#324b67",
-            end: state.palette === "night" ? "#41566e" : "#61748b",
-            glow: "rgba(176, 206, 240, 0.22)",
-            beam: "rgba(135, 165, 198, 0.1)",
-            horizon: "rgba(120, 147, 174, 0.24)",
+            start: state.palette === "night" ? "#050d17" : "#0c1928",
+            mid: state.palette === "night" ? "#101f32" : "#21364e",
+            end: state.palette === "night" ? "#1e3046" : "#3f556c",
+            glow: state.palette === "night" ? "rgba(128, 162, 208, 0.16)" : "rgba(162, 194, 228, 0.2)",
+            beam: "rgba(125, 155, 188, 0.1)",
+            horizon: state.palette === "night" ? "rgba(54, 76, 104, 0.18)" : "rgba(96, 122, 150, 0.2)",
           }
         : state.condition === "cloudy" && (state.palette === "dawn" || state.palette === "dusk")
           ? {
@@ -139,41 +139,41 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
         // Cloud cover hides the stars but leaves a trace of diffused moonlight.
         values.moonlightOpacity = 0.09;
       }
-      cloudCore = "rgba(205, 216, 231, 0.34)";
-      cloudEdge = "rgba(238, 244, 255, 0.12)";
-      fogColor = "rgba(210, 223, 239, 0.18)";
-      mistColor = "rgba(217, 227, 239, 0.2)";
+      cloudCore = state.palette === "night" ? "rgba(88, 104, 128, 0.42)" : "rgba(205, 216, 231, 0.34)";
+      cloudEdge = state.palette === "night" ? "rgba(148, 168, 196, 0.14)" : "rgba(238, 244, 255, 0.12)";
+      fogColor = state.palette === "night" ? "rgba(44, 58, 78, 0.22)" : "rgba(210, 223, 239, 0.18)";
+      mistColor = state.palette === "night" ? "rgba(54, 70, 92, 0.22)" : "rgba(217, 227, 239, 0.2)";
       break;
     case "rain":
       values.skyOpacity = 0.2;
       values.glowOpacity = 0.06;
       values.beamOpacity = 0;
       values.cloudOpacity = 0.7;
-      values.horizonOpacity = 0.16;
-      values.mistOpacity = 0.22;
-      values.fogOpacity = 0.12;
+      values.horizonOpacity = 0.14;
+      values.mistOpacity = 0.18;
+      values.fogOpacity = 0.1;
       values.rainOpacity = 0.82;
       values.moteOpacity = 0;
-      cloudCore = "rgba(87, 106, 128, 0.48)";
-      cloudEdge = "rgba(158, 178, 201, 0.12)";
-      fogColor = "rgba(162, 180, 198, 0.2)";
-      mistColor = "rgba(174, 188, 204, 0.22)";
+      cloudCore = state.palette === "night" ? "rgba(52, 68, 88, 0.56)" : "rgba(87, 106, 128, 0.48)";
+      cloudEdge = state.palette === "night" ? "rgba(112, 134, 162, 0.14)" : "rgba(158, 178, 201, 0.12)";
+      fogColor = state.palette === "night" ? "rgba(38, 52, 70, 0.22)" : "rgba(104, 122, 144, 0.2)";
+      mistColor = state.palette === "night" ? "rgba(48, 64, 84, 0.22)" : "rgba(118, 136, 156, 0.22)";
       break;
     case "storm":
       values.skyOpacity = 0.24;
       values.glowOpacity = 0.05;
       values.beamOpacity = 0;
       values.cloudOpacity = 0.86;
-      values.horizonOpacity = 0.24;
-      values.mistOpacity = 0.28;
-      values.fogOpacity = 0.18;
+      values.horizonOpacity = 0.16;
+      values.mistOpacity = 0.2;
+      values.fogOpacity = 0.14;
       values.rainOpacity = 1.04;
       values.flashOpacity = 0.64;
       values.moteOpacity = 0;
-      cloudCore = "rgba(56, 73, 93, 0.62)";
-      cloudEdge = "rgba(118, 138, 163, 0.12)";
-      fogColor = "rgba(130, 149, 171, 0.22)";
-      mistColor = "rgba(151, 167, 186, 0.24)";
+      cloudCore = "rgba(42, 56, 74, 0.66)";
+      cloudEdge = "rgba(102, 122, 148, 0.14)";
+      fogColor = "rgba(32, 44, 62, 0.26)";
+      mistColor = "rgba(44, 58, 78, 0.26)";
       break;
     case "snow":
       values.skyOpacity = 0.15;
@@ -185,10 +185,10 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
       values.fogOpacity = 0.08;
       values.snowOpacity = 0.84;
       values.moteOpacity = 0.02;
-      cloudCore = "rgba(232, 238, 247, 0.34)";
-      cloudEdge = "rgba(255, 255, 255, 0.14)";
-      fogColor = "rgba(230, 236, 245, 0.22)";
-      mistColor = "rgba(225, 233, 242, 0.22)";
+      cloudCore = state.palette === "night" ? "rgba(96, 114, 138, 0.38)" : "rgba(232, 238, 247, 0.34)";
+      cloudEdge = state.palette === "night" ? "rgba(164, 184, 210, 0.16)" : "rgba(255, 255, 255, 0.14)";
+      fogColor = state.palette === "night" ? "rgba(48, 64, 86, 0.22)" : "rgba(230, 236, 245, 0.22)";
+      mistColor = state.palette === "night" ? "rgba(58, 76, 98, 0.22)" : "rgba(225, 233, 242, 0.22)";
       break;
     case "fog":
       values.skyOpacity = 0.12;
@@ -199,10 +199,10 @@ export function resolveSceneTokens(state: WeatherState, intensity: number): Scen
       values.mistOpacity = 0.38;
       values.fogOpacity = 0.68;
       values.moteOpacity = 0.01;
-      cloudCore = "rgba(186, 198, 207, 0.28)";
-      cloudEdge = "rgba(232, 239, 244, 0.1)";
-      fogColor = "rgba(223, 230, 236, 0.26)";
-      mistColor = "rgba(217, 224, 231, 0.28)";
+      cloudCore = state.palette === "night" ? "rgba(76, 92, 112, 0.34)" : "rgba(186, 198, 207, 0.28)";
+      cloudEdge = state.palette === "night" ? "rgba(136, 154, 176, 0.12)" : "rgba(232, 239, 244, 0.1)";
+      fogColor = state.palette === "night" ? "rgba(52, 66, 84, 0.28)" : "rgba(223, 230, 236, 0.26)";
+      mistColor = state.palette === "night" ? "rgba(62, 76, 94, 0.28)" : "rgba(217, 224, 231, 0.28)";
       break;
     case "clear":
     default:

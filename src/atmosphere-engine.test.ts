@@ -374,8 +374,10 @@ describe("resolveAtmosphereUniformTarget", () => {
     const opaqueBg = resolveAtmosphereUniformTarget(stormState, tokens, DEFAULT_PREFS, "back", 1);
 
     expect(subtleBg.backdropBoost).toBe(0);
+    expect(subtleBg.backdropDarken).toBe(0);
     expect(opaqueBg.backdropBoost).toBe(1);
-    expect(opaqueBg.skyOpacity).toBeGreaterThan(subtleBg.skyOpacity + 0.25);
+    expect(opaqueBg.backdropDarken).toBeGreaterThanOrEqual(0.6);
+    expect(opaqueBg.skyOpacity).toBeGreaterThan(subtleBg.skyOpacity + 0.14);
     expect(opaqueBg.cloudOpacity).toBeGreaterThan(subtleBg.cloudOpacity);
     expect(opaqueBg.rainOpacity).toBeGreaterThan(subtleBg.rainOpacity);
 
@@ -388,8 +390,26 @@ describe("resolveAtmosphereUniformTarget", () => {
     const nightTokens = resolveSceneTokens(clearNight, 0.6);
     const subtleNight = resolveAtmosphereUniformTarget(clearNight, nightTokens, DEFAULT_PREFS, "back", 0);
     const opaqueNight = resolveAtmosphereUniformTarget(clearNight, nightTokens, DEFAULT_PREFS, "back", 1);
-    expect(opaqueNight.skyOpacity).toBeGreaterThan(subtleNight.skyOpacity + 0.3);
+    expect(opaqueNight.backdropDarken).toBeGreaterThanOrEqual(0.55);
+    expect(opaqueNight.skyOpacity).toBeGreaterThan(subtleNight.skyOpacity + 0.18);
 
+    const clearDay = {
+      ...makeDefaultWeatherState(),
+      condition: "clear" as const,
+      palette: "day" as const,
+      intensity: 0.6,
+    };
+    const opaqueDay = resolveAtmosphereUniformTarget(
+      clearDay,
+      resolveSceneTokens(clearDay, 0.6),
+      DEFAULT_PREFS,
+      "back",
+      1,
+    );
+    expect(opaqueDay.backdropDarken).toBeLessThan(0.1);
+
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("uniform float u_backdropDarken;");
+    expect(ATMOSPHERE_FRAGMENT_SHADER).toContain("pearlWeight");
     expect(PARTICLE_FRAGMENT_SHADER).toContain("uniform float u_bgContrast;");
     expect(WEATHER_HUD_CSS).toContain('.weather-fx-root[data-kind="back"] {\n  z-index: 2;\n}');
   });
