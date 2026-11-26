@@ -15,6 +15,10 @@ let messages: any[] = [];
 let prefs: WeatherPrefs = { ...DEFAULT_PREFS };
 let getPrefs = async (): Promise<WeatherPrefs> => JSON.parse(JSON.stringify(prefs));
 let getMessages = async (_chat: string): Promise<any[]> => messages;
+let updateMessageCalls: Array<{ chatId: string; messageId: string; patch: Record<string, unknown> }> = [];
+let quietCalls: Array<Record<string, unknown>> = [];
+let quietHandler: (input: Record<string, unknown>) => Promise<unknown> = async () => ({ content: '{"unchanged": true}' });
+let connectionProfiles: any[] = [];
 let getActive = async (): Promise<{ id: string } | null> => ({ id: "chat" });
 let failNextSave: string | null = null;
 let failNextDelete: string | null = null;
@@ -66,7 +70,23 @@ beforeAll(async () => {
       },
     } },
     chats: { getActive: () => getActive() },
-    chat: { getMessages: (chat: string) => getMessages(chat) },
+    chat: {
+      getMessages: (chat: string) => getMessages(chat),
+      updateMessage: async (chatId: string, messageId: string, patch: Record<string, unknown>) => {
+        updateMessageCalls.push({ chatId, messageId, patch });
+        const target = messages.find((entry) => entry.id === messageId);
+        if (target && patch.metadata) target.metadata = patch.metadata;
+      },
+    },
+    generate: {
+      quiet: async (input: Record<string, unknown>) => {
+        quietCalls.push(input);
+        return quietHandler(input);
+      },
+    },
+    connections: {
+      list: async () => connectionProfiles,
+    },
     userStorage: {
       getJson: () => getPrefs(),
       setJson: async (_file: string, next: WeatherPrefs) => { prefs = next; },
@@ -102,6 +122,10 @@ beforeEach(async () => {
   prefs = { ...DEFAULT_PREFS };
   getPrefs = async () => JSON.parse(JSON.stringify(prefs));
   getMessages = async () => messages;
+  updateMessageCalls = [];
+  quietCalls = [];
+  quietHandler = async () => ({ content: '{"unchanged": true}' });
+  connectionProfiles = [];
   getActive = async () => ({ id: "chat" });
   failNextSave = null;
   failNextDelete = null;
@@ -118,6 +142,7 @@ test("declares hidden-tag readiness on supported hosts and starts on older hosts
 });
 
 test("tracker aliases and generation receive the forecast requirement with the saved outlook", async () => {
+  prefs = { ...DEFAULT_PREFS, trackingMode: "tags" };
   for (const name of ["story_weather_tracker", "weather_tracker", "story_weather"]) {
     expect(macroValues.get(name)).toContain("Include a non-empty forecast attribute in every weather-state tag");
   }
@@ -140,6 +165,7 @@ test("tracker aliases and generation receive the forecast requirement with the s
 });
 
 test("generation uses the latest assistant history tag without duplicating scene state", async () => {
+  prefs = { ...DEFAULT_PREFS, trackingMode: "tags" };
   await send({ type: "weather_tag_intercepted", chatId: "chat", messageId: "current-tag",
     attrs: { date: "2026-01-15", time: "12:00", condition: "clear", summary: "Calm" } });
   const history: LlmMessageDTO = { role: "assistant", content: `Quiet.\n${tag}`,
@@ -410,4 +436,105 @@ test("a slow initial active-chat lookup cannot overwrite a later chat switch", a
   await ready;
   expect(published["state.current"].chatId).toBe("current-chat");
   expect(sent.some((message) => message.type === "active_chat_state" && message.chatId === "old-chat")).toBe(false);
+});
+
+test("sidecar mode extracts weather after generation, stores per-message metadata, and injects read-only state", async () => {
+  prefs = { ...DEFAULT_PREFS, trackingMode: "sidecar", sidecarConnectionId: "fast-conn" };
+  messages = [
+    { id: "u1", role: "user", is_user: true, index_in_chat: 0, content: "We step inside the cozy harbor inn as rain begins." },
+    {
+      id: "a1",
+      role: "assistant",
+      is_user: false,
+      index_in_chat: 1,
+      swipe_id: 0,
+      send_date: 1_700_000_900,
+      content: "Warm lantern light greets you while rain drums on the roof.",
+      metadata: { sibling: 1 },
+    },
+  ];
+  quietHandler = async () => ({
+    content: JSON.stringify({
+      location: "Harbor Inn",
+      date: "2026-11-25",
+      time: "9:00 PM",
+      condition: "rain",
+      summary: "Steady coastal rain outside",
+      temperature: "58F",
+      intensity: 0.7,
+      wind: "breezy",
+      windDirection: "east",
+      palette: "night",
+      exposure: "indoor",
+      phenomenon: "none",
+      forecast: [
+        { date: "2026-11-26", condition: "cloudy", temperature: "56F", summary: "Overcast sea air" },
+      ],
+    }),
+  });
+
+  eventHandlers.get("GENERATION_ENDED")!(
+    { chatId: "chat", messageId: "a1", content: messages[1].content, generationType: "normal" },
+    "test-user",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  expect(quietCalls).toHaveLength(1);
+  expect(quietCalls[0]).toMatchObject({
+    type: "quiet",
+    connection_id: "fast-conn",
+    reasoning: { source: "off" },
+  });
+  expect(updateMessageCalls).toHaveLength(1);
+  expect(updateMessageCalls[0]).toMatchObject({
+    chatId: "chat",
+    messageId: "a1",
+    patch: { skipChunkRebuild: true },
+  });
+  expect(stored(WEATHER_STATE_VAR)).toMatchObject({
+    location: "Harbor Inn",
+    condition: "rain",
+    exposure: "indoor",
+    updatedAt: 1_700_000_900_000,
+  });
+
+  // Main model prompt gets ONLY post-history read-only state (zero tag instructions).
+  const intercepted = await intercept(
+    [
+      { role: "system", content: "Base system prompt" },
+      { role: "user", content: "Order tea.", __isChatHistory: true },
+    ],
+    { chatId: "chat" },
+  );
+  expect(intercepted.messages).toHaveLength(3);
+  expect(intercepted.messages[0]).toEqual({ role: "system", content: "Base system prompt" });
+  expect(intercepted.messages[1]).toEqual({ role: "user", content: "Order tea.", __isChatHistory: true });
+  expect(String(intercepted.messages[2].content)).toContain("Location: Harbor Inn");
+  expect(String(intercepted.messages[2].content)).toContain("do not emit weather tags");
+  expect(String(intercepted.messages[2].content)).not.toContain("<weather-state");
+
+  // Deleting message a1 rewinds state cleanly without relying on tags.
+  messages.pop();
+  await send({ type: "chat_changed", chatId: "chat" });
+  expect(storage.has(WEATHER_STATE_VAR)).toBe(false);
+});
+
+test("lists connection profiles on frontend_ready and supports manual extract_now", async () => {
+  connectionProfiles = [
+    { id: "conn-1", name: "Gemini Flash", provider: "google", model: "gemini-2.5-flash", is_default: true },
+  ];
+  await send({ type: "frontend_ready" });
+  expect(sent).toContainEqual({
+    type: "connections",
+    profiles: [{ id: "conn-1", name: "Gemini Flash", provider: "google", model: "gemini-2.5-flash", isDefault: true }],
+  });
+
+  messages = [
+    { id: "a1", role: "assistant", is_user: false, index_in_chat: 0, content: "Snow blankets the quiet plaza." },
+  ];
+  quietHandler = async () => ({
+    content: '{"location":"Quiet Plaza","date":"2026-12-10","time":"7:00 PM","condition":"snow","temperature":"28F"}',
+  });
+  await send({ type: "extract_now", chatId: "chat" });
+  expect(stored(WEATHER_STATE_VAR)).toMatchObject({ location: "Quiet Plaza", condition: "snow" });
 });

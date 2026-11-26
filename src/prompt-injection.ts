@@ -3,11 +3,45 @@ import type { InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-type
 import { extractLastWeatherTag } from "./tag-utils";
 import { normalizeWeatherTag } from "./shared";
 import { hasSameStoryScene } from "./story-history";
-import { buildSceneInstruction } from "./weather-prompt";
+import { buildReadOnlySceneInstruction, buildSceneInstruction } from "./weather-prompt";
 import type { WeatherState } from "./types";
 
 export const WEATHER_INSTRUCTIONS_BREAKDOWN_NAME = "LumiWeather — Instructions";
 export const WEATHER_BREAKDOWN_NAME = "LumiWeather — Scene State";
+
+/**
+ * Cache-friendly read-only scene injection for sidecar tracking mode.
+ *
+ * Inserts `[LumiWeather Current Scene]` after all chat history (and right before
+ * any trailing non-history assistant prefill) so the entire prefix up through
+ * the previous turn remains byte-for-byte identical for prompt caching, and the
+ * main model receives zero tag-format instructions.
+ */
+export function injectWeatherSceneState(
+  messages: LlmMessageDTO[],
+  state: WeatherState | null,
+): InterceptorResultDTO {
+  const nextMessages = [...messages];
+  if (!state) {
+    return { messages: nextMessages, breakdown: [] };
+  }
+
+  let insertIndex = nextMessages.length;
+  const last = nextMessages[nextMessages.length - 1];
+  if (last && last.role === "assistant" && !last.__isChatHistory) {
+    insertIndex = nextMessages.length - 1;
+  }
+
+  nextMessages.splice(insertIndex, 0, {
+    role: "system",
+    content: buildReadOnlySceneInstruction(state),
+  });
+
+  return {
+    messages: nextMessages,
+    breakdown: [{ messageIndex: insertIndex, name: WEATHER_BREAKDOWN_NAME }],
+  };
+}
 
 function latestHistoryTag(messages: LlmMessageDTO[]) {
   for (let i = messages.length - 1; i >= 0; i--) {

@@ -11,6 +11,7 @@ import {
   resolveLunarPhase,
 } from "../shared";
 import type {
+  ConnectionProfileSummary,
   SoundVolumeChannel,
   WeatherCondition,
   WeatherExposure,
@@ -19,6 +20,7 @@ import type {
   WeatherPrefs,
   WeatherSeason,
   WeatherState,
+  WeatherTrackingMode,
   WeatherWindDirection,
 } from "../types";
 
@@ -28,7 +30,17 @@ let settingsInstanceCount = 0;
 
 export interface SettingsUI {
   root: HTMLElement;
-  sync(prefs: WeatherPrefs, state: WeatherState | null, statusOverride?: string, chatId?: string | null): void;
+  sync(
+    prefs: WeatherPrefs,
+    state: WeatherState | null,
+    statusOverride?: string,
+    chatId?: string | null,
+    options?: {
+      connections?: ConnectionProfileSummary[];
+      extractionStatus?: "idle" | "running" | "error";
+      extractionDetail?: string;
+    },
+  ): void;
   reportError(message: string): void;
   destroy(): void;
 }
@@ -183,24 +195,87 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   preview.appendChild(previewHint);
 
   const promptSection = createSection(
-    "Prompt integration",
-    "Add the recommended macro to your active system prompt or preset so the model keeps the scene in sync with your story.",
+    "Scene tracking",
+    "Choose how LumiWeather keeps track of weather, time, and location without cluttering story replies.",
   );
   const effectsSection = createSection("Effects", "Overall ambience, density, and motion.");
   const placementSection = createSection("Placement", "Control whether the weather stays behind the chat, in front, or both.");
   const motionSection = createSection("Motion", "Fine-tune animation pacing without breaking story sync.");
   const soundSection = createSection("Soundscape mixer", "Balance master volume and individual procedural audio layers.");
 
+  const trackingModeSelect = document.createElement("select");
+  trackingModeSelect.className = "weather-settings-select";
+  trackingModeSelect.innerHTML = `
+    <option value="sidecar">Background sidecar AI (no tags in prose)</option>
+    <option value="tags">Legacy XML tags ({{weather_tracker}})</option>
+  `;
+  trackingModeSelect.addEventListener("change", () => {
+    sendToBackend({
+      type: "save_prefs",
+      prefs: { trackingMode: trackingModeSelect.value as WeatherTrackingMode },
+    });
+  });
+  const trackingModeLabel = createLabeledInput("Tracking mode", trackingModeSelect);
+
+  const sidecarGroup = document.createElement("div");
+  sidecarGroup.className = "weather-settings-copy-group";
+
+  const sidecarCopy = document.createElement("p");
+  sidecarCopy.className = "weather-settings-section-copy";
+  sidecarCopy.textContent = "After each reply, a lightweight background call extracts scene updates with reasoning off and injects only the current weather state at the end of context (prompt-cache friendly, zero tags in prose).";
+
+  const sidecarConnectionSelect = document.createElement("select");
+  sidecarConnectionSelect.className = "weather-settings-select";
+  sidecarConnectionSelect.innerHTML = `<option value="">Active / default connection</option>`;
+  sidecarConnectionSelect.addEventListener("change", () => {
+    sendToBackend({
+      type: "save_prefs",
+      prefs: { sidecarConnectionId: sidecarConnectionSelect.value || null },
+    });
+  });
+  const sidecarConnectionLabel = createLabeledInput("Sidecar connection profile", sidecarConnectionSelect);
+
+  const sidecarActions = document.createElement("div");
+  sidecarActions.className = "weather-settings-actions";
+
+  const analyzeNowButton = document.createElement("button");
+  analyzeNowButton.type = "button";
+  analyzeNowButton.className = "weather-settings-button weather-settings-button-primary";
+  analyzeNowButton.textContent = "Analyze scene now";
+  analyzeNowButton.addEventListener("click", () => {
+    sendToBackend({ type: "extract_now" });
+  });
+
+  const refreshConnectionsButton = document.createElement("button");
+  refreshConnectionsButton.type = "button";
+  refreshConnectionsButton.className = "weather-settings-button";
+  refreshConnectionsButton.textContent = "Refresh profiles";
+  refreshConnectionsButton.addEventListener("click", () => {
+    sendToBackend({ type: "refresh_connections" });
+  });
+
+  sidecarActions.appendChild(analyzeNowButton);
+  sidecarActions.appendChild(refreshConnectionsButton);
+
+  const sidecarStatusCopy = document.createElement("p");
+  sidecarStatusCopy.className = "weather-settings-section-copy";
+  sidecarStatusCopy.hidden = true;
+
+  sidecarGroup.appendChild(sidecarCopy);
+  sidecarGroup.appendChild(sidecarConnectionLabel);
+  sidecarGroup.appendChild(sidecarActions);
+  sidecarGroup.appendChild(sidecarStatusCopy);
+
   const promptRecommended = document.createElement("div");
   promptRecommended.className = "weather-settings-copy-group";
 
   const promptRecommendedLabel = document.createElement("strong");
   promptRecommendedLabel.className = "weather-settings-copy-title";
-  promptRecommendedLabel.textContent = "Recommended prompt snippet";
+  promptRecommendedLabel.textContent = "Legacy tag prompt snippet";
 
   const promptRecommendedCopy = document.createElement("p");
   promptRecommendedCopy.className = "weather-settings-section-copy";
-  promptRecommendedCopy.textContent = "Place this directly in the active character or preset system prompt so the main model sees the weather instruction during generation.";
+  promptRecommendedCopy.textContent = "Only needed in Legacy XML tags mode. Place this in the active character or preset system prompt so the main model emits <weather-state> tags.";
 
   promptRecommended.appendChild(promptRecommendedLabel);
   promptRecommended.appendChild(promptRecommendedCopy);
@@ -215,12 +290,14 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   const promptOptionalCopy = document.createElement("p");
   promptOptionalCopy.className = "weather-settings-section-copy";
-  promptOptionalCopy.textContent = "These legacy aliases remain available for existing prompts. Current scene state is injected automatically; the format alias is useful only when you want to show the tag contract explicitly.";
+  promptOptionalCopy.textContent = "Use {{weather_visual_tags}} for image-generation prompts. Current scene state is injected automatically at the end of context.";
 
   promptOptional.appendChild(promptOptionalLabel);
   promptOptional.appendChild(promptOptionalCopy);
   promptOptional.appendChild(createCodeBlock("{{weather_visual_tags}}\n{{weather_state}}\n{{weather_format}}"));
 
+  promptSection.body.appendChild(trackingModeLabel);
+  promptSection.body.appendChild(sidecarGroup);
   promptSection.body.appendChild(promptRecommended);
   promptSection.body.appendChild(promptOptional);
 
@@ -863,15 +940,65 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   root.appendChild(header);
   root.appendChild(body);
 
+  let lastConnectionsSignature = "";
+
   return {
     root,
-    sync(prefs, state, statusOverride, chatId) {
+    sync(prefs, state, statusOverride, chatId, options) {
       if (chatId !== currentChatId) {
         manualDraftDirty = false;
         clearManualError();
         currentChatId = chatId;
       }
       currentState = state;
+      const trackingMode: WeatherTrackingMode = prefs.trackingMode ?? "sidecar";
+      const isSidecar = trackingMode === "sidecar";
+      trackingModeSelect.value = trackingMode;
+      sidecarGroup.hidden = !isSidecar;
+      promptRecommended.hidden = isSidecar;
+
+      const profiles = options?.connections ?? [];
+      const selectedConnId = prefs.sidecarConnectionId ?? "";
+      const connSig = `${selectedConnId}|${profiles.map((p) => `${p.id}:${p.name}:${p.model}:${p.isDefault}`).join(",")}`;
+      if (connSig !== lastConnectionsSignature) {
+        lastConnectionsSignature = connSig;
+        sidecarConnectionSelect.innerHTML = "";
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = "";
+        defaultOpt.textContent = "Active / default connection";
+        sidecarConnectionSelect.appendChild(defaultOpt);
+        for (const profile of profiles) {
+          const opt = document.createElement("option");
+          opt.value = profile.id;
+          const detail = [profile.provider, profile.model].filter(Boolean).join(" · ");
+          opt.textContent = `${profile.name}${detail ? ` (${detail})` : ""}${profile.isDefault ? " ★" : ""}`;
+          sidecarConnectionSelect.appendChild(opt);
+        }
+        if (selectedConnId && !profiles.some((profile) => profile.id === selectedConnId)) {
+          const savedOpt = document.createElement("option");
+          savedOpt.value = selectedConnId;
+          savedOpt.textContent = `Saved profile (${selectedConnId.slice(0, 8)}…)`;
+          sidecarConnectionSelect.appendChild(savedOpt);
+        }
+      }
+      sidecarConnectionSelect.value = selectedConnId;
+
+      const extractionStatus = options?.extractionStatus ?? "idle";
+      const extractionDetail = options?.extractionDetail;
+      const chatAvailable = chatId !== null && statusOverride !== "No active chat";
+      analyzeNowButton.disabled = !chatAvailable || extractionStatus === "running";
+      analyzeNowButton.textContent = extractionStatus === "running" ? "Analyzing scene…" : "Analyze scene now";
+      if (extractionStatus === "running") {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = "Sidecar is reading the latest reply and updating the weather scene…";
+      } else if (extractionStatus === "error" && extractionDetail) {
+        sidecarStatusCopy.hidden = false;
+        sidecarStatusCopy.textContent = `Sidecar note: ${extractionDetail}`;
+      } else {
+        sidecarStatusCopy.hidden = true;
+        sidecarStatusCopy.textContent = "";
+      }
+
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       soundToggle.checked = Boolean(prefs.soundEnabled);
@@ -903,7 +1030,6 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       clockSelect.value = prefs.clockMode;
       forecastToggle.checked = prefs.showForecast;
 
-      const chatAvailable = chatId !== null && statusOverride !== "No active chat";
       manualToggle.disabled = !chatAvailable;
       applyButton.disabled = !chatAvailable;
       resumeButton.disabled = !chatAvailable || !state || state.source === "story";
@@ -931,13 +1057,17 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
               ? `Outlook: ${state.forecast.map((entry) => formatForecastEntry({ ...entry, temperature: formatTemperatureForUnit(entry.temperature, prefs.temperatureUnit) })).join(" | ")}`
               : "",
           ].filter(Boolean).join(" · ")
-        : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
+        : isSidecar
+          ? "The background sidecar will automatically read the story after the next reply (or click Analyze scene now)."
+          : "Add {{weather_tracker}} to the active prompt, then the HUD will wake up as soon as the model emits its first weather-state tag.";
 
       previewHint.textContent = !chatAvailable
         ? "Open a chat to view or customize its weather scene."
         : state?.source === "manual"
           ? "This chat stays locked to your scene until you resume story sync."
-          : "This chat's weather tag keeps the scene in sync with the story.";
+          : isSidecar
+            ? "Background sidecar AI keeps this chat's weather and time synced automatically."
+            : "This chat's weather tag keeps the scene in sync with the story.";
 
       manualModePill.textContent = state?.source === "manual" ? "Manual lock" : "Story sync";
       manualModePill.dataset.mode = state?.source === "manual" ? "manual" : "story";

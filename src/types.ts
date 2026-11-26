@@ -7,6 +7,7 @@ export type TemperatureUnit = "fahrenheit" | "celsius";
 export type WeatherSourceMode = "story" | "manual";
 export type WeatherSeason = "spring" | "summer" | "autumn" | "winter";
 export type WeatherClockMode = "auto" | "live" | "story";
+export type WeatherTrackingMode = "sidecar" | "tags";
 export type WeatherExposure = "outdoor" | "sheltered" | "indoor" | "underground";
 export type WeatherPhenomenon =
   | "none"
@@ -97,6 +98,14 @@ export type SoundVolumeChannel =
   | "thunderVolume"
   | "ambienceVolume";
 
+export interface ConnectionProfileSummary {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  isDefault: boolean;
+}
+
 export interface WeatherPrefs {
   effectsEnabled: boolean;
   lightningFlashEnabled: boolean;
@@ -109,6 +118,8 @@ export interface WeatherPrefs {
   clockMode: WeatherClockMode;
   showForecast: boolean;
   transitionsEnabled: boolean;
+  trackingMode?: WeatherTrackingMode;
+  sidecarConnectionId?: string | null;
   soundEnabled?: boolean;
   wildlifeEnabled?: boolean;
   soundVolume?: number;
@@ -131,10 +142,14 @@ export type FrontendToBackend =
   | { type: "set_manual_state"; chatId?: string | null; state: Partial<WeatherState> }
   | { type: "clear_manual_override"; chatId?: string | null }
   | { type: "save_prefs"; prefs: Partial<WeatherPrefs> }
+  | { type: "refresh_connections" }
+  | { type: "extract_now"; chatId?: string | null }
   | { type: "reset_widget_position" };
 
 export type BackendToFrontend =
   | { type: "prefs"; prefs: WeatherPrefs }
+  | { type: "connections"; profiles: ConnectionProfileSummary[] }
+  | { type: "extraction_status"; chatId: string | null; status: "idle" | "running" | "error"; detail?: string }
   | { type: "active_chat_state"; chatId: string | null; state: WeatherState | null; requestId?: number }
   | { type: "weather_state"; chatId: string | null; state: WeatherState }
   | { type: "error"; message: string };

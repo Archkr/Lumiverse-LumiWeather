@@ -18,7 +18,13 @@ type WeatherSpindleAPI = import("lumiverse-spindle-types").SpindleAPI & {
 
 declare const spindle: WeatherSpindleAPI;
 
-import type { BackendToFrontend, FrontendToBackend, WeatherPrefs, WeatherState } from "./types";
+import type {
+  BackendToFrontend,
+  ConnectionProfileSummary,
+  FrontendToBackend,
+  WeatherPrefs,
+  WeatherState,
+} from "./types";
 import {
   DEFAULT_PREFS,
   WEATHER_MANUAL_STATE_VAR,
@@ -31,8 +37,18 @@ import {
 } from "./shared";
 import { selectEffectiveWeatherState } from "./state-utils";
 import { makeWeatherLumiStateSnapshot } from "./lumi-state";
-import { injectWeatherInstruction } from "./prompt-injection";
-import { hasSameStoryScene, rebuildStoryWeatherState } from "./story-history";
+import { injectWeatherInstruction, injectWeatherSceneState } from "./prompt-injection";
+import {
+  buildSidecarExtractionMessages,
+  parseSidecarExtractionResponse,
+  type SidecarTurn,
+} from "./sidecar-extractor";
+import {
+  buildMessageWeatherMetadata,
+  hasSameStoryScene,
+  rebuildStoryWeatherState,
+  resolveMessageTimestamp,
+} from "./story-history";
 import { buildTagDedupeKey } from "./tag-dedupe";
 import { extractLastWeatherTag } from "./tag-utils";
 import { EXTENSION_VERSION, LUMI_STATE_CAPABILITIES } from "./version";
@@ -62,6 +78,75 @@ const sessions = new Map<string, BackendSession>();
 const processedTags = new Map<string, { attrs: string; timestamp: number; chatId: string }>();
 const historyReconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const operationQueues = new Map<string, Promise<unknown>>();
+const activeExtractions = new Map<string, AbortController>();
+const suppressedMetadataEdits = new Map<string, number>();
+
+const METADATA_EDIT_SUPPRESS_MS = 2500;
+const SIDECAR_TIMEOUT_MS = 25000;
+
+function extractUserId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as Record<string, unknown>;
+  const candidates = [value.userId, value.user_id];
+  const found = candidates.find((candidate) => typeof candidate === "string" && candidate.trim());
+  return typeof found === "string" ? found : null;
+}
+
+function resolveUsersForChat(chatId: string, explicitUserId?: string): string[] {
+  if (explicitUserId) return [explicitUserId];
+  const matched = [...sessions.entries()]
+    .filter(([, session]) => session.activeChatId === chatId)
+    .map(([userId]) => userId);
+  if (matched.length > 0) return matched;
+  return sessions.size === 1 ? [...sessions.keys()] : [];
+}
+
+function cancelActiveExtraction(chatId: string): void {
+  const controller = activeExtractions.get(chatId);
+  if (!controller) return;
+  activeExtractions.delete(chatId);
+  try {
+    controller.abort();
+  } catch {
+    // Ignore abort errors on already-settled controllers
+  }
+}
+
+function isSuppressedMetadataEdit(chatId: string, messageId?: string | null): boolean {
+  if (!messageId) return false;
+  const key = `${chatId}:${messageId}`;
+  const expiresAt = suppressedMetadataEdits.get(key);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    suppressedMetadataEdits.delete(key);
+    return false;
+  }
+  suppressedMetadataEdits.delete(key);
+  return true;
+}
+
+async function listConnectionProfiles(userId?: string): Promise<ConnectionProfileSummary[]> {
+  if (typeof spindle.connections?.list !== "function") return [];
+  try {
+    const rawProfiles = await spindle.connections.list(userId);
+    if (!Array.isArray(rawProfiles)) return [];
+    return rawProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name || profile.model || profile.id,
+      provider: profile.provider || "",
+      model: profile.model || "",
+      isDefault: Boolean(profile.is_default),
+    }));
+  } catch (error: unknown) {
+    spindle.log.warn(`LumiWeather could not list connection profiles: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
+}
+
+async function pushConnections(userId: string): Promise<void> {
+  const profiles = await listConnectionProfiles(userId);
+  send(userId, { type: "connections", profiles });
+}
 
 /** Keep read/modify/write operations from overwriting another pending edit. */
 async function runSerialized<T>(key: string, operation: () => Promise<T>): Promise<T> {
@@ -406,10 +491,196 @@ for (const name of WEATHER_VISUAL_TAGS_MACROS) {
 
 pushMacroValues();
 
+function notifyExtractionStatus(
+  chatId: string,
+  status: "idle" | "running" | "error",
+  userIds: string[],
+  detail?: string,
+): void {
+  for (const uid of userIds) {
+    if (getSession(uid).activeChatId === chatId) {
+      send(uid, { type: "extraction_status", chatId, status, detail });
+    }
+  }
+}
+
+async function extractWeatherForChat(options: {
+  chatId: string;
+  userId?: string;
+  targetMessageId?: string;
+  fallbackContent?: string;
+  generationType?: string;
+  force?: boolean;
+}): Promise<WeatherState | null> {
+  const { chatId, targetMessageId, fallbackContent, generationType, force = false } = options;
+  if (typeof spindle.generate?.quiet !== "function") return null;
+
+  const userIds = resolveUsersForChat(chatId, options.userId);
+  const primaryUserId = options.userId ?? userIds[0];
+  const prefs = await loadPrefs(primaryUserId ?? "");
+  if (!force && (prefs.trackingMode ?? "sidecar") !== "sidecar") return null;
+
+  // Cancel any stale extraction for this chat before starting a fresh one.
+  cancelActiveExtraction(chatId);
+  const controller = new AbortController();
+  activeExtractions.set(chatId, controller);
+  const timeout = setTimeout(() => {
+    try {
+      controller.abort();
+    } catch {
+      // Ignore abort errors
+    }
+  }, SIDECAR_TIMEOUT_MS);
+
+  try {
+    const rawMessages = await spindle.chat.getMessages(chatId);
+    if (controller.signal.aborted || activeExtractions.get(chatId) !== controller) return null;
+
+    const ordered = rawMessages
+      .map((entry, originalIndex) => ({ entry, originalIndex }))
+      .sort((left, right) => {
+        const leftIndex = Number.isFinite(left.entry.index_in_chat) ? left.entry.index_in_chat : left.originalIndex;
+        const rightIndex = Number.isFinite(right.entry.index_in_chat) ? right.entry.index_in_chat : right.originalIndex;
+        return leftIndex - rightIndex || left.originalIndex - right.originalIndex;
+      })
+      .map(({ entry }) => entry);
+
+    let targetIndex = -1;
+    if (targetMessageId) {
+      targetIndex = ordered.findIndex((entry) => entry.id === targetMessageId);
+    }
+    if (targetIndex < 0) {
+      for (let i = ordered.length - 1; i >= 0; i -= 1) {
+        const entry = ordered[i]!;
+        const role = entry.role ?? (entry.is_user ? "user" : "assistant");
+        if (role === "assistant") {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+    if (targetIndex < 0) return null;
+
+    const targetMessage = ordered[targetIndex]!;
+    const targetContent =
+      typeof targetMessage.content === "string" && targetMessage.content.trim()
+        ? targetMessage.content
+        : fallbackContent ?? "";
+
+    // If the assistant message already carried an explicit legacy weather tag and
+    // this wasn't a manual re-analyze request, avoid redundant extraction.
+    if (!force && targetContent && extractLastWeatherTag(targetContent)) {
+      return null;
+    }
+
+    const messagesBeforeTarget = ordered.slice(0, targetIndex);
+    const priorFromHistory = rebuildStoryWeatherState(messagesBeforeTarget);
+    const isRewrite = generationType === "swipe" || generationType === "regenerate";
+    const previousState = priorFromHistory ?? (!isRewrite ? await loadStoryWeatherState(chatId) : null);
+
+    // Collect up to 3 recent non-system turns ending at the target assistant message.
+    const recentTurns: SidecarTurn[] = [];
+    for (let i = Math.max(0, targetIndex - 2); i <= targetIndex; i += 1) {
+      const entry = ordered[i]!;
+      const role = entry.role ?? (entry.is_user ? "user" : "assistant");
+      if (role !== "user" && role !== "assistant") continue;
+      const content = i === targetIndex ? targetContent : (typeof entry.content === "string" ? entry.content : "");
+      if (!content.trim()) continue;
+      recentTurns.push({ role, name: entry.name, content });
+    }
+    if (recentTurns.length === 0) return null;
+
+    notifyExtractionStatus(chatId, "running", userIds);
+
+    const rawResult = await spindle.generate.quiet({
+      type: "quiet",
+      messages: buildSidecarExtractionMessages(previousState, recentTurns),
+      connection_id: prefs.sidecarConnectionId || undefined,
+      reasoning: { source: "off" },
+      parameters: { temperature: 0.1, max_tokens: 450 },
+      userId: primaryUserId || undefined,
+      signal: controller.signal,
+    });
+
+    if (controller.signal.aborted || activeExtractions.get(chatId) !== controller) return null;
+
+    const messageTimestamp = resolveMessageTimestamp(targetMessage) ?? Date.now();
+    const extracted = parseSidecarExtractionResponse(rawResult, previousState, messageTimestamp);
+    if (!extracted) {
+      spindle.log.warn("LumiWeather sidecar returned an unparseable response; keeping previous scene state.");
+      notifyExtractionStatus(chatId, "error", userIds, "Could not parse sidecar response");
+      return null;
+    }
+
+    let finalEffective: WeatherState | null = null;
+    await runSerialized(`chat:${chatId}`, async () => {
+      if (controller.signal.aborted || activeExtractions.get(chatId) !== controller) return;
+
+      // Persist per-message metadata so edit/delete/swipe/fork rewind cleanly without tags in prose.
+      if (targetMessage.id && typeof spindle.chat?.updateMessage === "function") {
+        try {
+          const nextMetadata = buildMessageWeatherMetadata(targetMessage.metadata, targetMessage.swipe_id, extracted);
+          suppressedMetadataEdits.set(`${chatId}:${targetMessage.id}`, Date.now() + METADATA_EDIT_SUPPRESS_MS);
+          await spindle.chat.updateMessage(chatId, targetMessage.id, {
+            metadata: nextMetadata,
+            skipChunkRebuild: true,
+          });
+        } catch (error: unknown) {
+          suppressedMetadataEdits.delete(`${chatId}:${targetMessage.id}`);
+          spindle.log.warn(`LumiWeather could not save per-message metadata: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      const previousStored = await loadStoryWeatherState(chatId);
+      const changed =
+        !hasSameStoryScene(previousStored, extracted) || previousStored?.updatedAt !== extracted.updatedAt;
+      if (changed) {
+        await saveStoryWeatherState(chatId, extracted);
+      }
+      const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
+      const effective = (await loadManualWeatherState(chatId)) ?? extracted;
+      finalEffective = effective;
+
+      if (userIds.length > 0) {
+        for (const uid of userIds) {
+          await publishWeatherState(chatId, effective, revision, uid);
+          if (getSession(uid).activeChatId === chatId) {
+            send(uid, { type: "weather_state", chatId, state: effective });
+          }
+        }
+      } else {
+        await publishWeatherState(chatId, effective, revision);
+      }
+      notifyExtractionStatus(chatId, "idle", userIds);
+    });
+
+    return finalEffective;
+  } catch (error: unknown) {
+    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      notifyExtractionStatus(chatId, "idle", userIds);
+      return null;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWeather sidecar extraction failed: ${reason}`);
+    notifyExtractionStatus(chatId, "error", userIds, reason);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    if (activeExtractions.get(chatId) === controller) {
+      activeExtractions.delete(chatId);
+    }
+  }
+}
+
 // Run after LumiBooks (90) so fallback detection sees the final surviving history.
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
+  const userId = extractUserId(context) ?? (chatId ? resolveUsersForChat(chatId)[0] : undefined);
+  const prefs = await loadPrefs(userId ?? "");
+  if ((prefs.trackingMode ?? "sidecar") === "sidecar") {
+    return injectWeatherSceneState(messages, state);
+  }
   const instruction = buildPromptInstruction();
   return injectWeatherInstruction(messages, instruction, state);
 }, 100);
@@ -419,17 +690,48 @@ const onEvent = spindle.on as unknown as (
   handler: (payload: unknown, userId?: string) => void,
 ) => () => void;
 
+onEvent("GENERATION_ENDED", (payload, eventUserId) => {
+  if (!payload || typeof payload !== "object") return;
+  const event = payload as {
+    chatId?: string;
+    messageId?: string;
+    content?: string;
+    error?: string;
+    generationType?: string;
+  };
+  if (event.error || event.generationType === "impersonate") return;
+  const chatId = typeof event.chatId === "string" && event.chatId.trim() ? event.chatId : null;
+  if (!chatId) return;
+
+  void extractWeatherForChat({
+    chatId,
+    userId: eventUserId,
+    targetMessageId: event.messageId,
+    fallbackContent: event.content,
+    generationType: event.generationType,
+  });
+});
+
 for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWIPE_EDITED"] as const) {
   onEvent(event, (payload, eventUserId) => {
     const value = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
     const chatId = extractChatId(payload) ?? extractChatId(value.message);
     if (!chatId) return;
 
-    const userIds = eventUserId
-      ? [eventUserId]
-      : [...sessions.entries()]
-          .filter(([, session]) => session.activeChatId === chatId)
-          .map(([userId]) => userId);
+    const msgObj = value.message && typeof value.message === "object" ? (value.message as Record<string, unknown>) : null;
+    const messageId =
+      typeof value.messageId === "string"
+        ? value.messageId
+        : typeof value.message_id === "string"
+          ? value.message_id
+          : typeof msgObj?.id === "string"
+            ? msgObj.id
+            : null;
+    if (event === "MESSAGE_EDITED" && isSuppressedMetadataEdit(chatId, messageId)) {
+      return;
+    }
+
+    const userIds = resolveUsersForChat(chatId, eventUserId);
     for (const userId of userIds) {
       if (getSession(userId).activeChatId === chatId) scheduleStoryWeatherReconcile(userId, chatId);
     }
@@ -446,7 +748,22 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await runSerialized(`prefs:${userId}`, async () => {
           send(userId, { type: "prefs", prefs: await loadPrefs(userId) });
         });
+        await pushConnections(userId);
         break;
+
+      case "refresh_connections":
+        await pushConnections(userId);
+        break;
+
+      case "extract_now": {
+        const chatId = await resolveWeatherEditChatId(userId, message.chatId);
+        if (!chatId) {
+          send(userId, { type: "error", message: "Open a chat before analyzing its weather scene." });
+          break;
+        }
+        await extractWeatherForChat({ chatId, userId, force: true });
+        break;
+      }
 
       case "chat_changed":
         await pushActiveChatState(userId, message.chatId, message.requestId);

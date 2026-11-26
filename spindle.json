@@ -6,7 +6,7 @@
   "github": "https://github.com/Archkr/Lumiverse-StoryWeather",
   "homepage": "https://lumiverse.chat",
   "description": "Narrative weather, date, and time HUD with layered ambient effects for chat scenes.",
-  "permissions": ["interceptor", "ui_panels", "chats", "chat_mutation"],
+  "permissions": ["interceptor", "generation", "ui_panels", "chats", "chat_mutation"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "1.0.6"

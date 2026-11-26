@@ -27,6 +27,7 @@ import {
 } from "./shared";
 import type {
   BackendToFrontend,
+  ConnectionProfileSummary,
   ForecastEntry,
   FrontendToBackend,
   SoundVolumeChannel,
@@ -1294,7 +1295,27 @@ export function setup(ctx: SpindleFrontendContext) {
   let activeChatRequestId = 0;
   let hudExpanded = false;
   let permissionWarning: string | null = null;
+  let grantedPermissions: string[] | null = null;
   let backendWarning: string | null = null;
+  let connectionProfiles: ConnectionProfileSummary[] = [];
+  let extractionStatus: "idle" | "running" | "error" = "idle";
+  let extractionDetail: string | undefined;
+
+  const refreshPermissionWarning = () => {
+    if (!grantedPermissions) {
+      permissionWarning = null;
+      return;
+    }
+    const missing: string[] = [];
+    if (!grantedPermissions.includes("interceptor")) missing.push("Interceptor");
+    if ((currentPrefs.trackingMode ?? "sidecar") === "sidecar" && !grantedPermissions.includes("generation")) {
+      missing.push("Generation");
+    }
+    permissionWarning =
+      missing.length > 0
+        ? `Enable ${missing.join(" & ")} permission${missing.length > 1 ? "s" : ""} for automatic weather tracking and prompt injection.`
+        : null;
+  };
   let keyboardState = ctx.ui.events.getKeyboardState();
   const coarsePointerMedia = window.matchMedia("(pointer: coarse)");
   let mobileHudLayout = isMobileHudLayout(keyboardState.viewportWidth, coarsePointerMedia.matches);
@@ -1329,7 +1350,11 @@ export function setup(ctx: SpindleFrontendContext) {
   const settingsMount = ctx.ui.mount("settings_extensions");
   const settingsUI = createSettingsUI((payload) => {
     const message = payload as FrontendToBackend;
-    if (message.type === "set_manual_state" || message.type === "clear_manual_override") {
+    if (
+      message.type === "set_manual_state" ||
+      message.type === "clear_manual_override" ||
+      message.type === "extract_now"
+    ) {
       sendToBackend(ctx, { ...message, chatId: activeChatId });
       return;
     }
@@ -1671,7 +1696,18 @@ export function setup(ctx: SpindleFrontendContext) {
       hud.root.dataset.reducedMotion = String(reducedMotion);
       syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
     }
-    settingsUI.sync(currentPrefs, currentState, !activeChatId ? "No active chat" : backendWarning ?? permissionWarning ?? undefined, activeChatId);
+    refreshPermissionWarning();
+    settingsUI.sync(
+      currentPrefs,
+      currentState,
+      !activeChatId ? "No active chat" : backendWarning ?? permissionWarning ?? undefined,
+      activeChatId,
+      {
+        connections: connectionProfiles,
+        extractionStatus,
+        extractionDetail,
+      },
+    );
     setFxVisibility(backFx, showBack);
     setFxVisibility(frontFx, showFront);
     applySceneState(backFx, sceneState, currentPrefs, reducedMotion, showBack, scheduleStormFlash);
@@ -1749,9 +1785,23 @@ export function setup(ctx: SpindleFrontendContext) {
         updateScene();
         break;
 
+      case "connections":
+        connectionProfiles = message.profiles;
+        updateScene();
+        break;
+
+      case "extraction_status":
+        if (message.chatId !== activeChatId) break;
+        extractionStatus = message.status;
+        extractionDetail = message.detail;
+        updateScene();
+        break;
+
       case "active_chat_state":
         if (!shouldApplyChatState(activeChatId, message.chatId, message.requestId, activeChatRequestId)) break;
         backendWarning = null;
+        extractionStatus = "idle";
+        extractionDetail = undefined;
         activeChatId = message.chatId;
         currentState = message.state;
         updateScene();
@@ -1803,10 +1853,9 @@ export function setup(ctx: SpindleFrontendContext) {
   updateScene();
   void ctx.permissions.getGranted().then((granted) => {
     if (disposed) return;
-    if (!granted.includes("interceptor")) {
-      permissionWarning = "Enable the Interceptor permission to inject the current weather scene into prompts.";
-      updateScene();
-    }
+    grantedPermissions = granted;
+    refreshPermissionWarning();
+    updateScene();
   }).catch(() => {
     // Permission status is informational; the extension remains usable for tag-driven HUD updates.
   });

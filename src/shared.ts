@@ -20,6 +20,7 @@ import type {
   WeatherSeason,
   WeatherSourceMode,
   WeatherState,
+  WeatherTrackingMode,
   WeatherWindDirection,
 } from "./types";
 
@@ -63,6 +64,7 @@ export const REDUCED_MOTION_VALUES: ReducedMotionMode[] = ["system", "always", "
 export const TEMPERATURE_UNITS: TemperatureUnit[] = ["fahrenheit", "celsius"];
 export const WEATHER_SEASONS: WeatherSeason[] = ["spring", "summer", "autumn", "winter"];
 export const WEATHER_CLOCK_MODES: WeatherClockMode[] = ["auto", "live", "story"];
+export const WEATHER_TRACKING_MODES: WeatherTrackingMode[] = ["sidecar", "tags"];
 
 export const DEFAULT_PREFS: WeatherPrefs = {
   effectsEnabled: true,
@@ -76,6 +78,8 @@ export const DEFAULT_PREFS: WeatherPrefs = {
   clockMode: "auto",
   showForecast: true,
   transitionsEnabled: true,
+  trackingMode: "sidecar",
+  sidecarConnectionId: null,
   soundEnabled: false,
   wildlifeEnabled: true,
   soundVolume: 0.45,
@@ -201,6 +205,12 @@ function normalizeSeason(value: unknown): WeatherSeason | null {
 function normalizeClockMode(value: unknown, fallback: WeatherClockMode): WeatherClockMode {
   return typeof value === "string" && WEATHER_CLOCK_MODES.includes(value as WeatherClockMode)
     ? (value as WeatherClockMode)
+    : fallback;
+}
+
+function normalizeTrackingMode(value: unknown, fallback: WeatherTrackingMode): WeatherTrackingMode {
+  return typeof value === "string" && WEATHER_TRACKING_MODES.includes(value as WeatherTrackingMode)
+    ? (value as WeatherTrackingMode)
     : fallback;
 }
 
@@ -453,6 +463,11 @@ export function normalizePrefs(input: unknown): WeatherPrefs {
     showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
     transitionsEnabled:
       typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
+    trackingMode: normalizeTrackingMode(source.trackingMode, DEFAULT_PREFS.trackingMode ?? "sidecar"),
+    sidecarConnectionId:
+      typeof source.sidecarConnectionId === "string" && source.sidecarConnectionId.trim()
+        ? source.sidecarConnectionId.trim()
+        : null,
     soundEnabled:
       typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
     wildlifeEnabled:

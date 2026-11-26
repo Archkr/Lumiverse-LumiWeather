@@ -366,10 +366,22 @@ var WEATHER_PHENOMENA = [
   "fireflies",
   "sandstorm"
 ];
+var WEATHER_WIND_DIRECTIONS = [
+  "none",
+  "north",
+  "northeast",
+  "east",
+  "southeast",
+  "south",
+  "southwest",
+  "west",
+  "northwest"
+];
 var REDUCED_MOTION_VALUES = ["system", "always", "never"];
 var TEMPERATURE_UNITS = ["fahrenheit", "celsius"];
 var WEATHER_SEASONS = ["spring", "summer", "autumn", "winter"];
 var WEATHER_CLOCK_MODES = ["auto", "live", "story"];
+var WEATHER_TRACKING_MODES = ["sidecar", "tags"];
 var DEFAULT_PREFS = {
   effectsEnabled: true,
   lightningFlashEnabled: true,
@@ -382,6 +394,8 @@ var DEFAULT_PREFS = {
   clockMode: "auto",
   showForecast: true,
   transitionsEnabled: true,
+  trackingMode: "sidecar",
+  sidecarConnectionId: null,
   soundEnabled: false,
   wildlifeEnabled: true,
   soundVolume: 0.45,
@@ -482,6 +496,9 @@ function normalizeSeason(value) {
 }
 function normalizeClockMode(value, fallback) {
   return typeof value === "string" && WEATHER_CLOCK_MODES.includes(value) ? value : fallback;
+}
+function normalizeTrackingMode(value, fallback) {
+  return typeof value === "string" && WEATHER_TRACKING_MODES.includes(value) ? value : fallback;
 }
 var EXPOSURE_ALIASES = {
   outdoor: "outdoor",
@@ -690,6 +707,8 @@ function normalizePrefs(input) {
     clockMode: normalizeClockMode(source.clockMode, DEFAULT_PREFS.clockMode),
     showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
     transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
+    trackingMode: normalizeTrackingMode(source.trackingMode, DEFAULT_PREFS.trackingMode ?? "sidecar"),
+    sidecarConnectionId: typeof source.sidecarConnectionId === "string" && source.sidecarConnectionId.trim() ? source.sidecarConnectionId.trim() : null,
     soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
     wildlifeEnabled: typeof source.wildlifeEnabled === "boolean" ? source.wildlifeEnabled : Boolean(DEFAULT_PREFS.wildlifeEnabled ?? true),
     soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
@@ -859,6 +878,11 @@ function makeWeatherLumiStateSnapshot(chatId, state, revision, extensionVersion,
 function buildWeatherTagRegex(flags = "ig") {
   return new RegExp(String.raw`<weather-state\b[^>]*?(?:\/>|>[\s\S]*?<\/weather-state>)`, flags);
 }
+function stripWeatherStateTags(content) {
+  return content.replace(buildWeatherTagRegex(), "").replace(/\n{3,}/g, `
+
+`).trim();
+}
 function parseTagAttributes(raw) {
   const attrs = {};
   const attributePattern = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
@@ -882,6 +906,7 @@ function extractLastWeatherTag(content) {
 }
 
 // src/story-history.ts
+var MESSAGE_WEATHER_METADATA_KEY = "lumi_weather";
 var MILLISECOND_THRESHOLD = 1000000000000;
 function normalizeMessageTimestamp(value) {
   const numeric = typeof value === "number" ? value : Number.NaN;
@@ -899,6 +924,54 @@ function resolveMessageTimestamp(message) {
   }
   return normalizeMessageTimestamp(message.send_date);
 }
+function readRawWeatherMetadata(message) {
+  const fromMetadata = message.metadata?.[MESSAGE_WEATHER_METADATA_KEY];
+  if (fromMetadata && typeof fromMetadata === "object" && !Array.isArray(fromMetadata)) {
+    return fromMetadata;
+  }
+  const spindleMeta = message.extra?.spindle_metadata;
+  if (spindleMeta && typeof spindleMeta === "object" && !Array.isArray(spindleMeta)) {
+    const nested = spindleMeta[MESSAGE_WEATHER_METADATA_KEY];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      return nested;
+    }
+  }
+  return null;
+}
+function extractMessageWeatherMetadata(message) {
+  const entry = readRawWeatherMetadata(message);
+  if (!entry)
+    return null;
+  const swipeIndex = typeof message.swipe_id === "number" && Number.isFinite(message.swipe_id) ? Math.max(0, Math.floor(message.swipe_id)) : 0;
+  let candidate = null;
+  if (entry.bySwipe && typeof entry.bySwipe === "object" && !Array.isArray(entry.bySwipe)) {
+    const map = entry.bySwipe;
+    candidate = map[String(swipeIndex)] ?? null;
+  } else if (entry.state && typeof entry.state === "object" && swipeIndex === 0) {
+    candidate = entry.state;
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+    return null;
+  const normalized = normalizeStoredWeatherState(candidate);
+  return { ...normalized, source: "story" };
+}
+function buildMessageWeatherMetadata(existingMetadata, swipeId, state) {
+  const base = existingMetadata && typeof existingMetadata === "object" ? { ...existingMetadata } : {};
+  const existingEntry = base[MESSAGE_WEATHER_METADATA_KEY];
+  const prevBySwipe = existingEntry && typeof existingEntry === "object" && !Array.isArray(existingEntry) && existingEntry.bySwipe && typeof existingEntry.bySwipe === "object" && !Array.isArray(existingEntry.bySwipe) ? { ...existingEntry.bySwipe } : {};
+  const swipeIndex = typeof swipeId === "number" && Number.isFinite(swipeId) ? Math.max(0, Math.floor(swipeId)) : 0;
+  const cleanSnapshot = { ...state, source: "story" };
+  prevBySwipe[String(swipeIndex)] = cleanSnapshot;
+  const nextEntry = {
+    schemaVersion: 1,
+    bySwipe: prevBySwipe,
+    ...swipeIndex === 0 ? { state: cleanSnapshot } : {}
+  };
+  return {
+    ...base,
+    [MESSAGE_WEATHER_METADATA_KEY]: nextEntry
+  };
+}
 function rebuildStoryWeatherState(messages, fallbackUpdatedAt = Date.now()) {
   const ordered = messages.map((message, originalIndex) => ({ message, originalIndex })).sort((left, right) => {
     const leftIndex = Number.isFinite(left.message.index_in_chat) ? left.message.index_in_chat : left.originalIndex;
@@ -908,7 +981,15 @@ function rebuildStoryWeatherState(messages, fallbackUpdatedAt = Date.now()) {
   let state = null;
   for (const { message } of ordered) {
     const role = message.role ?? (message.is_user ? "user" : "assistant");
-    if (role !== "assistant" || typeof message.content !== "string")
+    if (role !== "assistant")
+      continue;
+    const fromMetadata = extractMessageWeatherMetadata(message);
+    if (fromMetadata) {
+      const updatedAt = resolveMessageTimestamp(message) ?? (fromMetadata.updatedAt > 0 ? fromMetadata.updatedAt : fallbackUpdatedAt);
+      state = { ...fromMetadata, updatedAt, source: "story" };
+      continue;
+    }
+    if (typeof message.content !== "string")
       continue;
     const tag = extractLastWeatherTag(message.content);
     if (!tag)
@@ -936,7 +1017,7 @@ function hasSameStoryScene(left, right) {
 function buildWeatherTagExample() {
   return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" exposure="outdoor" phenomenon="none" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>';
 }
-function summarizeWeatherState(state) {
+function summarizeWeatherState(state, includeTagHint = true) {
   if (!state)
     return "No saved weather state yet.";
   const lunar = resolveLunarPhase(state.date, state.time);
@@ -956,8 +1037,11 @@ function summarizeWeatherState(state) {
     `Phenomenon: ${state.phenomenon ?? "none"}`,
     `Lunar phase: ${lunar.label} (${Math.round(lunar.illumination * 100)}% illuminated)`
   ];
-  const forecast = state.forecast.length > 0 ? state.forecast.map(formatForecastEntry).join(" | ") : "Not set yet; create a near-term outlook in the next tag.";
-  lines.push(`Forecast: ${forecast}`);
+  if (state.forecast.length > 0) {
+    lines.push(`Forecast: ${state.forecast.map(formatForecastEntry).join(" | ")}`);
+  } else if (includeTagHint) {
+    lines.push("Forecast: Not set yet; create a near-term outlook in the next tag.");
+  }
   return lines.join(" | ");
 }
 function buildTrackerMacro() {
@@ -1019,10 +1103,37 @@ function buildSceneInstruction(state) {
   ].join(`
 `);
 }
+function buildReadOnlySceneInstruction(state) {
+  return [
+    "[LumiWeather Current Scene]",
+    `Current scene: ${summarizeWeatherState(state, false)}`,
+    "Use this as natural environmental continuity; do not emit weather tags or meta-commentary."
+  ].join(`
+`);
+}
 
 // src/prompt-injection.ts
 var WEATHER_INSTRUCTIONS_BREAKDOWN_NAME = "LumiWeather \u2014 Instructions";
 var WEATHER_BREAKDOWN_NAME = "LumiWeather \u2014 Scene State";
+function injectWeatherSceneState(messages, state) {
+  const nextMessages = [...messages];
+  if (!state) {
+    return { messages: nextMessages, breakdown: [] };
+  }
+  let insertIndex = nextMessages.length;
+  const last = nextMessages[nextMessages.length - 1];
+  if (last && last.role === "assistant" && !last.__isChatHistory) {
+    insertIndex = nextMessages.length - 1;
+  }
+  nextMessages.splice(insertIndex, 0, {
+    role: "system",
+    content: buildReadOnlySceneInstruction(state)
+  });
+  return {
+    messages: nextMessages,
+    breakdown: [{ messageIndex: insertIndex, name: WEATHER_BREAKDOWN_NAME }]
+  };
+}
 function latestHistoryTag(messages) {
   for (let i = messages.length - 1;i >= 0; i--) {
     const message = messages[i];
@@ -1048,6 +1159,223 @@ function injectWeatherInstruction(messages, instruction, state) {
     nextMessages.push({ role: "system", content: buildSceneInstruction(state) });
   }
   return { messages: nextMessages, breakdown };
+}
+
+// src/sidecar-extractor.ts
+var MAX_TURN_CHARS = 2400;
+function truncateTurnText(text, maxChars = MAX_TURN_CHARS) {
+  const cleaned = stripWeatherStateTags(text).trim();
+  if (cleaned.length <= maxChars)
+    return cleaned;
+  const head = Math.floor(maxChars * 0.4);
+  const tail = maxChars - head - 5;
+  return `${cleaned.slice(0, head).trimEnd()}
+...
+${cleaned.slice(-tail).trimStart()}`;
+}
+function buildSidecarSystemPrompt() {
+  return [
+    "You are a silent story-scene tracker for a weather and time HUD.",
+    "Given the previous scene state and the latest story messages, output ONLY a single raw JSON object with the updated scene state.",
+    "Do not wrap the JSON in markdown fences, explanations, or commentary.",
+    "",
+    "Rules:",
+    "- Copy every previous field unchanged unless the latest story text clearly changes it.",
+    '- If a previous state already exists with a non-empty forecast and nothing changed in the latest messages (including time), you may return {"unchanged": true}.',
+    "- Treat date and time as story continuity, NOT real-world wall-clock time. Brief dialogue or quick actions keep the exact same time; only advance time for narrated waits, travel, sleep, or explicit time skips.",
+    "- When no previous state exists, establish a plausible initial scene (location, date, time, condition, summary, temperature, intensity, wind, windDirection, palette, season, exposure, phenomenon, forecast) grounded in the narrative.",
+    "- Always maintain a 3-day fictional forecast (up to 5 days) with real YYYY-MM-DD dates strictly after the current date, keeping existing future forecast entries unchanged unless the story alters them and rolling past days off when the date advances.",
+    "- Track exposure carefully: outdoor (open air), sheltered (porch/canopy/awning/veranda), indoor (inside a building/room/vehicle), underground (cave/dungeon/cellar/tunnel).",
+    "",
+    "JSON schema (omit unchanged fields if returning a delta, or include all fields):",
+    "{",
+    '  "location": "short place name",',
+    '  "date": "YYYY-MM-DD",',
+    '  "time": "h:mm AM/PM",',
+    `  "condition": "${WEATHER_CONDITIONS.join(" | ")}",`,
+    '  "summary": "brief atmospheric phrase (max 80 chars)",',
+    '  "temperature": "integer + F or C (e.g. 64F or 18C)",',
+    '  "intensity": 0.0 to 1.0,',
+    '  "wind": "short wind description (e.g. still, light breeze, strong gusts)",',
+    `  "windDirection": "${WEATHER_WIND_DIRECTIONS.join(" | ")}",`,
+    `  "palette": "${WEATHER_PALETTES.join(" | ")}",`,
+    `  "season": "${WEATHER_SEASONS.join(" | ")}",`,
+    `  "exposure": "${WEATHER_EXPOSURES.join(" | ")}",`,
+    `  "phenomenon": "${WEATHER_PHENOMENA.join(" | ")}",`,
+    '  "forecast": [{ "date": "YYYY-MM-DD", "condition": "rain", "temperature": "60F", "summary": "brief outlook" }]',
+    "}"
+  ].join(`
+`);
+}
+function serializePreviousState(state) {
+  if (!state)
+    return "None (establish the initial scene from the story excerpt below).";
+  return JSON.stringify({
+    location: state.location,
+    date: state.date,
+    time: state.time,
+    condition: state.condition,
+    summary: state.summary,
+    temperature: state.temperature,
+    intensity: Number(state.intensity.toFixed(2)),
+    wind: state.wind,
+    windDirection: state.windDirection,
+    palette: state.palette,
+    season: state.season,
+    exposure: state.exposure ?? "outdoor",
+    phenomenon: state.phenomenon ?? "none",
+    forecast: state.forecast.map((entry) => formatForecastEntry(entry))
+  });
+}
+function buildSidecarExtractionMessages(previousState, recentTurns) {
+  const formattedTurns = recentTurns.map((turn) => {
+    const text = truncateTurnText(turn.content);
+    if (!text)
+      return null;
+    const speaker = turn.name?.trim() || (turn.role === "user" ? "User" : "Assistant");
+    return `[${speaker} (${turn.role})]
+${text}`;
+  }).filter((entry) => entry !== null);
+  const userContent = [
+    `Previous scene state:
+${serializePreviousState(previousState)}`,
+    "",
+    "Latest story excerpt:",
+    formattedTurns.length > 0 ? formattedTurns.join(`
+
+`) : "(empty)",
+    "",
+    "Return ONLY the JSON object."
+  ].join(`
+`);
+  return [
+    { role: "system", content: buildSidecarSystemPrompt() },
+    { role: "user", content: userContent }
+  ];
+}
+function flattenContent(value) {
+  if (typeof value === "string")
+    return value;
+  if (Array.isArray(value)) {
+    const parts = value.map((part) => {
+      if (typeof part === "string")
+        return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
+        return part.text;
+      }
+      return "";
+    }).filter(Boolean);
+    return parts.length > 0 ? parts.join(`
+`) : null;
+  }
+  return null;
+}
+function extractTextFromGenerationResult(raw) {
+  if (typeof raw === "string")
+    return raw;
+  if (!raw || typeof raw !== "object")
+    return null;
+  const record = raw;
+  const direct = flattenContent(record.content) ?? flattenContent(record.text) ?? flattenContent(record.output);
+  if (direct !== null)
+    return direct;
+  if (record.message && typeof record.message === "object") {
+    const msgContent = flattenContent(record.message.content);
+    if (msgContent !== null)
+      return msgContent;
+  }
+  if (Array.isArray(record.choices) && record.choices.length > 0) {
+    const first = record.choices[0];
+    if (first && typeof first === "object") {
+      const choiceText = flattenContent(first.text) ?? (first.message && typeof first.message === "object" ? flattenContent(first.message.content) : null);
+      if (choiceText !== null)
+        return choiceText;
+    }
+  }
+  if (record.result !== undefined) {
+    return extractTextFromGenerationResult(record.result);
+  }
+  return null;
+}
+function extractJsonObject(rawText) {
+  const withoutThinking = rawText.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "").trim();
+  const unfenced = withoutThinking.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const tryParse = (candidate) => {
+    try {
+      const parsed = JSON.parse(candidate);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+  const direct = tryParse(unfenced);
+  if (direct)
+    return direct;
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0;i < unfenced.length; i += 1) {
+    const ch = unfenced[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0)
+        start = i;
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const parsed = tryParse(unfenced.slice(start, i + 1));
+        if (parsed)
+          return parsed;
+        start = -1;
+      }
+    }
+  }
+  return null;
+}
+function parseSidecarExtractionResponse(rawResponse, previousState, updatedAt = Date.now()) {
+  const text = extractTextFromGenerationResult(rawResponse);
+  if (!text)
+    return null;
+  const parsed = extractJsonObject(text);
+  if (!parsed)
+    return null;
+  if (parsed.unchanged === true && previousState) {
+    return {
+      ...previousState,
+      updatedAt,
+      source: "story"
+    };
+  }
+  const cleaned = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === "unchanged" || value === null || value === undefined)
+      continue;
+    cleaned[key] = value;
+  }
+  if (Object.keys(cleaned).length === 0) {
+    return previousState ? { ...previousState, updatedAt, source: "story" } : null;
+  }
+  const normalized = normalizeWeatherState({ ...cleaned, updatedAt, source: "story" }, previousState);
+  const derived = seasonFromStoryDate(normalized.date, normalized.time);
+  if (normalized.seasonOverride && normalized.seasonOverride === derived && !previousState?.seasonOverride) {
+    normalized.seasonOverride = null;
+  }
+  return normalized;
 }
 
 // src/tag-dedupe.ts
@@ -1093,6 +1421,72 @@ var sessions = new Map;
 var processedTags = new Map;
 var historyReconcileTimers = new Map;
 var operationQueues = new Map;
+var activeExtractions = new Map;
+var suppressedMetadataEdits = new Map;
+var METADATA_EDIT_SUPPRESS_MS = 2500;
+var SIDECAR_TIMEOUT_MS = 25000;
+function extractUserId(payload) {
+  if (!payload || typeof payload !== "object")
+    return null;
+  const value = payload;
+  const candidates = [value.userId, value.user_id];
+  const found = candidates.find((candidate) => typeof candidate === "string" && candidate.trim());
+  return typeof found === "string" ? found : null;
+}
+function resolveUsersForChat(chatId, explicitUserId) {
+  if (explicitUserId)
+    return [explicitUserId];
+  const matched = [...sessions.entries()].filter(([, session]) => session.activeChatId === chatId).map(([userId]) => userId);
+  if (matched.length > 0)
+    return matched;
+  return sessions.size === 1 ? [...sessions.keys()] : [];
+}
+function cancelActiveExtraction(chatId) {
+  const controller = activeExtractions.get(chatId);
+  if (!controller)
+    return;
+  activeExtractions.delete(chatId);
+  try {
+    controller.abort();
+  } catch {}
+}
+function isSuppressedMetadataEdit(chatId, messageId) {
+  if (!messageId)
+    return false;
+  const key = `${chatId}:${messageId}`;
+  const expiresAt = suppressedMetadataEdits.get(key);
+  if (!expiresAt)
+    return false;
+  if (Date.now() > expiresAt) {
+    suppressedMetadataEdits.delete(key);
+    return false;
+  }
+  suppressedMetadataEdits.delete(key);
+  return true;
+}
+async function listConnectionProfiles(userId) {
+  if (typeof spindle.connections?.list !== "function")
+    return [];
+  try {
+    const rawProfiles = await spindle.connections.list(userId);
+    if (!Array.isArray(rawProfiles))
+      return [];
+    return rawProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name || profile.model || profile.id,
+      provider: profile.provider || "",
+      model: profile.model || "",
+      isDefault: Boolean(profile.is_default)
+    }));
+  } catch (error) {
+    spindle.log.warn(`LumiWeather could not list connection profiles: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
+  }
+}
+async function pushConnections(userId) {
+  const profiles = await listConnectionProfiles(userId);
+  send(userId, { type: "connections", profiles });
+}
 async function runSerialized(key, operation) {
   const previous = operationQueues.get(key) ?? Promise.resolve();
   const next = previous.catch(() => {}).then(operation);
@@ -1402,20 +1796,191 @@ for (const name of WEATHER_VISUAL_TAGS_MACROS) {
   });
 }
 pushMacroValues();
+function notifyExtractionStatus(chatId, status, userIds, detail) {
+  for (const uid of userIds) {
+    if (getSession(uid).activeChatId === chatId) {
+      send(uid, { type: "extraction_status", chatId, status, detail });
+    }
+  }
+}
+async function extractWeatherForChat(options) {
+  const { chatId, targetMessageId, fallbackContent, generationType, force = false } = options;
+  if (typeof spindle.generate?.quiet !== "function")
+    return null;
+  const userIds = resolveUsersForChat(chatId, options.userId);
+  const primaryUserId = options.userId ?? userIds[0];
+  const prefs = await loadPrefs(primaryUserId ?? "");
+  if (!force && (prefs.trackingMode ?? "sidecar") !== "sidecar")
+    return null;
+  cancelActiveExtraction(chatId);
+  const controller = new AbortController;
+  activeExtractions.set(chatId, controller);
+  const timeout = setTimeout(() => {
+    try {
+      controller.abort();
+    } catch {}
+  }, SIDECAR_TIMEOUT_MS);
+  try {
+    const rawMessages = await spindle.chat.getMessages(chatId);
+    if (controller.signal.aborted || activeExtractions.get(chatId) !== controller)
+      return null;
+    const ordered = rawMessages.map((entry, originalIndex) => ({ entry, originalIndex })).sort((left, right) => {
+      const leftIndex = Number.isFinite(left.entry.index_in_chat) ? left.entry.index_in_chat : left.originalIndex;
+      const rightIndex = Number.isFinite(right.entry.index_in_chat) ? right.entry.index_in_chat : right.originalIndex;
+      return leftIndex - rightIndex || left.originalIndex - right.originalIndex;
+    }).map(({ entry }) => entry);
+    let targetIndex = -1;
+    if (targetMessageId) {
+      targetIndex = ordered.findIndex((entry) => entry.id === targetMessageId);
+    }
+    if (targetIndex < 0) {
+      for (let i = ordered.length - 1;i >= 0; i -= 1) {
+        const entry = ordered[i];
+        const role = entry.role ?? (entry.is_user ? "user" : "assistant");
+        if (role === "assistant") {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+    if (targetIndex < 0)
+      return null;
+    const targetMessage = ordered[targetIndex];
+    const targetContent = typeof targetMessage.content === "string" && targetMessage.content.trim() ? targetMessage.content : fallbackContent ?? "";
+    if (!force && targetContent && extractLastWeatherTag(targetContent)) {
+      return null;
+    }
+    const messagesBeforeTarget = ordered.slice(0, targetIndex);
+    const priorFromHistory = rebuildStoryWeatherState(messagesBeforeTarget);
+    const isRewrite = generationType === "swipe" || generationType === "regenerate";
+    const previousState = priorFromHistory ?? (!isRewrite ? await loadStoryWeatherState(chatId) : null);
+    const recentTurns = [];
+    for (let i = Math.max(0, targetIndex - 2);i <= targetIndex; i += 1) {
+      const entry = ordered[i];
+      const role = entry.role ?? (entry.is_user ? "user" : "assistant");
+      if (role !== "user" && role !== "assistant")
+        continue;
+      const content = i === targetIndex ? targetContent : typeof entry.content === "string" ? entry.content : "";
+      if (!content.trim())
+        continue;
+      recentTurns.push({ role, name: entry.name, content });
+    }
+    if (recentTurns.length === 0)
+      return null;
+    notifyExtractionStatus(chatId, "running", userIds);
+    const rawResult = await spindle.generate.quiet({
+      type: "quiet",
+      messages: buildSidecarExtractionMessages(previousState, recentTurns),
+      connection_id: prefs.sidecarConnectionId || undefined,
+      reasoning: { source: "off" },
+      parameters: { temperature: 0.1, max_tokens: 450 },
+      userId: primaryUserId || undefined,
+      signal: controller.signal
+    });
+    if (controller.signal.aborted || activeExtractions.get(chatId) !== controller)
+      return null;
+    const messageTimestamp = resolveMessageTimestamp(targetMessage) ?? Date.now();
+    const extracted = parseSidecarExtractionResponse(rawResult, previousState, messageTimestamp);
+    if (!extracted) {
+      spindle.log.warn("LumiWeather sidecar returned an unparseable response; keeping previous scene state.");
+      notifyExtractionStatus(chatId, "error", userIds, "Could not parse sidecar response");
+      return null;
+    }
+    let finalEffective = null;
+    await runSerialized(`chat:${chatId}`, async () => {
+      if (controller.signal.aborted || activeExtractions.get(chatId) !== controller)
+        return;
+      if (targetMessage.id && typeof spindle.chat?.updateMessage === "function") {
+        try {
+          const nextMetadata = buildMessageWeatherMetadata(targetMessage.metadata, targetMessage.swipe_id, extracted);
+          suppressedMetadataEdits.set(`${chatId}:${targetMessage.id}`, Date.now() + METADATA_EDIT_SUPPRESS_MS);
+          await spindle.chat.updateMessage(chatId, targetMessage.id, {
+            metadata: nextMetadata,
+            skipChunkRebuild: true
+          });
+        } catch (error) {
+          suppressedMetadataEdits.delete(`${chatId}:${targetMessage.id}`);
+          spindle.log.warn(`LumiWeather could not save per-message metadata: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      const previousStored = await loadStoryWeatherState(chatId);
+      const changed = !hasSameStoryScene(previousStored, extracted) || previousStored?.updatedAt !== extracted.updatedAt;
+      if (changed) {
+        await saveStoryWeatherState(chatId, extracted);
+      }
+      const revision = changed ? await bumpWeatherRevision(chatId) : await loadWeatherRevision(chatId);
+      const effective = await loadManualWeatherState(chatId) ?? extracted;
+      finalEffective = effective;
+      if (userIds.length > 0) {
+        for (const uid of userIds) {
+          await publishWeatherState(chatId, effective, revision, uid);
+          if (getSession(uid).activeChatId === chatId) {
+            send(uid, { type: "weather_state", chatId, state: effective });
+          }
+        }
+      } else {
+        await publishWeatherState(chatId, effective, revision);
+      }
+      notifyExtractionStatus(chatId, "idle", userIds);
+    });
+    return finalEffective;
+  } catch (error) {
+    if (controller.signal.aborted || error instanceof Error && error.name === "AbortError") {
+      notifyExtractionStatus(chatId, "idle", userIds);
+      return null;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    spindle.log.warn(`LumiWeather sidecar extraction failed: ${reason}`);
+    notifyExtractionStatus(chatId, "error", userIds, reason);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+    if (activeExtractions.get(chatId) === controller) {
+      activeExtractions.delete(chatId);
+    }
+  }
+}
 spindle.registerInterceptor(async (messages, context) => {
   const chatId = extractChatId(context);
   const state = chatId ? await loadEffectiveWeatherState(chatId) : null;
+  const userId = extractUserId(context) ?? (chatId ? resolveUsersForChat(chatId)[0] : undefined);
+  const prefs = await loadPrefs(userId ?? "");
+  if ((prefs.trackingMode ?? "sidecar") === "sidecar") {
+    return injectWeatherSceneState(messages, state);
+  }
   const instruction = buildPromptInstruction();
   return injectWeatherInstruction(messages, instruction, state);
 }, 100);
 var onEvent = spindle.on;
+onEvent("GENERATION_ENDED", (payload, eventUserId) => {
+  if (!payload || typeof payload !== "object")
+    return;
+  const event = payload;
+  if (event.error || event.generationType === "impersonate")
+    return;
+  const chatId = typeof event.chatId === "string" && event.chatId.trim() ? event.chatId : null;
+  if (!chatId)
+    return;
+  extractWeatherForChat({
+    chatId,
+    userId: eventUserId,
+    targetMessageId: event.messageId,
+    fallbackContent: event.content,
+    generationType: event.generationType
+  });
+});
 for (const event of ["MESSAGE_EDITED", "MESSAGE_DELETED", "MESSAGE_SWIPED", "SWIPE_EDITED"]) {
   onEvent(event, (payload, eventUserId) => {
     const value = payload && typeof payload === "object" ? payload : {};
     const chatId = extractChatId(payload) ?? extractChatId(value.message);
     if (!chatId)
       return;
-    const userIds = eventUserId ? [eventUserId] : [...sessions.entries()].filter(([, session]) => session.activeChatId === chatId).map(([userId]) => userId);
+    const msgObj = value.message && typeof value.message === "object" ? value.message : null;
+    const messageId = typeof value.messageId === "string" ? value.messageId : typeof value.message_id === "string" ? value.message_id : typeof msgObj?.id === "string" ? msgObj.id : null;
+    if (event === "MESSAGE_EDITED" && isSuppressedMetadataEdit(chatId, messageId)) {
+      return;
+    }
+    const userIds = resolveUsersForChat(chatId, eventUserId);
     for (const userId of userIds) {
       if (getSession(userId).activeChatId === chatId)
         scheduleStoryWeatherReconcile(userId, chatId);
@@ -1431,7 +1996,20 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await runSerialized(`prefs:${userId}`, async () => {
           send(userId, { type: "prefs", prefs: await loadPrefs(userId) });
         });
+        await pushConnections(userId);
         break;
+      case "refresh_connections":
+        await pushConnections(userId);
+        break;
+      case "extract_now": {
+        const chatId = await resolveWeatherEditChatId(userId, message.chatId);
+        if (!chatId) {
+          send(userId, { type: "error", message: "Open a chat before analyzing its weather scene." });
+          break;
+        }
+        await extractWeatherForChat({ chatId, userId, force: true });
+        break;
+      }
       case "chat_changed":
         await pushActiveChatState(userId, message.chatId, message.requestId);
         break;

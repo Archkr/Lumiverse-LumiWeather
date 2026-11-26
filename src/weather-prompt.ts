@@ -13,7 +13,7 @@ export function buildWeatherTagExample(): string {
   return '<weather-state location="Example Location" date="2026-01-15" time="3:00 PM" condition="rain" summary="Steady afternoon rain" temperature="60F" intensity="0.65" wind="breezy" windDirection="west" palette="storm" season="winter" exposure="outdoor" phenomenon="none" forecast="2026-01-16: rain, 58F, lingering showers | 2026-01-17: cloudy, 56F, cool overcast skies | 2026-01-18: clear, 57F, mild winter sunshine"></weather-state>';
 }
 
-export function summarizeWeatherState(state: WeatherState | null): string {
+export function summarizeWeatherState(state: WeatherState | null, includeTagHint = true): string {
   if (!state) return "No saved weather state yet.";
   const lunar = resolveLunarPhase(state.date, state.time);
   const lines = [
@@ -32,10 +32,11 @@ export function summarizeWeatherState(state: WeatherState | null): string {
     `Phenomenon: ${state.phenomenon ?? "none"}`,
     `Lunar phase: ${lunar.label} (${Math.round(lunar.illumination * 100)}% illuminated)`,
   ];
-  const forecast = state.forecast.length > 0
-    ? state.forecast.map(formatForecastEntry).join(" | ")
-    : "Not set yet; create a near-term outlook in the next tag.";
-  lines.push(`Forecast: ${forecast}`);
+  if (state.forecast.length > 0) {
+    lines.push(`Forecast: ${state.forecast.map(formatForecastEntry).join(" | ")}`);
+  } else if (includeTagHint) {
+    lines.push("Forecast: Not set yet; create a near-term outlook in the next tag.");
+  }
   return lines.join(" | ");
 }
 
@@ -97,5 +98,18 @@ export function buildSceneInstruction(state: WeatherState | null): string {
   return [
     "[LumiWeather Current Scene]",
     `Current scene: ${summarizeWeatherState(state)}`,
+  ].join("\n");
+}
+
+/**
+ * Cache-friendly read-only scene state for sidecar tracking mode.
+ * Appended after history so the entire prior prompt prefix stays cache-identical
+ * and the main model never needs to emit `<weather-state>` tags.
+ */
+export function buildReadOnlySceneInstruction(state: WeatherState): string {
+  return [
+    "[LumiWeather Current Scene]",
+    `Current scene: ${summarizeWeatherState(state, false)}`,
+    "Use this as natural environmental continuity; do not emit weather tags or meta-commentary.",
   ].join("\n");
 }
