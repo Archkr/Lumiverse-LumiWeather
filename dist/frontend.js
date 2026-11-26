@@ -8497,6 +8497,10 @@ var WEATHER_HUD_CSS = `
   white-space: nowrap;
 }
 
+.weather-hud-summary-text {
+  display: inline;
+}
+
 .weather-hud-summary::after {
   content: none;
 }
@@ -8512,7 +8516,13 @@ var WEATHER_HUD_CSS = `
   text-overflow: clip;
   align-items: center;
   gap: var(--weather-hud-summary-gap);
-  animation: weather-hud-summary-ticker 12s linear infinite;
+  animation: weather-hud-summary-ticker var(--weather-hud-summary-duration, 12s) linear infinite;
+}
+
+.weather-hud-widget:not([data-paused="true"]):not([data-effects="false"]):not([data-reduced-motion="true"])
+  .weather-hud-summary-viewport[data-overflow="true"]
+  .weather-hud-summary-text {
+  flex: 0 0 auto;
 }
 
 .weather-hud-widget:not([data-paused="true"]):not([data-effects="false"]):not([data-reduced-motion="true"])
@@ -9399,10 +9409,31 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
   summaryViewport.className = "weather-hud-summary-viewport";
   const summary = document.createElement("div");
   summary.className = "weather-hud-summary";
+  const summaryText = document.createElement("span");
+  summaryText.className = "weather-hud-summary-text";
+  summary.appendChild(summaryText);
   summaryViewport.appendChild(summary);
   right.appendChild(icon);
   right.appendChild(temp);
   right.appendChild(summaryViewport);
+  let summaryObserver = null;
+  if (typeof ResizeObserver === "function") {
+    summaryObserver = new ResizeObserver(() => {
+      measureSummaryOverflow(summaryViewport, summary, summaryText);
+    });
+    summaryObserver.observe(summaryViewport);
+  }
+  if (typeof document !== "undefined" && "fonts" in document && document.fonts?.ready) {
+    document.fonts.ready.then(() => {
+      if (summaryViewport.isConnected) {
+        measureSummaryOverflow(summaryViewport, summary, summaryText);
+      }
+    });
+  }
+  const cleanupSummaryObserver = () => {
+    summaryObserver?.disconnect();
+    summaryObserver = null;
+  };
   body.appendChild(left);
   body.appendChild(right);
   root.appendChild(body);
@@ -9687,6 +9718,8 @@ function createHudWidget(ctx, initialPosition, expanded, mobile, keyboardState, 
     temp,
     summaryViewport,
     summary,
+    summaryText,
+    cleanupSummaryObserver,
     source,
     phenomenonBadge,
     drawerToggle,
@@ -9851,6 +9884,22 @@ function getTimeFormatter(locale) {
   timeFormatters.set(locale, formatter);
   return formatter;
 }
+function measureSummaryOverflow(viewport, summary, textSpan) {
+  const viewportW = viewport.clientWidth;
+  if (viewportW <= 0) {
+    viewport.dataset.overflowMeasured = "false";
+    return false;
+  }
+  const textW = Math.max(textSpan.getBoundingClientRect().width, textSpan.scrollWidth);
+  const overflows = textW > viewportW + 1;
+  viewport.dataset.overflow = overflows ? "true" : "false";
+  viewport.dataset.overflowMeasured = "true";
+  if (overflows) {
+    const durationSeconds = clamp((textW + 28) / 26, 8, 22);
+    summary.style.setProperty("--weather-hud-summary-duration", `${durationSeconds.toFixed(1)}s`);
+  }
+  return true;
+}
 function syncHudClock(hud, displayState, hasState, liveDate) {
   const locale = document.documentElement.lang || navigator.language || "en-US";
   const nextDate = liveDate ? getDateFormatter(locale).format(liveDate) : hasState ? displayState.date : "No tag yet";
@@ -9909,26 +9958,22 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
-  const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
+  const isSidecar = (prefs.trackingMode ?? "sidecar") === "sidecar";
+  const summaryText = state ? displayState.summary : isSidecar ? "Waiting for story scene" : "Waiting for the first weather tag";
   const summaryChanged = hud.summary.dataset.tickerText !== summaryText;
   if (summaryChanged) {
-    hud.summary.textContent = summaryText;
+    hud.summaryText.textContent = summaryText;
     hud.summary.title = summaryText;
     hud.summary.dataset.tickerText = summaryText;
-    hud.summaryViewport.dataset.overflow = "false";
-    const viewportW = hud.summaryViewport.clientWidth;
-    if (viewportW > 0) {
-      if (hud.summary.scrollWidth > viewportW + 1) {
-        hud.summaryViewport.dataset.overflow = "true";
-      }
-    } else if (typeof window !== "undefined") {
+    hud.summaryViewport.dataset.overflowMeasured = "false";
+  }
+  if (summaryChanged || hud.summaryViewport.dataset.overflowMeasured !== "true") {
+    const measured = measureSummaryOverflow(hud.summaryViewport, hud.summary, hud.summaryText);
+    if (!measured && typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
         if (!hud.summaryViewport.isConnected)
           return;
-        const measuredW = hud.summaryViewport.clientWidth;
-        if (measuredW > 0 && hud.summary.scrollWidth > measuredW + 1) {
-          hud.summaryViewport.dataset.overflow = "true";
-        }
+        measureSummaryOverflow(hud.summaryViewport, hud.summary, hud.summaryText);
       });
     }
   }
@@ -9938,7 +9983,7 @@ function syncHudState(hud, prefs, state, expanded, hasActiveChat) {
     windExtras.push(exposure);
   if (phenomenon !== "none")
     windExtras.push(phenomenon);
-  hud.wind.textContent = state ? [windBase, ...windExtras].join(" · ") : "Add {{weather_tracker}} to the prompt";
+  hud.wind.textContent = state ? [windBase, ...windExtras].join(" · ") : isSidecar ? "Sidecar syncs after next reply" : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.location.title = hud.location.textContent;
   hud.wind.title = state ? `${hud.wind.textContent} · ${lunar.label} (${Math.round(lunar.illumination * 100)}% moon)` : hud.wind.textContent;
@@ -10346,6 +10391,7 @@ function setup(ctx) {
       removeHudDragListener = null;
     }
     if (hud) {
+      hud.cleanupSummaryObserver();
       hud.widget.destroy();
       hud = null;
     }

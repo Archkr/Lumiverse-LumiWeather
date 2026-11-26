@@ -107,6 +107,8 @@ type HudElements = {
   temp: HTMLDivElement;
   summaryViewport: HTMLDivElement;
   summary: HTMLDivElement;
+  summaryText: HTMLSpanElement;
+  cleanupSummaryObserver: () => void;
   source?: HTMLSpanElement;
   phenomenonBadge: HTMLSpanElement;
   drawerToggle?: HTMLButtonElement;
@@ -369,10 +371,32 @@ function createHudWidget(
   summaryViewport.className = "weather-hud-summary-viewport";
   const summary = document.createElement("div");
   summary.className = "weather-hud-summary";
+  const summaryText = document.createElement("span");
+  summaryText.className = "weather-hud-summary-text";
+  summary.appendChild(summaryText);
   summaryViewport.appendChild(summary);
   right.appendChild(icon);
   right.appendChild(temp);
   right.appendChild(summaryViewport);
+
+  let summaryObserver: ResizeObserver | null = null;
+  if (typeof ResizeObserver === "function") {
+    summaryObserver = new ResizeObserver(() => {
+      measureSummaryOverflow(summaryViewport, summary, summaryText);
+    });
+    summaryObserver.observe(summaryViewport);
+  }
+  if (typeof document !== "undefined" && "fonts" in document && document.fonts?.ready) {
+    void document.fonts.ready.then(() => {
+      if (summaryViewport.isConnected) {
+        measureSummaryOverflow(summaryViewport, summary, summaryText);
+      }
+    });
+  }
+  const cleanupSummaryObserver = () => {
+    summaryObserver?.disconnect();
+    summaryObserver = null;
+  };
 
   body.appendChild(left);
   body.appendChild(right);
@@ -699,6 +723,8 @@ function createHudWidget(
     temp,
     summaryViewport,
     summary,
+    summaryText,
+    cleanupSummaryObserver,
     source,
     phenomenonBadge,
     drawerToggle,
@@ -915,6 +941,30 @@ function getTimeFormatter(locale: string): Intl.DateTimeFormat {
   return formatter;
 }
 
+function measureSummaryOverflow(
+  viewport: HTMLDivElement,
+  summary: HTMLDivElement,
+  textSpan: HTMLSpanElement,
+): boolean {
+  const viewportW = viewport.clientWidth;
+  if (viewportW <= 0) {
+    viewport.dataset.overflowMeasured = "false";
+    return false;
+  }
+  // `textSpan` is an inline span (or flex child during ticker), so its bounding box
+  // always reflects the unwrapped width of a single copy of the summary text without
+  // having to reset `data-overflow` or restart the animation.
+  const textW = Math.max(textSpan.getBoundingClientRect().width, textSpan.scrollWidth);
+  const overflows = textW > viewportW + 1;
+  viewport.dataset.overflow = overflows ? "true" : "false";
+  viewport.dataset.overflowMeasured = "true";
+  if (overflows) {
+    const durationSeconds = clamp((textW + 28) / 26, 8, 22);
+    summary.style.setProperty("--weather-hud-summary-duration", `${durationSeconds.toFixed(1)}s`);
+  }
+  return true;
+}
+
 function syncHudClock(hud: HudElements, displayState: WeatherState, hasState: boolean, liveDate: Date | null): void {
   const locale = document.documentElement.lang || navigator.language || "en-US";
   const nextDate = liveDate ? getDateFormatter(locale).format(liveDate) : hasState ? displayState.date : "No tag yet";
@@ -983,27 +1033,25 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   hud.icon.setAttribute("aria-label", iconLabel);
   hud.icon.title = iconLabel;
   hud.temp.textContent = state ? formatTemperatureForUnit(displayState.temperature, prefs.temperatureUnit) : "—";
-  const summaryText = state ? displayState.summary : "Waiting for the first weather tag";
+  const isSidecar = (prefs.trackingMode ?? "sidecar") === "sidecar";
+  const summaryText = state
+    ? displayState.summary
+    : isSidecar
+      ? "Waiting for story scene"
+      : "Waiting for the first weather tag";
   const summaryChanged = hud.summary.dataset.tickerText !== summaryText;
   if (summaryChanged) {
-    hud.summary.textContent = summaryText;
+    hud.summaryText.textContent = summaryText;
     hud.summary.title = summaryText;
     hud.summary.dataset.tickerText = summaryText;
-    // Measure overflow only when summary text changes so short summaries stay static
-    // and never trigger an infinite CSS ticker animation on the compositor.
-    hud.summaryViewport.dataset.overflow = "false";
-    const viewportW = hud.summaryViewport.clientWidth;
-    if (viewportW > 0) {
-      if (hud.summary.scrollWidth > viewportW + 1) {
-        hud.summaryViewport.dataset.overflow = "true";
-      }
-    } else if (typeof window !== "undefined") {
+    hud.summaryViewport.dataset.overflowMeasured = "false";
+  }
+  if (summaryChanged || hud.summaryViewport.dataset.overflowMeasured !== "true") {
+    const measured = measureSummaryOverflow(hud.summaryViewport, hud.summary, hud.summaryText);
+    if (!measured && typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
         if (!hud.summaryViewport.isConnected) return;
-        const measuredW = hud.summaryViewport.clientWidth;
-        if (measuredW > 0 && hud.summary.scrollWidth > measuredW + 1) {
-          hud.summaryViewport.dataset.overflow = "true";
-        }
+        measureSummaryOverflow(hud.summaryViewport, hud.summary, hud.summaryText);
       });
     }
   }
@@ -1013,7 +1061,9 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
   if (phenomenon !== "none") windExtras.push(phenomenon);
   hud.wind.textContent = state
     ? [windBase, ...windExtras].join(" · ")
-    : "Add {{weather_tracker}} to the prompt";
+    : isSidecar
+      ? "Sidecar syncs after next reply"
+      : "Add {{weather_tracker}} to the prompt";
   hud.location.textContent = state ? displayState.location : "Waiting for LumiWeather";
   hud.location.title = hud.location.textContent;
   hud.wind.title = state
@@ -1543,6 +1593,7 @@ export function setup(ctx: SpindleFrontendContext) {
       removeHudDragListener = null;
     }
     if (hud) {
+      hud.cleanupSummaryObserver();
       hud.widget.destroy();
       hud = null;
     }

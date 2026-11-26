@@ -1387,6 +1387,10 @@ export const WEATHER_HUD_CSS = `
   white-space: nowrap;
 }
 
+.weather-hud-summary-text {
+  display: inline;
+}
+
 .weather-hud-summary::after {
   content: none;
 }
@@ -1402,7 +1406,13 @@ export const WEATHER_HUD_CSS = `
   text-overflow: clip;
   align-items: center;
   gap: var(--weather-hud-summary-gap);
-  animation: weather-hud-summary-ticker 12s linear infinite;
+  animation: weather-hud-summary-ticker var(--weather-hud-summary-duration, 12s) linear infinite;
+}
+
+.weather-hud-widget:not([data-paused="true"]):not([data-effects="false"]):not([data-reduced-motion="true"])
+  .weather-hud-summary-viewport[data-overflow="true"]
+  .weather-hud-summary-text {
+  flex: 0 0 auto;
 }
 
 .weather-hud-widget:not([data-paused="true"]):not([data-effects="false"]):not([data-reduced-motion="true"])
