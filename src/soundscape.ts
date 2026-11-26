@@ -1,5 +1,15 @@
 import { clamp } from "./shared";
-import type { WeatherExposure, WeatherPrefs, WeatherState, WeatherWindDirection } from "./types";
+import type {
+  SoundscapeSampleKey,
+  WeatherExposure,
+  WeatherPrefs,
+  WeatherState,
+  WeatherWindDirection,
+} from "./types";
+
+export interface WeatherSoundscapeOptions {
+  requestSample?: (key: SoundscapeSampleKey) => void;
+}
 
 export type ShimmerStyle = "none" | "aurora" | "fireflies" | "blossoms";
 export type SoundscapeBiome = "none" | "coastal" | "forest" | "water";
@@ -1015,6 +1025,7 @@ type BranchKey =
   | "foliage"
   | "surf"
   | "brook"
+  | "gulls"
   | "cicada"
   | "deepRumble"
   | "air"
@@ -1111,11 +1122,15 @@ interface SoundscapeGraph {
   surfFoamSwell: GainNode;
   surfBodyFilter: BiquadFilterNode;
   surfFoamFilter: BiquadFilterNode;
+  surfSampleWarmth: BiquadFilterNode;
 
   brookGain: GainNode;
   brookSwell: GainNode;
   brookFilter: BiquadFilterNode;
   brookSparkleFilter: BiquadFilterNode;
+  brookSampleWarmth: BiquadFilterNode;
+
+  emberSampleWarmth: BiquadFilterNode;
 
   cicadaGain: GainNode;
   cicadaSwell: GainNode;
@@ -1225,6 +1240,10 @@ export class WeatherSoundscape {
   private suspendTimer: number | null = null;
   private lastProfile: SoundscapeProfile | null = null;
   private appliedWindCenter = 0;
+  private requestSampleCb?: (key: SoundscapeSampleKey) => void;
+  private sampleState = new Map<SoundscapeSampleKey, "loading" | "ready" | "missing">();
+  private sampleBuffers = new Map<SoundscapeSampleKey, AudioBuffer>();
+  private pendingBase64 = new Map<SoundscapeSampleKey, string>();
   private next: Record<GeneratorKey, number> = {
     gust: 0,
     rainSwell: 0,
@@ -1251,6 +1270,85 @@ export class WeatherSoundscape {
   };
   private crickets: CricketVoice[] = [];
   private destroyed = false;
+
+  constructor(options?: WeatherSoundscapeOptions) {
+    this.requestSampleCb = options?.requestSample;
+  }
+
+  /** Supplies a lazily fetched base64 audio sample from extension storage. */
+  provideSample(key: SoundscapeSampleKey, base64: string | null): void {
+    if (this.destroyed) return;
+    if (!base64) {
+      this.sampleState.set(key, "missing");
+      return;
+    }
+    if (!this.graph) {
+      this.pendingBase64.set(key, base64);
+      return;
+    }
+    void this.decodeAndInstallSample(key, base64);
+  }
+
+  private ensureSampleRequested(key: SoundscapeSampleKey): void {
+    if (!this.requestSampleCb || this.sampleState.has(key)) return;
+    this.sampleState.set(key, "loading");
+    this.requestSampleCb(key);
+  }
+
+  private async decodeAndInstallSample(key: SoundscapeSampleKey, base64: string): Promise<void> {
+    const g = this.graph;
+    if (this.destroyed || !g || typeof g.ctx.decodeAudioData !== "function") return;
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      const decoded = await g.ctx.decodeAudioData(bytes.buffer.slice(0));
+      if (this.destroyed || this.graph !== g) return;
+      this.sampleBuffers.set(key, decoded);
+      this.sampleState.set(key, "ready");
+      this.hotSwapSampleBranch(g, key);
+    } catch {
+      if (!this.destroyed) this.sampleState.set(key, "missing");
+    }
+  }
+
+  private hotSwapSampleBranch(g: SoundscapeGraph, key: SoundscapeSampleKey): void {
+    const profile = this.lastProfile;
+    if (!profile || !profile.active) return;
+    const now = g.ctx.currentTime;
+    const swap = (branchKey: BranchKey, shouldRun: boolean): void => {
+      const branch = g.branches[branchKey];
+      if (branch.active) {
+        this.stopBranchNow(branch);
+      }
+      if (shouldRun) {
+        this.startBranch(g, branchKey);
+      }
+    };
+    switch (key) {
+      case "coastal_surf":
+        g.surfGain.gain.setTargetAtTime(profile.surfGain * 1.1, now, 0.45);
+        swap("surf", profile.surfGain > 0.0005);
+        break;
+      case "brook":
+        g.brookGain.gain.setTargetAtTime(profile.brookGain * 0.95, now, 0.45);
+        swap("brook", profile.brookGain > 0.0005);
+        break;
+      case "hearth": {
+        const hearthOrEmber = Math.max(profile.emberCrackleGain, profile.winterHearthGain);
+        g.emberGain.gain.setTargetAtTime(hearthOrEmber * 1.05, now, 0.45);
+        swap("ember", hearthOrEmber > 0.0005);
+        break;
+      }
+      case "gulls":
+        g.gullGain.gain.setTargetAtTime(profile.gullGain * 0.52, now, 0.45);
+        swap("gulls", profile.gullGain > 0.0005);
+        break;
+      case "foghorn":
+        g.foghornGain.gain.setTargetAtTime(profile.foghornGain * 0.85, now, 0.45);
+        break;
+    }
+  }
 
   sync(state: WeatherState | null, prefs: WeatherPrefs, visible: boolean): SoundscapeProfile {
     const profile = resolveSoundscapeProfile(state, prefs, visible);
@@ -1304,8 +1402,19 @@ export class WeatherSoundscape {
         g.whistleFilter.frequency.setTargetAtTime(profile.windCenterHz * 3.2, now, layer);
       }
 
-      g.surfGain.gain.setTargetAtTime(profile.surfGain * 0.62, now, 1.1);
-      g.brookGain.gain.setTargetAtTime(profile.brookGain * 0.48, now, 1.1);
+      const hasSurfSample = this.sampleBuffers.has("coastal_surf");
+      const hasBrookSample = this.sampleBuffers.has("brook");
+      const hasHearthSample = this.sampleBuffers.has("hearth");
+      const hasGullsSample = this.sampleBuffers.has("gulls");
+      const hasFoghornSample = this.sampleBuffers.has("foghorn");
+
+      if (profile.surfGain > 0.0005) this.ensureSampleRequested("coastal_surf");
+      if (profile.brookGain > 0.0005) this.ensureSampleRequested("brook");
+      if (profile.gullGain > 0.0005) this.ensureSampleRequested("gulls");
+      if (profile.foghornGain > 0.0005) this.ensureSampleRequested("foghorn");
+
+      g.surfGain.gain.setTargetAtTime(profile.surfGain * (hasSurfSample ? 1.1 : 0.62), now, 1.1);
+      g.brookGain.gain.setTargetAtTime(profile.brookGain * (hasBrookSample ? 0.95 : 0.48), now, 1.1);
       g.cicadaGain.gain.setTargetAtTime(profile.cicadaGain * 0.45, now, 1.2);
       const deepRumbleTarget = Math.max(profile.cavernRumbleGain, profile.volcanicRumbleGain);
       g.deepRumbleGain.gain.setTargetAtTime(deepRumbleTarget * 0.72, now, 1.2);
@@ -1315,7 +1424,8 @@ export class WeatherSoundscape {
       g.airFilter.frequency.setTargetAtTime(profile.airBedToneHz, now, layer);
 
       const hearthOrEmber = Math.max(profile.emberCrackleGain, profile.winterHearthGain);
-      g.emberGain.gain.setTargetAtTime(hearthOrEmber * 0.65, now, layer);
+      if (hearthOrEmber > 0.0005) this.ensureSampleRequested("hearth");
+      g.emberGain.gain.setTargetAtTime(hearthOrEmber * (hasHearthSample ? 1.05 : 0.65), now, layer);
       g.padGain.gain.setTargetAtTime(profile.shimmerDroneGain * 0.3, now, 1.2);
       g.sparkleGain.gain.setTargetAtTime(profile.sparkleGain, now, layer);
       g.windChimeGain.gain.setTargetAtTime(profile.windChimeGain, now, layer);
@@ -1324,12 +1434,12 @@ export class WeatherSoundscape {
       g.autumnLeafGain.gain.setTargetAtTime(profile.autumnLeafGain * 0.6, now, layer);
       g.condensationGain.gain.setTargetAtTime(profile.condensationDripGain * 0.55, now, layer);
       g.creakGain.gain.setTargetAtTime(profile.creakGain * 0.62, now, layer);
-      g.foghornGain.gain.setTargetAtTime(profile.foghornGain * 0.42, now, 1.2);
+      g.foghornGain.gain.setTargetAtTime(profile.foghornGain * (hasFoghornSample ? 0.85 : 0.42), now, 1.2);
       g.stormRumbleGain.gain.setTargetAtTime(profile.stormRumbleGain * 0.72, now, 1.1);
 
       g.cricketGain.gain.setTargetAtTime(profile.cricketGain, now, 1.2);
       g.birdGain.gain.setTargetAtTime(profile.birdGain, now, 1.2);
-      g.gullGain.gain.setTargetAtTime(profile.gullGain * 0.65, now, 1.2);
+      g.gullGain.gain.setTargetAtTime(profile.gullGain * (hasGullsSample ? 0.52 : 0.65), now, 1.2);
       g.owlGain.gain.setTargetAtTime(profile.owlGain * 0.75, now, 1.2);
       g.frogGain.gain.setTargetAtTime(profile.frogGain * 0.65, now, 1.2);
       g.caveGain.gain.setTargetAtTime(profile.caveDripGain, now, layer);
@@ -1346,6 +1456,7 @@ export class WeatherSoundscape {
       this.syncBranchActive(g, "foliage", profile.foliageGain > 0.0005);
       this.syncBranchActive(g, "surf", profile.surfGain > 0.0005);
       this.syncBranchActive(g, "brook", profile.brookGain > 0.0005);
+      this.syncBranchActive(g, "gulls", profile.gullGain > 0.0005 && hasGullsSample);
       this.syncBranchActive(g, "cicada", profile.cicadaGain > 0.0005);
       this.syncBranchActive(g, "deepRumble", deepRumbleTarget > 0.0005);
       this.syncBranchActive(g, "air", profile.airBedGain > 0.0005);
@@ -1499,7 +1610,7 @@ export class WeatherSoundscape {
           return rand(1.5, 4.5);
         });
       }
-      if (p.surfGain > 0) {
+      if (p.surfGain > 0 && !this.sampleBuffers.has("coastal_surf")) {
         this.runInterval("surfSwell", now, horizon, (t) => {
           // Slow 6-11 s coastal surf swell: crest rolls in, followed by receding foam hiss.
           const crest = rand(0.65, 1.28);
@@ -1513,7 +1624,7 @@ export class WeatherSoundscape {
           return period;
         });
       }
-      if (p.brookGain > 0) {
+      if (p.brookGain > 0 && !this.sampleBuffers.has("brook")) {
         this.runInterval("brookSwell", now, horizon, (t) => {
           g.brookSwell.gain.setTargetAtTime(rand(0.78, 1.22), t, rand(0.7, 1.8));
           g.brookFilter.frequency.setTargetAtTime(rand(760, 1180), t, rand(0.9, 2.1));
@@ -1542,7 +1653,7 @@ export class WeatherSoundscape {
         });
       }
       const hearthOrEmber = Math.max(p.emberCrackleGain, p.winterHearthGain);
-      if (hearthOrEmber > 0) {
+      if (hearthOrEmber > 0 && !this.sampleBuffers.has("hearth")) {
         this.runInterval("flicker", now, horizon, (t) => {
           g.fireFlicker.gain.setTargetAtTime(rand(0.68, 1.28), t, rand(0.14, 0.45));
           return rand(0.22, 0.75);
@@ -1597,7 +1708,7 @@ export class WeatherSoundscape {
       if (p.birdGain > 0) {
         this.runInterval("bird", now, horizon, (t) => this.spawnBirdPhrase(t, p.dawnChorus));
       }
-      if (p.gullGain > 0) {
+      if (p.gullGain > 0 && !this.sampleBuffers.has("gulls")) {
         this.runInterval("gull", now, horizon, (t) => this.spawnGull(t));
       }
       if (p.owlGain > 0) {
@@ -2156,6 +2267,25 @@ export class WeatherSoundscape {
   private spawnFoghorn(t: number): number {
     const g = this.graph!;
     const ctx = g.ctx;
+    const sample = this.sampleBuffers.get("foghorn");
+    if (sample) {
+      const rate = rand(0.95, 1.05);
+      const dur = sample.duration / rate;
+      const source = ctx.createBufferSource();
+      source.buffer = sample;
+      source.playbackRate.value = rate;
+      const gain = ctx.createGain();
+      gain.gain.value = rand(0.55, 0.85);
+      const panner = this.createPanner(rand(-0.65, 0.65));
+      source.connect(gain);
+      gain.connect(panner.node);
+      panner.node.connect(g.foghornGain);
+      source.start(t);
+      source.stop(t + dur + 0.08);
+      this.disposeOnEnd(source, [gain, panner.node]);
+      return dur + rand(18, 38);
+    }
+
     const dur = rand(2.1, 3.1);
     const fundamental = rand(82, 106);
     const filter = ctx.createBiquadFilter();
@@ -2491,6 +2621,21 @@ export class WeatherSoundscape {
       branch.sources.push(source);
     };
 
+    const startSampleLoop = (buffer: AudioBuffer, destination: AudioNode): void => {
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      // Trim ~30ms MP3 encoder padding at loop boundaries for click-free seamless looping.
+      if (buffer.duration > 1) {
+        source.loopStart = 0.03;
+        source.loopEnd = Math.max(0.5, buffer.duration - 0.03);
+      }
+      source.connect(destination);
+      const span = Math.max(0.1, (source.loopEnd || buffer.duration || 1) - (source.loopStart || 0));
+      source.start(0, (source.loopStart || 0) + Math.random() * span);
+      branch.sources.push(source);
+    };
+
     switch (key) {
       case "rainWash":
         startLoop(g.pink, 1, g.rainWashFilter);
@@ -2520,14 +2665,33 @@ export class WeatherSoundscape {
         startLoop(g.pink, 1.09, g.foliageLowFilter);
         startLoop(g.pink, 0.87, g.foliageHighFilter);
         break;
-      case "surf":
-        startLoop(g.brown, 0.78, g.surfBodyFilter);
-        startLoop(g.pink, 0.91, g.surfFoamFilter);
+      case "surf": {
+        const surfSample = this.sampleBuffers.get("coastal_surf");
+        if (surfSample) {
+          startSampleLoop(surfSample, g.surfSampleWarmth);
+        } else {
+          startLoop(g.brown, 0.78, g.surfBodyFilter);
+          startLoop(g.pink, 0.91, g.surfFoamFilter);
+        }
         break;
-      case "brook":
-        startLoop(g.pink, 1.03, g.brookFilter);
-        startLoop(g.pink, 1.19, g.brookSparkleFilter);
+      }
+      case "brook": {
+        const brookSample = this.sampleBuffers.get("brook");
+        if (brookSample) {
+          startSampleLoop(brookSample, g.brookSampleWarmth);
+        } else {
+          startLoop(g.pink, 1.03, g.brookFilter);
+          startLoop(g.pink, 1.19, g.brookSparkleFilter);
+        }
         break;
+      }
+      case "gulls": {
+        const gullsSample = this.sampleBuffers.get("gulls");
+        if (gullsSample) {
+          startSampleLoop(gullsSample, g.gullGain);
+        }
+        break;
+      }
       case "cicada":
         startLoop(g.pink, 1.21, g.cicadaFilter);
         break;
@@ -2537,12 +2701,18 @@ export class WeatherSoundscape {
       case "air":
         startLoop(g.pink, 0.81, g.airFilter);
         break;
-      case "ember":
-        if (!g.fireBed) g.fireBed = createFireBedBuffer(audio, 7.3);
-        startLoop(g.brown, 0.88, g.emberLowFilter);
-        startLoop(g.pink, 0.94, g.emberMidFilter);
-        startLoop(g.fireBed, 0.96, g.emberBedFilter);
+      case "ember": {
+        const hearthSample = this.sampleBuffers.get("hearth");
+        if (hearthSample) {
+          startSampleLoop(hearthSample, g.emberSampleWarmth);
+        } else {
+          if (!g.fireBed) g.fireBed = createFireBedBuffer(audio, 7.3);
+          startLoop(g.brown, 0.88, g.emberLowFilter);
+          startLoop(g.pink, 0.94, g.emberMidFilter);
+          startLoop(g.fireBed, 0.96, g.emberBedFilter);
+        }
         break;
+      }
       case "pad": {
         const voices: PadVoice[] = PAD_FREQUENCIES.map((frequency, index) => {
           const osc = audio.createOscillator();
@@ -2693,17 +2863,23 @@ export class WeatherSoundscape {
       const surfFoamSwell = gainNode(0.25);
       const surfBodyFilter = filterNode("lowpass", 300, 0.65);
       const surfFoamFilter = filterNode("bandpass", 2100, 0.7);
+      const surfSampleWarmth = filterNode("highshelf", 2600, 0.7);
+      surfSampleWarmth.gain.value = -4.5;
       chain(surfBodyFilter, surfSwell, surfGain);
       chain(surfFoamFilter, surfFoamSwell, gainNode(0.32), surfGain);
+      chain(surfSampleWarmth, surfGain);
       surfGain.connect(bus);
 
       const brookGain = gainNode(0);
       const brookSwell = gainNode(1);
       const brookFilter = filterNode("bandpass", 920, 0.85);
       const brookSparkleFilter = filterNode("bandpass", 2800, 1.4);
+      const brookSampleWarmth = filterNode("highshelf", 2600, 0.7);
+      brookSampleWarmth.gain.value = -4.5;
       chain(brookFilter, brookSwell);
       chain(brookSparkleFilter, gainNode(0.3), brookSwell);
       chain(brookSwell, brookGain, bus);
+      chain(brookSampleWarmth, brookGain);
 
       const cicadaGain = gainNode(0);
       const cicadaSwell = gainNode(0.7);
@@ -2728,10 +2904,13 @@ export class WeatherSoundscape {
       const emberLowFilter = filterNode("lowpass", 220);
       const emberMidFilter = filterNode("bandpass", 420, 0.75);
       const emberBedFilter = filterNode("lowpass", 2400);
+      const emberSampleWarmth = filterNode("highshelf", 2600, 0.7);
+      emberSampleWarmth.gain.value = -3;
       chain(emberLowFilter, gainNode(0.95), fireFlicker);
       chain(emberMidFilter, gainNode(0.42), fireFlicker);
       chain(fireFlicker, emberGain);
       chain(emberBedFilter, gainNode(0.65), emberGain);
+      chain(emberSampleWarmth, emberGain);
       emberGain.connect(nearBus);
 
       // ---- Shimmer pad, sparkles, and blossom wind chimes ----
@@ -2833,10 +3012,13 @@ export class WeatherSoundscape {
         surfFoamSwell,
         surfBodyFilter,
         surfFoamFilter,
+        surfSampleWarmth,
         brookGain,
         brookSwell,
         brookFilter,
         brookSparkleFilter,
+        brookSampleWarmth,
+        emberSampleWarmth,
         cicadaGain,
         cicadaSwell,
         cicadaFilter,
@@ -2878,6 +3060,7 @@ export class WeatherSoundscape {
           foliage: emptyBranch(),
           surf: emptyBranch(),
           brook: emptyBranch(),
+          gulls: emptyBranch(),
           cicada: emptyBranch(),
           deepRumble: emptyBranch(),
           air: emptyBranch(),
@@ -2886,6 +3069,12 @@ export class WeatherSoundscape {
         },
       };
       this.appliedWindCenter = 0;
+      if (this.pendingBase64.size > 0) {
+        for (const [pendingKey, pendingData] of this.pendingBase64) {
+          void this.decodeAndInstallSample(pendingKey, pendingData);
+        }
+        this.pendingBase64.clear();
+      }
       return true;
     } catch {
       if (ctx) void ctx.close().catch(() => {});

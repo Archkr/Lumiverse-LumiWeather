@@ -9,5 +9,12 @@
   "permissions": ["interceptor", "generation", "ui_panels", "chats", "chat_mutation"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
+  "storage_seed_files": [
+    { "from": "assets/audio/coastal_surf.mp3", "to": "audio/coastal_surf.mp3", "overwrite": true },
+    { "from": "assets/audio/brook.mp3", "to": "audio/brook.mp3", "overwrite": true },
+    { "from": "assets/audio/hearth.mp3", "to": "audio/hearth.mp3", "overwrite": true },
+    { "from": "assets/audio/gulls.mp3", "to": "audio/gulls.mp3", "overwrite": true },
+    { "from": "assets/audio/foghorn.mp3", "to": "audio/foghorn.mp3", "overwrite": true }
+  ],
   "minimum_lumiverse_version": "1.0.6"
 }

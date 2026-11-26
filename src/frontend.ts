@@ -1453,7 +1453,11 @@ export function setup(ctx: SpindleFrontendContext) {
     cleanups.push(() => settingsUI.destroy());
   }
 
-  const soundscape = new WeatherSoundscape();
+  const soundscape = new WeatherSoundscape({
+    requestSample: (key) => {
+      sendToBackend(ctx, { type: "load_audio_sample", key });
+    },
+  });
   cleanups.push(() => soundscape.destroy());
 
   const backFx = createFxMarkup("back");
@@ -1885,6 +1889,10 @@ export function setup(ctx: SpindleFrontendContext) {
       case "connections":
         connectionProfiles = message.profiles;
         updateScene();
+        break;
+
+      case "audio_sample":
+        soundscape.provideSample(message.key, message.base64);
         break;
 
       case "extraction_status":

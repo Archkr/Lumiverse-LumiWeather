@@ -19,6 +19,7 @@ let updateMessageCalls: Array<{ chatId: string; messageId: string; patch: Record
 let quietCalls: Array<Record<string, unknown>> = [];
 let quietHandler: (input: Record<string, unknown>) => Promise<unknown> = async () => ({ content: '{"unchanged": true}' });
 let connectionProfiles: any[] = [];
+let binaryStorage = new Map<string, Uint8Array>();
 let getActive = async (): Promise<{ id: string } | null> => ({ id: "chat" });
 let failNextSave: string | null = null;
 let failNextDelete: string | null = null;
@@ -91,6 +92,13 @@ beforeAll(async () => {
     connections: {
       list: async () => connectionProfiles,
     },
+    storage: {
+      readBinary: async (path: string) => {
+        const hit = binaryStorage.get(path);
+        if (!hit) throw new Error(`Not found: ${path}`);
+        return hit;
+      },
+    },
     userStorage: {
       getJson: () => getPrefs(),
       setJson: async (_file: string, next: WeatherPrefs) => { prefs = next; },
@@ -130,6 +138,7 @@ beforeEach(async () => {
   quietCalls = [];
   quietHandler = async () => ({ content: '{"unchanged": true}' });
   connectionProfiles = [];
+  binaryStorage.clear();
   getActive = async () => ({ id: "chat" });
   failNextSave = null;
   failNextDelete = null;
@@ -595,5 +604,22 @@ test("migrate_chat_tags moves inline tags into per-message metadata and strips X
     status: "done",
     migratedMessages: 0,
     tagsRemoved: 0,
+  });
+});
+
+test("load_audio_sample lazily reads seeded audio binaries and returns null when missing", async () => {
+  binaryStorage.set("audio/coastal_surf.mp3", new Uint8Array([0x49, 0x44, 0x33, 0x04]));
+  await send({ type: "load_audio_sample", key: "coastal_surf" });
+  expect(sent).toContainEqual({
+    type: "audio_sample",
+    key: "coastal_surf",
+    base64: Buffer.from([0x49, 0x44, 0x33, 0x04]).toString("base64"),
+  });
+
+  await send({ type: "load_audio_sample", key: "brook" });
+  expect(sent).toContainEqual({
+    type: "audio_sample",
+    key: "brook",
+    base64: null,
   });
 });

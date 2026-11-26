@@ -98,6 +98,13 @@ export type SoundVolumeChannel =
   | "thunderVolume"
   | "ambienceVolume";
 
+export type SoundscapeSampleKey =
+  | "coastal_surf"
+  | "brook"
+  | "hearth"
+  | "gulls"
+  | "foghorn";
+
 export interface ConnectionProfileSummary {
   id: string;
   name: string;
@@ -146,11 +153,13 @@ export type FrontendToBackend =
   | { type: "refresh_connections" }
   | { type: "extract_now"; chatId?: string | null }
   | { type: "migrate_chat_tags"; chatId?: string | null }
+  | { type: "load_audio_sample"; key: SoundscapeSampleKey }
   | { type: "reset_widget_position" };
 
 export type BackendToFrontend =
   | { type: "prefs"; prefs: WeatherPrefs }
   | { type: "connections"; profiles: ConnectionProfileSummary[] }
+  | { type: "audio_sample"; key: SoundscapeSampleKey; base64: string | null }
   | { type: "extraction_status"; chatId: string | null; status: "idle" | "running" | "error"; detail?: string }
   | {
       type: "migration_result";

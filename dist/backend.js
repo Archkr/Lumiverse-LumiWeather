@@ -1538,6 +1538,26 @@ var activeExtractions = new Map;
 var suppressedMetadataEdits = new Map;
 var METADATA_EDIT_SUPPRESS_MS = 2500;
 var SIDECAR_TIMEOUT_MS = 25000;
+var AUDIO_SAMPLE_PATHS = {
+  coastal_surf: "audio/coastal_surf.mp3",
+  brook: "audio/brook.mp3",
+  hearth: "audio/hearth.mp3",
+  gulls: "audio/gulls.mp3",
+  foghorn: "audio/foghorn.mp3"
+};
+async function loadAudioSampleBase64(key) {
+  const storagePath = AUDIO_SAMPLE_PATHS[key];
+  if (!storagePath || typeof spindle.storage?.readBinary !== "function")
+    return null;
+  try {
+    const bytes = await spindle.storage.readBinary(storagePath);
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0)
+      return null;
+    return Buffer.from(bytes).toString("base64");
+  } catch {
+    return null;
+  }
+}
 function extractUserId(payload) {
   if (!payload || typeof payload !== "object")
     return null;
@@ -2203,6 +2223,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         await migrateChatTags(userId, chatId);
+        break;
+      }
+      case "load_audio_sample": {
+        const base64 = await loadAudioSampleBase64(message.key);
+        send(userId, { type: "audio_sample", key: message.key, base64 });
         break;
       }
       case "chat_changed":
