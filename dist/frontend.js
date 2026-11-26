@@ -1223,6 +1223,7 @@ var DEFAULT_PREFS = {
   transitionsEnabled: true,
   trackingMode: "sidecar",
   sidecarConnectionId: null,
+  sidecarModel: null,
   soundEnabled: false,
   wildlifeEnabled: true,
   soundVolume: 0.45,
@@ -6153,10 +6154,10 @@ function applyStateToInputs(state, fields) {
     fields.sceneIntensity.setAttribute("aria-valuetext", fields.sceneIntensityValue.textContent);
   }
 }
-function createSettingsUI(sendToBackend) {
+function createSettingsUI(sendToBackend, options) {
   const instanceId = `lumiweather-settings-${++settingsInstanceCount}`;
   const root = document.createElement("section");
-  root.className = "weather-settings-card";
+  root.className = options?.inDrawer ? "weather-settings-card weather-settings-card--drawer" : "weather-settings-card";
   const header = document.createElement("header");
   header.className = "weather-settings-card-header";
   const headerGlow = document.createElement("span");
@@ -6221,12 +6222,104 @@ function createSettingsUI(sendToBackend) {
   sidecarConnectionSelect.className = "weather-settings-select";
   sidecarConnectionSelect.innerHTML = `<option value="">Active / default connection</option>`;
   sidecarConnectionSelect.addEventListener("change", () => {
+    pendingModelValue = null;
+    if (modelSaveTimer !== null) {
+      window.clearTimeout(modelSaveTimer);
+      modelSaveTimer = null;
+    }
     sendToBackend({
       type: "save_prefs",
-      prefs: { sidecarConnectionId: sidecarConnectionSelect.value || null }
+      prefs: {
+        sidecarConnectionId: sidecarConnectionSelect.value || null,
+        sidecarModel: null
+      }
     });
   });
   const sidecarConnectionLabel = createLabeledInput("Sidecar connection profile", sidecarConnectionSelect);
+  let modelSaveTimer = null;
+  let pendingModelValue = null;
+  let modelCombobox = null;
+  let fallbackModelInput = null;
+  let lastModelConnectionKey = "";
+  let lastModelPlaceholder = "";
+  const scheduleModelSave = (rawValue, immediate = false) => {
+    const trimmed = rawValue.trim();
+    pendingModelValue = trimmed;
+    if (modelSaveTimer !== null) {
+      window.clearTimeout(modelSaveTimer);
+      modelSaveTimer = null;
+    }
+    const commit = () => {
+      const valueToSave = pendingModelValue;
+      pendingModelValue = null;
+      if (valueToSave === null)
+        return;
+      sendToBackend({
+        type: "save_prefs",
+        prefs: { sidecarModel: valueToSave || null }
+      });
+    };
+    if (immediate) {
+      commit();
+      return;
+    }
+    modelSaveTimer = window.setTimeout(() => {
+      modelSaveTimer = null;
+      commit();
+    }, 260);
+  };
+  const sidecarModelField = document.createElement("div");
+  sidecarModelField.className = "weather-settings-model-field";
+  const sidecarModelHeader = document.createElement("div");
+  sidecarModelHeader.className = "weather-settings-model-header";
+  const sidecarModelTitle = document.createElement("span");
+  sidecarModelTitle.className = "weather-settings-label";
+  sidecarModelTitle.textContent = "Sidecar model override";
+  const clearModelButton = document.createElement("button");
+  clearModelButton.type = "button";
+  clearModelButton.className = "weather-settings-link-btn";
+  clearModelButton.textContent = "Use profile default";
+  clearModelButton.hidden = true;
+  clearModelButton.addEventListener("click", () => {
+    if (modelCombobox)
+      modelCombobox.update({ value: "" });
+    if (fallbackModelInput)
+      fallbackModelInput.value = "";
+    scheduleModelSave("", true);
+  });
+  sidecarModelHeader.appendChild(sidecarModelTitle);
+  sidecarModelHeader.appendChild(clearModelButton);
+  const sidecarModelSlot = document.createElement("div");
+  sidecarModelSlot.className = "weather-settings-model-slot";
+  if (typeof options?.components?.mountModelCombobox === "function") {
+    modelCombobox = options.components.mountModelCombobox(sidecarModelSlot, {
+      value: "",
+      connection: { kind: "llm" },
+      appearance: "standard",
+      placeholder: "Use connection default model",
+      browseHint: "Leave empty to use the selected connection profile's default model.",
+      onChange: (value) => {
+        clearModelButton.hidden = !value.trim();
+        scheduleModelSave(value);
+      }
+    });
+  } else {
+    fallbackModelInput = document.createElement("input");
+    fallbackModelInput.type = "text";
+    fallbackModelInput.className = "weather-settings-input";
+    fallbackModelInput.placeholder = "Use connection default model";
+    fallbackModelInput.setAttribute("aria-label", "Sidecar model override");
+    fallbackModelInput.addEventListener("input", () => {
+      clearModelButton.hidden = !fallbackModelInput.value.trim();
+      scheduleModelSave(fallbackModelInput.value);
+    });
+    fallbackModelInput.addEventListener("change", () => {
+      scheduleModelSave(fallbackModelInput.value, true);
+    });
+    sidecarModelSlot.appendChild(fallbackModelInput);
+  }
+  sidecarModelField.appendChild(sidecarModelHeader);
+  sidecarModelField.appendChild(sidecarModelSlot);
   const sidecarActions = document.createElement("div");
   sidecarActions.className = "weather-settings-actions";
   const analyzeNowButton = document.createElement("button");
@@ -6250,6 +6343,7 @@ function createSettingsUI(sendToBackend) {
   sidecarStatusCopy.hidden = true;
   sidecarGroup.appendChild(sidecarCopy);
   sidecarGroup.appendChild(sidecarConnectionLabel);
+  sidecarGroup.appendChild(sidecarModelField);
   sidecarGroup.appendChild(sidecarActions);
   sidecarGroup.appendChild(sidecarStatusCopy);
   const promptRecommended = document.createElement("div");
@@ -6861,6 +6955,35 @@ function createSettingsUI(sendToBackend) {
         }
       }
       sidecarConnectionSelect.value = selectedConnId;
+      const selectedModel = prefs.sidecarModel ?? "";
+      const activeProfile = selectedConnId ? profiles.find((profile) => profile.id === selectedConnId) : profiles.find((profile) => profile.isDefault) ?? profiles[0];
+      const modelPlaceholder = activeProfile?.model ? `Default (${activeProfile.model})` : "Use connection default model";
+      const modelConnectionKey = selectedConnId || "__active__";
+      if (pendingModelValue === null) {
+        clearModelButton.hidden = !selectedModel;
+      }
+      if (modelCombobox) {
+        const patch = {};
+        if (pendingModelValue === null && modelCombobox.getValue() !== selectedModel) {
+          patch.value = selectedModel;
+        }
+        if (modelConnectionKey !== lastModelConnectionKey) {
+          lastModelConnectionKey = modelConnectionKey;
+          patch.connection = selectedConnId ? { kind: "llm", id: selectedConnId } : { kind: "llm" };
+        }
+        if (modelPlaceholder !== lastModelPlaceholder) {
+          lastModelPlaceholder = modelPlaceholder;
+          patch.placeholder = modelPlaceholder;
+        }
+        if (Object.keys(patch).length > 0) {
+          modelCombobox.update(patch);
+        }
+      } else if (fallbackModelInput) {
+        if (pendingModelValue === null) {
+          fallbackModelInput.value = selectedModel;
+        }
+        fallbackModelInput.placeholder = modelPlaceholder;
+      }
       const extractionStatus = options?.extractionStatus ?? "idle";
       const extractionDetail = options?.extractionDetail;
       const chatAvailable = chatId !== null && statusOverride !== "No active chat";
@@ -6966,6 +7089,18 @@ function createSettingsUI(sendToBackend) {
       if (pendingIntensity !== null) {
         sendToBackend({ type: "save_prefs", prefs: { intensity: pendingIntensity } });
         pendingIntensity = null;
+      }
+      if (modelSaveTimer !== null) {
+        window.clearTimeout(modelSaveTimer);
+        modelSaveTimer = null;
+      }
+      if (pendingModelValue !== null) {
+        sendToBackend({ type: "save_prefs", prefs: { sidecarModel: pendingModelValue || null } });
+        pendingModelValue = null;
+      }
+      if (modelCombobox) {
+        modelCombobox.destroy();
+        modelCombobox = null;
       }
       root.remove();
     }
@@ -8961,6 +9096,86 @@ var WEATHER_HUD_CSS = `
     font-size: 24px;
   }
 }
+
+/* Side-panel drawer layout & sidecar model selector */
+.weather-settings-drawer-host {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 10px 28px;
+  box-sizing: border-box;
+}
+
+.weather-settings-card.weather-settings-card--drawer {
+  overflow: visible;
+  overflow-x: clip;
+  border-radius: calc(var(--lumiverse-radius, 12px) + 2px);
+}
+
+.weather-settings-card--drawer .weather-settings-card-header {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 14px 12px;
+}
+
+.weather-settings-card--drawer .weather-settings-status {
+  max-width: 100%;
+}
+
+.weather-settings-card--drawer .weather-settings-card-body {
+  padding: 12px;
+  gap: 12px;
+}
+
+.weather-settings-card--drawer .weather-settings-control-deck {
+  grid-template-columns: 1fr;
+}
+
+.weather-settings-card--drawer .weather-settings-control-deck .weather-settings-section:nth-child(odd):last-child {
+  grid-column: auto;
+}
+
+.weather-settings-card--drawer .weather-settings-manual-grid {
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+}
+
+.weather-settings-card--drawer .weather-settings-preset-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.weather-settings-model-field {
+  display: grid;
+  gap: 6px;
+}
+
+.weather-settings-model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weather-settings-model-slot {
+  width: 100%;
+  min-width: 0;
+}
+
+.weather-settings-link-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 88%, white 12%);
+  cursor: pointer;
+}
+
+.weather-settings-link-btn:hover {
+  text-decoration: underline;
+}
 `;
 
 // src/tag-utils.ts
@@ -8973,6 +9188,7 @@ var GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 12.
 var CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
 var CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
 var CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.05 5.64 4.95 4.95 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05z"/></svg>`;
+var WEATHER_DRAWER_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m17.66 6.34 1.41-1.41"/><path d="M16 12a4 4 0 0 0-7.46-2"/><path d="M17.5 19H7a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 12a3.5 3.5 0 0 1 .5 7Z"/></svg>`;
 var LIGHTNING_BOLT_POSITIONS = [23, 51, 75];
 var DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
 var SCENE_TRANSITION_MS = 1300;
@@ -9972,7 +10188,15 @@ function setup(ctx) {
       source: "manual"
     });
   };
-  const settingsMount = ctx.ui.mount("settings_extensions");
+  const drawerTab = typeof ctx.ui.registerDrawerTab === "function" ? ctx.ui.registerDrawerTab({
+    id: "lumiweather-studio",
+    title: "LumiWeather",
+    shortName: "Weather",
+    headerTitle: "LumiWeather Studio",
+    description: "Configure weather effects, procedural soundscape, AI scene tracking, and manual overrides.",
+    keywords: ["weather", "soundscape", "forecast", "time", "atmosphere", "sidecar", "audio"],
+    iconSvg: WEATHER_DRAWER_ICON_SVG
+  }) : null;
   const settingsUI = createSettingsUI((payload) => {
     const message = payload;
     if (message.type === "set_manual_state" || message.type === "clear_manual_override" || message.type === "extract_now") {
@@ -9980,9 +10204,29 @@ function setup(ctx) {
       return;
     }
     sendToBackend(ctx, message);
+  }, {
+    components: ctx.components,
+    inDrawer: Boolean(drawerTab)
   });
-  settingsMount.appendChild(settingsUI.root);
-  cleanups.push(() => settingsUI.destroy());
+  if (drawerTab) {
+    const drawerHost = document.createElement("div");
+    drawerHost.className = "weather-settings-drawer-host";
+    drawerHost.appendChild(settingsUI.root);
+    drawerTab.root.appendChild(drawerHost);
+    const drawerActivateUnsub = drawerTab.onActivate(() => {
+      sendToBackend(ctx, { type: "refresh_connections" });
+    });
+    cleanups.push(drawerActivateUnsub);
+    cleanups.push(() => {
+      settingsUI.destroy();
+      drawerHost.remove();
+      drawerTab.destroy();
+    });
+  } else {
+    const settingsMount = ctx.ui.mount("settings_extensions");
+    settingsMount.appendChild(settingsUI.root);
+    cleanups.push(() => settingsUI.destroy());
+  }
   const soundscape = new WeatherSoundscape;
   cleanups.push(() => soundscape.destroy());
   const backFx = createFxMarkup("back");
@@ -10129,6 +10373,10 @@ function setup(ctx) {
           (hud.launcherButton ?? hud.drawerToggle)?.focus({ preventScroll: true });
       },
       onOpenSettings: () => {
+        if (drawerTab) {
+          drawerTab.activate();
+          return;
+        }
         ctx.events.emit("open-settings", { view: "extensions" });
       },
       onLockCurrentScene: () => {

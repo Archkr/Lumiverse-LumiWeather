@@ -592,12 +592,17 @@ async function extractWeatherForChat(options: {
 
     notifyExtractionStatus(chatId, "running", userIds);
 
+    const parameters: Record<string, unknown> = { temperature: 0.1, max_tokens: 450 };
+    if (prefs.sidecarModel) {
+      parameters.model = prefs.sidecarModel;
+    }
+
     const rawResult = await spindle.generate.quiet({
       type: "quiet",
       messages: buildSidecarExtractionMessages(previousState, recentTurns),
       connection_id: prefs.sidecarConnectionId || undefined,
       reasoning: { source: "off" },
-      parameters: { temperature: 0.1, max_tokens: 450 },
+      parameters,
       userId: primaryUserId || undefined,
       signal: controller.signal,
     });

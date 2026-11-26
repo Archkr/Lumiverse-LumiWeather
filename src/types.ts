@@ -120,6 +120,7 @@ export interface WeatherPrefs {
   transitionsEnabled: boolean;
   trackingMode?: WeatherTrackingMode;
   sidecarConnectionId?: string | null;
+  sidecarModel?: string | null;
   soundEnabled?: boolean;
   wildlifeEnabled?: boolean;
   soundVolume?: number;

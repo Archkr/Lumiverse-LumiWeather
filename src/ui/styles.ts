@@ -1986,4 +1986,84 @@ export const WEATHER_HUD_CSS = `
     font-size: 24px;
   }
 }
+
+/* Side-panel drawer layout & sidecar model selector */
+.weather-settings-drawer-host {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 10px 28px;
+  box-sizing: border-box;
+}
+
+.weather-settings-card.weather-settings-card--drawer {
+  overflow: visible;
+  overflow-x: clip;
+  border-radius: calc(var(--lumiverse-radius, 12px) + 2px);
+}
+
+.weather-settings-card--drawer .weather-settings-card-header {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 14px 12px;
+}
+
+.weather-settings-card--drawer .weather-settings-status {
+  max-width: 100%;
+}
+
+.weather-settings-card--drawer .weather-settings-card-body {
+  padding: 12px;
+  gap: 12px;
+}
+
+.weather-settings-card--drawer .weather-settings-control-deck {
+  grid-template-columns: 1fr;
+}
+
+.weather-settings-card--drawer .weather-settings-control-deck .weather-settings-section:nth-child(odd):last-child {
+  grid-column: auto;
+}
+
+.weather-settings-card--drawer .weather-settings-manual-grid {
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+}
+
+.weather-settings-card--drawer .weather-settings-preset-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.weather-settings-model-field {
+  display: grid;
+  gap: 6px;
+}
+
+.weather-settings-model-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weather-settings-model-slot {
+  width: 100%;
+  min-width: 0;
+}
+
+.weather-settings-link-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--lumiverse-primary, #82a8ff) 88%, white 12%);
+  cursor: pointer;
+}
+
+.weather-settings-link-btn:hover {
+  text-decoration: underline;
+}
 `;

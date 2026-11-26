@@ -48,6 +48,7 @@ const GEAR_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.43 1
 const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>`;
 const CHEVRON_UP_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.41 15.41 4.59-4.58 4.59 4.58L18 14l-6-6-6 6z"/></svg>`;
 const CLOSE_SVG = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="m7.05 5.64 4.95 4.95 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05z"/></svg>`;
+const WEATHER_DRAWER_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m17.66 6.34 1.41-1.41"/><path d="M16 12a4 4 0 0 0-7.46-2"/><path d="M17.5 19H7a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 12a3.5 3.5 0 0 1 .5 7Z"/></svg>`;
 const LIGHTNING_BOLT_POSITIONS = [23, 51, 75] as const;
 
 const DEFAULT_WIDGET_POSITION = { x: 24, y: 96 };
@@ -1347,21 +1348,57 @@ export function setup(ctx: SpindleFrontendContext) {
     });
   };
 
-  const settingsMount = ctx.ui.mount("settings_extensions");
-  const settingsUI = createSettingsUI((payload) => {
-    const message = payload as FrontendToBackend;
-    if (
-      message.type === "set_manual_state" ||
-      message.type === "clear_manual_override" ||
-      message.type === "extract_now"
-    ) {
-      sendToBackend(ctx, { ...message, chatId: activeChatId });
-      return;
-    }
-    sendToBackend(ctx, message);
-  });
-  settingsMount.appendChild(settingsUI.root);
-  cleanups.push(() => settingsUI.destroy());
+  const drawerTab =
+    typeof ctx.ui.registerDrawerTab === "function"
+      ? ctx.ui.registerDrawerTab({
+          id: "lumiweather-studio",
+          title: "LumiWeather",
+          shortName: "Weather",
+          headerTitle: "LumiWeather Studio",
+          description: "Configure weather effects, procedural soundscape, AI scene tracking, and manual overrides.",
+          keywords: ["weather", "soundscape", "forecast", "time", "atmosphere", "sidecar", "audio"],
+          iconSvg: WEATHER_DRAWER_ICON_SVG,
+        })
+      : null;
+
+  const settingsUI = createSettingsUI(
+    (payload) => {
+      const message = payload as FrontendToBackend;
+      if (
+        message.type === "set_manual_state" ||
+        message.type === "clear_manual_override" ||
+        message.type === "extract_now"
+      ) {
+        sendToBackend(ctx, { ...message, chatId: activeChatId });
+        return;
+      }
+      sendToBackend(ctx, message);
+    },
+    {
+      components: ctx.components,
+      inDrawer: Boolean(drawerTab),
+    },
+  );
+
+  if (drawerTab) {
+    const drawerHost = document.createElement("div");
+    drawerHost.className = "weather-settings-drawer-host";
+    drawerHost.appendChild(settingsUI.root);
+    drawerTab.root.appendChild(drawerHost);
+    const drawerActivateUnsub = drawerTab.onActivate(() => {
+      sendToBackend(ctx, { type: "refresh_connections" });
+    });
+    cleanups.push(drawerActivateUnsub);
+    cleanups.push(() => {
+      settingsUI.destroy();
+      drawerHost.remove();
+      drawerTab.destroy();
+    });
+  } else {
+    const settingsMount = ctx.ui.mount("settings_extensions");
+    settingsMount.appendChild(settingsUI.root);
+    cleanups.push(() => settingsUI.destroy());
+  }
 
   const soundscape = new WeatherSoundscape();
   cleanups.push(() => soundscape.destroy());
@@ -1539,6 +1576,10 @@ export function setup(ctx: SpindleFrontendContext) {
         if (restoreFocus && hud) (hud.launcherButton ?? hud.drawerToggle)?.focus({ preventScroll: true });
       },
       onOpenSettings: () => {
+        if (drawerTab) {
+          drawerTab.activate();
+          return;
+        }
         ctx.events.emit("open-settings", { view: "extensions" });
       },
       onLockCurrentScene: () => {

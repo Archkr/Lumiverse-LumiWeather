@@ -439,7 +439,7 @@ test("a slow initial active-chat lookup cannot overwrite a later chat switch", a
 });
 
 test("sidecar mode extracts weather after generation, stores per-message metadata, and injects read-only state", async () => {
-  prefs = { ...DEFAULT_PREFS, trackingMode: "sidecar", sidecarConnectionId: "fast-conn" };
+  prefs = { ...DEFAULT_PREFS, trackingMode: "sidecar", sidecarConnectionId: "fast-conn", sidecarModel: "google/gemini-2.5-flash" };
   messages = [
     { id: "u1", role: "user", is_user: true, index_in_chat: 0, content: "We step inside the cozy harbor inn as rain begins." },
     {
@@ -484,6 +484,7 @@ test("sidecar mode extracts weather after generation, stores per-message metadat
     type: "quiet",
     connection_id: "fast-conn",
     reasoning: { source: "off" },
+    parameters: { model: "google/gemini-2.5-flash", temperature: 0.1, max_tokens: 450 },
   });
   expect(updateMessageCalls).toHaveLength(1);
   expect(updateMessageCalls[0]).toMatchObject({

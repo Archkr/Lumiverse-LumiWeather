@@ -396,6 +396,7 @@ var DEFAULT_PREFS = {
   transitionsEnabled: true,
   trackingMode: "sidecar",
   sidecarConnectionId: null,
+  sidecarModel: null,
   soundEnabled: false,
   wildlifeEnabled: true,
   soundVolume: 0.45,
@@ -709,6 +710,7 @@ function normalizePrefs(input) {
     transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
     trackingMode: normalizeTrackingMode(source.trackingMode, DEFAULT_PREFS.trackingMode ?? "sidecar"),
     sidecarConnectionId: typeof source.sidecarConnectionId === "string" && source.sidecarConnectionId.trim() ? source.sidecarConnectionId.trim() : null,
+    sidecarModel: typeof source.sidecarModel === "string" && source.sidecarModel.trim() ? source.sidecarModel.trim() : null,
     soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
     wildlifeEnabled: typeof source.wildlifeEnabled === "boolean" ? source.wildlifeEnabled : Boolean(DEFAULT_PREFS.wildlifeEnabled ?? true),
     soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
@@ -1868,12 +1870,16 @@ async function extractWeatherForChat(options) {
     if (recentTurns.length === 0)
       return null;
     notifyExtractionStatus(chatId, "running", userIds);
+    const parameters = { temperature: 0.1, max_tokens: 450 };
+    if (prefs.sidecarModel) {
+      parameters.model = prefs.sidecarModel;
+    }
     const rawResult = await spindle.generate.quiet({
       type: "quiet",
       messages: buildSidecarExtractionMessages(previousState, recentTurns),
       connection_id: prefs.sidecarConnectionId || undefined,
       reasoning: { source: "off" },
-      parameters: { temperature: 0.1, max_tokens: 450 },
+      parameters,
       userId: primaryUserId || undefined,
       signal: controller.signal
     });

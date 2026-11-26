@@ -1,3 +1,7 @@
+import type {
+  SpindleComponentsHelper,
+  SpindleModelComboboxHandle,
+} from "lumiverse-spindle-types";
 import { buildPresetWeatherState, matchWeatherScenePreset, WEATHER_SCENE_PRESETS } from "../presets";
 import { decodeForecastText, encodeForecastText, forecastTextHint } from "../forecast-text";
 import { formatForecastEntry, MAX_FORECAST_DAYS, normalizeTemperatureToken } from "../forecast-utils";
@@ -141,10 +145,18 @@ function applyStateToInputs(
   }
 }
 
-export function createSettingsUI(sendToBackend: (payload: unknown) => void): SettingsUI {
+export function createSettingsUI(
+  sendToBackend: (payload: unknown) => void,
+  options?: {
+    components?: SpindleComponentsHelper;
+    inDrawer?: boolean;
+  },
+): SettingsUI {
   const instanceId = `lumiweather-settings-${++settingsInstanceCount}`;
   const root = document.createElement("section");
-  root.className = "weather-settings-card";
+  root.className = options?.inDrawer
+    ? "weather-settings-card weather-settings-card--drawer"
+    : "weather-settings-card";
 
   const header = document.createElement("header");
   header.className = "weather-settings-card-header";
@@ -228,12 +240,111 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   sidecarConnectionSelect.className = "weather-settings-select";
   sidecarConnectionSelect.innerHTML = `<option value="">Active / default connection</option>`;
   sidecarConnectionSelect.addEventListener("change", () => {
+    pendingModelValue = null;
+    if (modelSaveTimer !== null) {
+      window.clearTimeout(modelSaveTimer);
+      modelSaveTimer = null;
+    }
     sendToBackend({
       type: "save_prefs",
-      prefs: { sidecarConnectionId: sidecarConnectionSelect.value || null },
+      prefs: {
+        sidecarConnectionId: sidecarConnectionSelect.value || null,
+        sidecarModel: null,
+      },
     });
   });
   const sidecarConnectionLabel = createLabeledInput("Sidecar connection profile", sidecarConnectionSelect);
+
+  let modelSaveTimer: number | null = null;
+  let pendingModelValue: string | null = null;
+  let modelCombobox: SpindleModelComboboxHandle | null = null;
+  let fallbackModelInput: HTMLInputElement | null = null;
+  let lastModelConnectionKey = "";
+  let lastModelPlaceholder = "";
+
+  const scheduleModelSave = (rawValue: string, immediate = false) => {
+    const trimmed = rawValue.trim();
+    pendingModelValue = trimmed;
+    if (modelSaveTimer !== null) {
+      window.clearTimeout(modelSaveTimer);
+      modelSaveTimer = null;
+    }
+    const commit = () => {
+      const valueToSave = pendingModelValue;
+      pendingModelValue = null;
+      if (valueToSave === null) return;
+      sendToBackend({
+        type: "save_prefs",
+        prefs: { sidecarModel: valueToSave || null },
+      });
+    };
+    if (immediate) {
+      commit();
+      return;
+    }
+    modelSaveTimer = window.setTimeout(() => {
+      modelSaveTimer = null;
+      commit();
+    }, 260);
+  };
+
+  const sidecarModelField = document.createElement("div");
+  sidecarModelField.className = "weather-settings-model-field";
+
+  const sidecarModelHeader = document.createElement("div");
+  sidecarModelHeader.className = "weather-settings-model-header";
+
+  const sidecarModelTitle = document.createElement("span");
+  sidecarModelTitle.className = "weather-settings-label";
+  sidecarModelTitle.textContent = "Sidecar model override";
+
+  const clearModelButton = document.createElement("button");
+  clearModelButton.type = "button";
+  clearModelButton.className = "weather-settings-link-btn";
+  clearModelButton.textContent = "Use profile default";
+  clearModelButton.hidden = true;
+  clearModelButton.addEventListener("click", () => {
+    if (modelCombobox) modelCombobox.update({ value: "" });
+    if (fallbackModelInput) fallbackModelInput.value = "";
+    scheduleModelSave("", true);
+  });
+
+  sidecarModelHeader.appendChild(sidecarModelTitle);
+  sidecarModelHeader.appendChild(clearModelButton);
+
+  const sidecarModelSlot = document.createElement("div");
+  sidecarModelSlot.className = "weather-settings-model-slot";
+
+  if (typeof options?.components?.mountModelCombobox === "function") {
+    modelCombobox = options.components.mountModelCombobox(sidecarModelSlot, {
+      value: "",
+      connection: { kind: "llm" },
+      appearance: "standard",
+      placeholder: "Use connection default model",
+      browseHint: "Leave empty to use the selected connection profile's default model.",
+      onChange: (value) => {
+        clearModelButton.hidden = !value.trim();
+        scheduleModelSave(value);
+      },
+    });
+  } else {
+    fallbackModelInput = document.createElement("input");
+    fallbackModelInput.type = "text";
+    fallbackModelInput.className = "weather-settings-input";
+    fallbackModelInput.placeholder = "Use connection default model";
+    fallbackModelInput.setAttribute("aria-label", "Sidecar model override");
+    fallbackModelInput.addEventListener("input", () => {
+      clearModelButton.hidden = !fallbackModelInput!.value.trim();
+      scheduleModelSave(fallbackModelInput!.value);
+    });
+    fallbackModelInput.addEventListener("change", () => {
+      scheduleModelSave(fallbackModelInput!.value, true);
+    });
+    sidecarModelSlot.appendChild(fallbackModelInput);
+  }
+
+  sidecarModelField.appendChild(sidecarModelHeader);
+  sidecarModelField.appendChild(sidecarModelSlot);
 
   const sidecarActions = document.createElement("div");
   sidecarActions.className = "weather-settings-actions";
@@ -263,6 +374,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
 
   sidecarGroup.appendChild(sidecarCopy);
   sidecarGroup.appendChild(sidecarConnectionLabel);
+  sidecarGroup.appendChild(sidecarModelField);
   sidecarGroup.appendChild(sidecarActions);
   sidecarGroup.appendChild(sidecarStatusCopy);
 
@@ -983,6 +1095,46 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       }
       sidecarConnectionSelect.value = selectedConnId;
 
+      const selectedModel = prefs.sidecarModel ?? "";
+      const activeProfile = selectedConnId
+        ? profiles.find((profile) => profile.id === selectedConnId)
+        : profiles.find((profile) => profile.isDefault) ?? profiles[0];
+      const modelPlaceholder = activeProfile?.model
+        ? `Default (${activeProfile.model})`
+        : "Use connection default model";
+      const modelConnectionKey = selectedConnId || "__active__";
+
+      if (pendingModelValue === null) {
+        clearModelButton.hidden = !selectedModel;
+      }
+
+      if (modelCombobox) {
+        const patch: {
+          value?: string;
+          connection?: { kind: "llm"; id?: string };
+          placeholder?: string;
+        } = {};
+        if (pendingModelValue === null && modelCombobox.getValue() !== selectedModel) {
+          patch.value = selectedModel;
+        }
+        if (modelConnectionKey !== lastModelConnectionKey) {
+          lastModelConnectionKey = modelConnectionKey;
+          patch.connection = selectedConnId ? { kind: "llm", id: selectedConnId } : { kind: "llm" };
+        }
+        if (modelPlaceholder !== lastModelPlaceholder) {
+          lastModelPlaceholder = modelPlaceholder;
+          patch.placeholder = modelPlaceholder;
+        }
+        if (Object.keys(patch).length > 0) {
+          modelCombobox.update(patch);
+        }
+      } else if (fallbackModelInput) {
+        if (pendingModelValue === null) {
+          fallbackModelInput.value = selectedModel;
+        }
+        fallbackModelInput.placeholder = modelPlaceholder;
+      }
+
       const extractionStatus = options?.extractionStatus ?? "idle";
       const extractionDetail = options?.extractionDetail;
       const chatAvailable = chatId !== null && statusOverride !== "No active chat";
@@ -1108,6 +1260,18 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       if (pendingIntensity !== null) {
         sendToBackend({ type: "save_prefs", prefs: { intensity: pendingIntensity } });
         pendingIntensity = null;
+      }
+      if (modelSaveTimer !== null) {
+        window.clearTimeout(modelSaveTimer);
+        modelSaveTimer = null;
+      }
+      if (pendingModelValue !== null) {
+        sendToBackend({ type: "save_prefs", prefs: { sidecarModel: pendingModelValue || null } });
+        pendingModelValue = null;
+      }
+      if (modelCombobox) {
+        modelCombobox.destroy();
+        modelCombobox = null;
       }
       root.remove();
     },

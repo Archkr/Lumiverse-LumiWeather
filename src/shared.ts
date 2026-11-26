@@ -80,6 +80,7 @@ export const DEFAULT_PREFS: WeatherPrefs = {
   transitionsEnabled: true,
   trackingMode: "sidecar",
   sidecarConnectionId: null,
+  sidecarModel: null,
   soundEnabled: false,
   wildlifeEnabled: true,
   soundVolume: 0.45,
@@ -467,6 +468,10 @@ export function normalizePrefs(input: unknown): WeatherPrefs {
     sidecarConnectionId:
       typeof source.sidecarConnectionId === "string" && source.sidecarConnectionId.trim()
         ? source.sidecarConnectionId.trim()
+        : null,
+    sidecarModel:
+      typeof source.sidecarModel === "string" && source.sidecarModel.trim()
+        ? source.sidecarModel.trim()
         : null,
     soundEnabled:
       typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
