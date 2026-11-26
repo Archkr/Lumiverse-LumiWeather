@@ -359,5 +359,27 @@ describe("resolveAtmosphereUniformTarget", () => {
     expect(WEATHER_HUD_CSS).not.toContain("@property --weather-");
     expect(WEATHER_HUD_CSS).not.toContain("weather-hud-drift");
     expect(WEATHER_HUD_CSS).not.toContain("filter: blur(30px)");
+    expect(WEATHER_HUD_CSS).toContain(".weather-hud-botw-track");
+  });
+
+  test("keeps rain clouds cool overcast slate without orange dawn/dusk rims", () => {
+    for (const palette of ["dawn", "dusk", "day", "night"] as const) {
+      const rainState = {
+        ...makeDefaultWeatherState(),
+        condition: "rain" as const,
+        palette,
+        intensity: 0.74,
+      };
+      const uniforms = resolveAtmosphereUniformTarget(
+        rainState,
+        resolveSceneTokens(rainState, 0.74),
+        DEFAULT_PREFS,
+        "back",
+      );
+      expect(uniforms.cloudRimLight[2]).toBeGreaterThan(uniforms.cloudRimLight[0]);
+      expect(uniforms.cloudEdge[2]).toBeGreaterThan(uniforms.cloudEdge[0]);
+      expect(uniforms.cloudUnderGlow[2]).toBeGreaterThan(uniforms.cloudUnderGlow[0]);
+      expect(uniforms.cloudUnderGlowStrength).toBeLessThanOrEqual(0.1);
+    }
   });
 });

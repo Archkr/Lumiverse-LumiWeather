@@ -1090,6 +1090,7 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-header,
 .weather-hud-body,
+.weather-hud-botw-forecast,
 .weather-hud-drawer {
   position: relative;
   z-index: 1;
@@ -1413,6 +1414,293 @@ export const WEATHER_HUD_CSS = `
 
 .weather-hud-summary-viewport:hover .weather-hud-summary {
   animation-play-state: paused;
+}
+
+.weather-hud-widget[data-presentation="desktop"] {
+  padding: 12px 13px 11px;
+  gap: 9px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: stretch;
+}
+
+.weather-hud-widget[data-presentation="desktop"][data-has-forecast-bar="false"] {
+  grid-template-rows: 1fr;
+  align-content: center;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-body {
+  grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: center;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-primary {
+  gap: 3px;
+  transform: none;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-weather {
+  gap: 4px;
+  transform: none;
+  align-content: center;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-time {
+  font-size: 29px;
+  line-height: 0.96;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-temp {
+  font-size: 25px;
+  line-height: 0.96;
+}
+
+.weather-hud-widget[data-presentation="desktop"] .weather-hud-wind {
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-hud-location-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.weather-hud-location-row .weather-hud-location {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+
+.weather-hud-location-row .weather-hud-phenomenon-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+
+/* Breath of the Wild-inspired horizontal weather forecast strip (desktop HUD). */
+.weather-hud-botw-forecast {
+  min-width: 0;
+}
+
+.weather-hud-botw-forecast[hidden] {
+  display: none;
+}
+
+.weather-hud-botw-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 54px;
+  padding: 5px 6px 4px;
+  box-sizing: border-box;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--weather-hud-line) 76%, transparent);
+  background:
+    linear-gradient(180deg, rgba(5, 12, 24, 0.34) 0%, rgba(4, 9, 19, 0.22) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+}
+
+.weather-hud-botw-slot {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  padding: 2px 2px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  transition: background 140ms ease, opacity 140ms ease, border-color 140ms ease;
+}
+
+.weather-hud-botw-slot[data-step="1"] {
+  opacity: 0.94;
+}
+
+.weather-hud-botw-slot[data-step="2"] {
+  opacity: 0.84;
+}
+
+.weather-hud-botw-slot[data-step="3"] {
+  opacity: 0.74;
+}
+
+.weather-hud-botw-slot[data-step="4"] {
+  opacity: 0.64;
+}
+
+.weather-hud-botw-slot:not(.weather-hud-botw-slot-now):hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: color-mix(in srgb, var(--weather-hud-line) 65%, transparent);
+}
+
+.weather-hud-botw-slot-now {
+  flex: 0 0 54px;
+  border-color: color-mix(in srgb, var(--weather-hud-accent) 52%, rgba(255, 255, 255, 0.2));
+  background:
+    radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--weather-hud-accent) 26%, transparent), transparent 72%),
+    rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--weather-hud-accent) 20%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.weather-hud-botw-marker {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--weather-hud-accent);
+  box-shadow: 0 0 6px var(--weather-hud-accent);
+  pointer-events: none;
+}
+
+.weather-hud-botw-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--weather-hud-icon-color);
+}
+
+.weather-hud-botw-icon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(2, 8, 18, 0.55));
+}
+
+.weather-hud-botw-slot-now .weather-hud-botw-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.weather-hud-botw-icon .weather-hud-icon-solid {
+  fill: currentColor;
+  stroke: none;
+}
+
+.weather-hud-botw-slot[data-condition="clear"] .weather-hud-botw-icon {
+  color: #ffe99c;
+}
+
+.weather-hud-botw-slot[data-condition="cloudy"] .weather-hud-botw-icon {
+  color: #e4eeff;
+}
+
+.weather-hud-botw-slot[data-condition="rain"] .weather-hud-botw-icon {
+  color: #a6ceff;
+}
+
+.weather-hud-botw-slot[data-condition="storm"] .weather-hud-botw-icon {
+  color: #c8c4ff;
+}
+
+.weather-hud-botw-slot[data-condition="snow"] .weather-hud-botw-icon {
+  color: #ffffff;
+}
+
+.weather-hud-botw-slot[data-condition="fog"] .weather-hud-botw-icon {
+  color: #cfdbe8;
+}
+
+.weather-hud-botw-meta {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2.5px;
+  max-width: 100%;
+  line-height: 1;
+}
+
+.weather-hud-botw-label {
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--weather-hud-text-soft);
+  line-height: 1;
+}
+
+.weather-hud-botw-slot-now .weather-hud-botw-label {
+  color: var(--weather-hud-accent);
+  letter-spacing: 0.1em;
+}
+
+.weather-hud-botw-temp {
+  font-size: 8.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 248, 255, 0.88);
+  line-height: 1;
+}
+
+.weather-hud-botw-chevron {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: color-mix(in srgb, var(--weather-hud-accent) 44%, rgba(255, 255, 255, 0.32));
+  user-select: none;
+  pointer-events: none;
+}
+
+.weather-hud-botw-empty {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+}
+
+.weather-hud-botw-empty-rail {
+  flex: 1 1 auto;
+  height: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--weather-hud-accent) 32%, rgba(255, 255, 255, 0.18)) 0 4px,
+    transparent 4px 8px
+  );
+  opacity: 0.7;
+}
+
+.weather-hud-botw-empty-text {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--weather-hud-text-muted);
 }
 
 .weather-hud-drawer {

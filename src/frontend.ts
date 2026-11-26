@@ -105,11 +105,13 @@ type HudElements = {
   temp: HTMLDivElement;
   summaryViewport: HTMLDivElement;
   summary: HTMLDivElement;
-  source: HTMLSpanElement;
+  source?: HTMLSpanElement;
   phenomenonBadge: HTMLSpanElement;
-  drawerToggle: HTMLButtonElement;
-  drawerToggleLabel: HTMLSpanElement;
-  drawerToggleIcon: HTMLSpanElement;
+  drawerToggle?: HTMLButtonElement;
+  drawerToggleLabel?: HTMLSpanElement;
+  drawerToggleIcon?: HTMLSpanElement;
+  desktopForecast?: HTMLDivElement;
+  desktopForecastTrack?: HTMLDivElement;
   launcherButton?: HTMLButtonElement;
   launcherIcon?: HTMLSpanElement;
   storyButton?: HTMLButtonElement;
@@ -181,7 +183,9 @@ function createHudWidget(
   keyboardState: SpindleUIKeyboardState,
   callbacks: HudCallbacks,
 ): HudElements {
-  const presentation = resolveHudPresentation(mobile, expanded);
+  const effectiveExpanded = mobile ? expanded : false;
+  const presentation = resolveHudPresentation(mobile, effectiveExpanded);
+  const isDesktop = presentation.kind === "desktop";
   const widget = ctx.ui.createFloatWidget({
     width: presentation.width,
     height: presentation.height,
@@ -194,7 +198,7 @@ function createHudWidget(
 
   const root = document.createElement("div");
   root.className = "weather-hud-widget";
-  root.dataset.expanded = expanded ? "true" : "false";
+  root.dataset.expanded = effectiveExpanded ? "true" : "false";
   root.dataset.mobile = mobile ? "true" : "false";
   root.dataset.presentation = presentation.kind;
   root.style.setProperty("--weather-keyboard-inset-bottom", `${keyboardState.insetBottom}px`);
@@ -203,7 +207,7 @@ function createHudWidget(
     root.setAttribute("role", "dialog");
     root.setAttribute("aria-label", "LumiWeather controls");
   }
-  if (expanded) {
+  if (effectiveExpanded) {
     root.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -255,63 +259,77 @@ function createHudWidget(
     root.appendChild(launcherButton);
   }
 
-  const header = document.createElement("div");
-  header.className = "weather-hud-header";
-
-  const titleWrap = document.createElement("div");
-  titleWrap.className = "weather-hud-titlewrap";
-  const eyebrow = document.createElement("div");
-  eyebrow.className = "weather-hud-eyebrow";
-  eyebrow.textContent = "LumiWeather";
-  const badgeRow = document.createElement("div");
-  badgeRow.className = "weather-hud-badges";
-  const source = document.createElement("span");
-  source.className = "weather-hud-source";
   const phenomenonBadge = document.createElement("span");
   phenomenonBadge.className = "weather-hud-phenomenon-badge";
   phenomenonBadge.hidden = true;
-  badgeRow.appendChild(source);
-  badgeRow.appendChild(phenomenonBadge);
-  titleWrap.appendChild(eyebrow);
-  titleWrap.appendChild(badgeRow);
 
-  const headerActions = document.createElement("div");
-  headerActions.className = "weather-hud-actions";
+  let source: HTMLSpanElement | undefined;
+  let drawerToggle: HTMLButtonElement | undefined;
+  let drawerToggleLabel: HTMLSpanElement | undefined;
+  let drawerToggleIcon: HTMLSpanElement | undefined;
 
-  const drawerToggle = document.createElement("button");
-  drawerToggle.type = "button";
-  drawerToggle.className = "weather-hud-control weather-hud-control-ghost";
-  protectInteractive(drawerToggle);
-  const drawerToggleLabel = document.createElement("span");
-  drawerToggleLabel.textContent = presentation.kind === "mobile-panel" ? "Close" : expanded ? "Hide" : "Controls";
-  const drawerToggleIcon = document.createElement("span");
-  drawerToggleIcon.className = "weather-hud-control-icon";
-  drawerToggleIcon.innerHTML = presentation.kind === "mobile-panel" ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
-  drawerToggle.appendChild(drawerToggleLabel);
-  drawerToggle.appendChild(drawerToggleIcon);
-  drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-  drawerToggle.setAttribute("aria-label", presentation.kind === "mobile-panel" ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls");
-  drawerToggle.addEventListener("click", (event) => {
-    event.stopPropagation();
-    callbacks.onToggleDrawer();
-  });
+  // Desktop HUD omits top-left title/source chrome and Controls/Settings buttons,
+  // keeping a clean draggable card with an integrated BotW-style forecast bar.
+  if (!isDesktop) {
+    const header = document.createElement("div");
+    header.className = "weather-hud-header";
 
-  const settingsButton = document.createElement("button");
-  settingsButton.className = "weather-hud-gear";
-  settingsButton.type = "button";
-  settingsButton.innerHTML = GEAR_SVG;
-  settingsButton.title = "Open extension settings";
-  settingsButton.setAttribute("aria-label", "Open extension settings");
-  protectInteractive(settingsButton);
-  settingsButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    callbacks.onOpenSettings();
-  });
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "weather-hud-titlewrap";
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "weather-hud-eyebrow";
+    eyebrow.textContent = "LumiWeather";
+    const badgeRow = document.createElement("div");
+    badgeRow.className = "weather-hud-badges";
+    source = document.createElement("span");
+    source.className = "weather-hud-source";
+    badgeRow.appendChild(source);
+    badgeRow.appendChild(phenomenonBadge);
+    titleWrap.appendChild(eyebrow);
+    titleWrap.appendChild(badgeRow);
 
-  headerActions.appendChild(drawerToggle);
-  headerActions.appendChild(settingsButton);
-  header.appendChild(titleWrap);
-  header.appendChild(headerActions);
+    const headerActions = document.createElement("div");
+    headerActions.className = "weather-hud-actions";
+
+    drawerToggle = document.createElement("button");
+    drawerToggle.type = "button";
+    drawerToggle.className = "weather-hud-control weather-hud-control-ghost";
+    protectInteractive(drawerToggle);
+    drawerToggleLabel = document.createElement("span");
+    drawerToggleLabel.textContent = presentation.kind === "mobile-panel" ? "Close" : effectiveExpanded ? "Hide" : "Controls";
+    drawerToggleIcon = document.createElement("span");
+    drawerToggleIcon.className = "weather-hud-control-icon";
+    drawerToggleIcon.innerHTML = presentation.kind === "mobile-panel" ? CLOSE_SVG : effectiveExpanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+    drawerToggle.appendChild(drawerToggleLabel);
+    drawerToggle.appendChild(drawerToggleIcon);
+    drawerToggle.setAttribute("aria-expanded", effectiveExpanded ? "true" : "false");
+    drawerToggle.setAttribute(
+      "aria-label",
+      presentation.kind === "mobile-panel" ? "Close LumiWeather" : effectiveExpanded ? "Hide LumiWeather controls" : "Show LumiWeather controls",
+    );
+    drawerToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      callbacks.onToggleDrawer();
+    });
+
+    const settingsButton = document.createElement("button");
+    settingsButton.className = "weather-hud-gear";
+    settingsButton.type = "button";
+    settingsButton.innerHTML = GEAR_SVG;
+    settingsButton.title = "Open extension settings";
+    settingsButton.setAttribute("aria-label", "Open extension settings");
+    protectInteractive(settingsButton);
+    settingsButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      callbacks.onOpenSettings();
+    });
+
+    headerActions.appendChild(drawerToggle);
+    headerActions.appendChild(settingsButton);
+    header.appendChild(titleWrap);
+    header.appendChild(headerActions);
+    root.appendChild(header);
+  }
 
   const body = document.createElement("div");
   body.className = "weather-hud-body";
@@ -320,13 +338,21 @@ function createHudWidget(
   left.className = "weather-hud-primary";
   const location = document.createElement("div");
   location.className = "weather-hud-location";
+  if (isDesktop) {
+    const locationRow = document.createElement("div");
+    locationRow.className = "weather-hud-location-row";
+    locationRow.appendChild(location);
+    locationRow.appendChild(phenomenonBadge);
+    left.appendChild(locationRow);
+  } else {
+    left.appendChild(location);
+  }
   const date = document.createElement("div");
   date.className = "weather-hud-date";
   const time = document.createElement("div");
   time.className = "weather-hud-time";
   const wind = document.createElement("div");
   wind.className = "weather-hud-wind";
-  left.appendChild(location);
   left.appendChild(date);
   left.appendChild(time);
   left.appendChild(wind);
@@ -348,9 +374,19 @@ function createHudWidget(
 
   body.appendChild(left);
   body.appendChild(right);
-
-  root.appendChild(header);
   root.appendChild(body);
+
+  let desktopForecast: HTMLDivElement | undefined;
+  let desktopForecastTrack: HTMLDivElement | undefined;
+  if (isDesktop) {
+    desktopForecast = document.createElement("div");
+    desktopForecast.className = "weather-hud-botw-forecast";
+    desktopForecast.setAttribute("aria-label", "Weather forecast");
+    desktopForecastTrack = document.createElement("div");
+    desktopForecastTrack.className = "weather-hud-botw-track";
+    desktopForecast.appendChild(desktopForecastTrack);
+    root.appendChild(desktopForecast);
+  }
 
   const presetButtons = new Map<string, HTMLButtonElement>();
   const volumeControls: Partial<Record<SoundVolumeChannel, HudVolumeControl>> = {};
@@ -368,7 +404,7 @@ function createHudWidget(
   let forecastLabel: HTMLSpanElement | undefined;
   let forecastList: HTMLDivElement | undefined;
 
-  if (expanded) {
+  if (effectiveExpanded) {
     const drawer = document.createElement("div");
     drawer.className = "weather-hud-drawer";
 
@@ -666,6 +702,8 @@ function createHudWidget(
     drawerToggle,
     drawerToggleLabel,
     drawerToggleIcon,
+    desktopForecast,
+    desktopForecastTrack,
     launcherButton,
     launcherIcon,
     storyButton,
@@ -684,6 +722,109 @@ function createHudWidget(
     forecastLabel,
     forecastList,
   };
+}
+
+function formatCompactForecastTemp(value: string, unit: TemperatureUnit): string {
+  const formatted = formatTemperatureForUnit(value, unit);
+  return formatted.replace(/[FC]$/i, "\u00b0");
+}
+
+/**
+ * Breath of the Wild-inspired horizontal weather forecast strip for the desktop HUD:
+ * highlights the current weather slot (`NOW`) on the left with a glowing reticle and
+ * diamond pointer, followed by directional chevrons stepping across upcoming days.
+ */
+function renderDesktopForecastTimeline(
+  track: HTMLDivElement,
+  displayState: WeatherState,
+  hasState: boolean,
+  phase: HudTimePhase,
+  entries: ForecastEntry[],
+  unit: TemperatureUnit,
+): void {
+  track.replaceChildren();
+
+  const nowSlot = document.createElement("div");
+  nowSlot.className = "weather-hud-botw-slot weather-hud-botw-slot-now";
+  nowSlot.dataset.condition = displayState.condition;
+  const nowTemp = hasState ? formatTemperatureForUnit(displayState.temperature, unit) : "";
+  nowSlot.title = hasState
+    ? ["Now", displayState.condition, nowTemp, displayState.summary].filter(Boolean).join(" · ")
+    : "Waiting for weather state";
+
+  const marker = document.createElement("span");
+  marker.className = "weather-hud-botw-marker";
+  marker.setAttribute("aria-hidden", "true");
+
+  const nowIcon = document.createElement("span");
+  nowIcon.className = "weather-hud-botw-icon";
+  nowIcon.innerHTML = conditionIcon(displayState.condition, phase);
+  nowIcon.setAttribute("aria-hidden", "true");
+
+  const nowLabel = document.createElement("span");
+  nowLabel.className = "weather-hud-botw-label";
+  nowLabel.textContent = "Now";
+
+  nowSlot.appendChild(marker);
+  nowSlot.appendChild(nowIcon);
+  nowSlot.appendChild(nowLabel);
+  track.appendChild(nowSlot);
+
+  const visibleEntries = entries.slice(0, 4);
+  if (visibleEntries.length === 0) {
+    const chevron = document.createElement("span");
+    chevron.className = "weather-hud-botw-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "\u203a";
+    track.appendChild(chevron);
+
+    const empty = document.createElement("div");
+    empty.className = "weather-hud-botw-empty";
+    empty.innerHTML = `<span class="weather-hud-botw-empty-rail" aria-hidden="true"></span><span class="weather-hud-botw-empty-text">No outlook yet</span>`;
+    track.appendChild(empty);
+    return;
+  }
+
+  visibleEntries.forEach((entry, index) => {
+    const chevron = document.createElement("span");
+    chevron.className = "weather-hud-botw-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "\u203a";
+    track.appendChild(chevron);
+
+    const slot = document.createElement("div");
+    slot.className = "weather-hud-botw-slot";
+    slot.dataset.condition = entry.condition;
+    slot.dataset.forecastDate = entry.date;
+    slot.dataset.step = String(index + 1);
+
+    const formattedTemp = entry.temperature ? formatTemperatureForUnit(entry.temperature, unit) : "";
+    slot.title = [entry.date, entry.condition, formattedTemp, entry.summary].filter(Boolean).join(" · ");
+
+    const slotIcon = document.createElement("span");
+    slotIcon.className = "weather-hud-botw-icon";
+    slotIcon.innerHTML = conditionIcon(entry.condition);
+    slotIcon.setAttribute("aria-hidden", "true");
+
+    const meta = document.createElement("span");
+    meta.className = "weather-hud-botw-meta";
+
+    const day = document.createElement("span");
+    day.className = "weather-hud-botw-label";
+    day.textContent = formatForecastDayLabel(entry.date);
+    meta.appendChild(day);
+
+    if (entry.temperature) {
+      const temp = document.createElement("span");
+      temp.className = "weather-hud-botw-temp";
+      temp.textContent = formatCompactForecastTemp(entry.temperature, unit);
+      meta.appendChild(temp);
+    }
+
+    slot.appendChild(slotIcon);
+    slot.appendChild(meta);
+    track.appendChild(slot);
+  });
 }
 
 /**
@@ -877,27 +1018,31 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
     ? `${hud.wind.textContent} · ${lunar.label} (${Math.round(lunar.illumination * 100)}% moon)`
     : hud.wind.textContent;
   // A missing interceptor permission used to be visible only inside the settings
-  // panel; surface it on the HUD itself, where the user is already looking.
+  // panel; surface it on the mobile HUD badge when present.
   const permissionLimited = hud.root.dataset.permission === "limited";
-  hud.source.textContent = hud.root.dataset.error === "true"
-    ? "Update failed"
-    : permissionLimited
-    ? "Permission needed"
-    : state
-      ? displayState.source === "manual" ? "Scene lock" : "Story sync"
-      : "Waiting";
-  const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
-  hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
-  const toggleIconKey = mobilePanel ? "close" : expanded ? "up" : "down";
-  if (hud.drawerToggleIcon.dataset.toggleIconKey !== toggleIconKey) {
-    hud.drawerToggleIcon.dataset.toggleIconKey = toggleIconKey;
-    hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+  if (hud.source) {
+    hud.source.textContent = hud.root.dataset.error === "true"
+      ? "Update failed"
+      : permissionLimited
+      ? "Permission needed"
+      : state
+        ? displayState.source === "manual" ? "Scene lock" : "Story sync"
+        : "Waiting";
   }
-  hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-  hud.drawerToggle.setAttribute(
-    "aria-label",
-    mobilePanel ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls",
-  );
+  const mobilePanel = hud.root.dataset.presentation === "mobile-panel";
+  if (hud.drawerToggle && hud.drawerToggleLabel && hud.drawerToggleIcon) {
+    hud.drawerToggleLabel.textContent = mobilePanel ? "Close" : expanded ? "Hide" : "Controls";
+    const toggleIconKey = mobilePanel ? "close" : expanded ? "up" : "down";
+    if (hud.drawerToggleIcon.dataset.toggleIconKey !== toggleIconKey) {
+      hud.drawerToggleIcon.dataset.toggleIconKey = toggleIconKey;
+      hud.drawerToggleIcon.innerHTML = mobilePanel ? CLOSE_SVG : expanded ? CHEVRON_UP_SVG : CHEVRON_DOWN_SVG;
+    }
+    hud.drawerToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    hud.drawerToggle.setAttribute(
+      "aria-label",
+      mobilePanel ? "Close LumiWeather" : expanded ? "Hide LumiWeather controls" : "Show LumiWeather controls",
+    );
+  }
 
   if (hud.launcherButton && hud.launcherIcon) {
     if (hud.launcherIcon.dataset.iconKey !== iconKey) {
@@ -979,6 +1124,32 @@ function syncHudState(hud: HudElements, prefs: WeatherPrefs, state: WeatherState
 
   if (hud.resumeButton) {
     hud.resumeButton.disabled = !state || state.source === "story";
+  }
+
+  // Desktop BotW-inspired forecast bar: always visible on the desktop HUD when
+  // `showForecast` is enabled, rebuilt only when current/projected entries change.
+  if (hud.desktopForecast && hud.desktopForecastTrack) {
+    const showDesktopForecast = prefs.showForecast;
+    hud.desktopForecast.hidden = !showDesktopForecast;
+    hud.root.dataset.hasForecastBar = showDesktopForecast ? "true" : "false";
+    if (showDesktopForecast) {
+      const entries = state ? state.forecast : [];
+      const desktopForecastKey = `${state !== null}|${displayState.condition}|${phase}|${displayState.temperature}|${displayState.summary}|${prefs.temperatureUnit}|${entries
+        .slice(0, 4)
+        .map((entry) => `${entry.date}:${entry.condition}:${entry.temperature}:${entry.summary}`)
+        .join("|")}`;
+      if (hud.desktopForecastTrack.dataset.forecastKey !== desktopForecastKey) {
+        hud.desktopForecastTrack.dataset.forecastKey = desktopForecastKey;
+        renderDesktopForecastTimeline(
+          hud.desktopForecastTrack,
+          displayState,
+          state !== null,
+          phase,
+          entries,
+          prefs.temperatureUnit,
+        );
+      }
+    }
   }
 
   // The outlook strip is expensive to rebuild, so it is keyed on the projection
@@ -1340,7 +1511,7 @@ export function setup(ctx: SpindleFrontendContext) {
         hudExpanded = !hudExpanded;
         buildHud(currentPosition);
         updateScene();
-        if (restoreFocus && hud) (hud.launcherButton ?? hud.drawerToggle).focus({ preventScroll: true });
+        if (restoreFocus && hud) (hud.launcherButton ?? hud.drawerToggle)?.focus({ preventScroll: true });
       },
       onOpenSettings: () => {
         ctx.events.emit("open-settings", { view: "extensions" });
@@ -1496,7 +1667,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (hud) {
       hud.root.dataset.permission = permissionWarning ? "limited" : "ok";
       hud.root.dataset.error = String(!!backendWarning);
-      hud.source.title = backendWarning ?? permissionWarning ?? "";
+      if (hud.source) hud.source.title = backendWarning ?? permissionWarning ?? "";
       hud.root.dataset.reducedMotion = String(reducedMotion);
       syncHudState(hud, currentPrefs, currentState, hudExpanded, !!activeChatId);
     }

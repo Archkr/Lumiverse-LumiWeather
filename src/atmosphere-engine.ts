@@ -185,20 +185,40 @@ function resolveCloudLightingPalette(
   let underGlowStrength = 0.08;
   let detailStrength = isStorm ? 0.18 : isRain ? 0.22 : 0.28;
 
-  if (palette === "dawn" && !isStorm) {
-    core = mixRgb(cloudCore, [0.84, 0.78, 0.86, 1], isRain ? 0.18 : 0.35, cloudCore[3]);
+  if (isRain) {
+    // Rain clouds stay cool overcast slate-blue across every time-of-day palette
+    // instead of picking up warm orange dawn/dusk sunset rims.
+    const isNightRain = palette === "night";
+    core = isNightRain
+      ? [0.24, 0.32, 0.43, cloudCore[3]]
+      : [0.34, 0.42, 0.52, cloudCore[3]];
+    edge = isNightRain
+      ? [0.46, 0.56, 0.70, cloudEdge[3]]
+      : [0.60, 0.69, 0.80, cloudEdge[3]];
+    rimLight = isNightRain
+      ? [0.58, 0.70, 0.86, 1]
+      : [0.74, 0.82, 0.91, 1];
+    underGlow = isNightRain
+      ? [0.16, 0.24, 0.36, 1]
+      : [0.34, 0.44, 0.56, 1];
+    shadowTint = isNightRain
+      ? [0.06, 0.10, 0.18, 1]
+      : [0.15, 0.22, 0.32, 1];
+    underGlowStrength = 0.08;
+  } else if (palette === "dawn" && !isStorm) {
+    core = mixRgb(cloudCore, [0.84, 0.78, 0.86, 1], 0.35, cloudCore[3]);
     edge = mixRgb(cloudEdge, [1.0, 0.88, 0.74, 1], 0.48, cloudEdge[3]);
     rimLight = [1.0, 0.87, 0.7, 1];
     underGlow = [0.98, 0.68, 0.48, 1];
     shadowTint = [0.22, 0.26, 0.44, 1];
-    underGlowStrength = isRain ? 0.22 : 0.46;
+    underGlowStrength = 0.46;
   } else if (palette === "dusk" && !isStorm) {
-    core = mixRgb(cloudCore, [0.68, 0.6, 0.76, 1], isRain ? 0.22 : 0.42, cloudCore[3]);
+    core = mixRgb(cloudCore, [0.68, 0.6, 0.76, 1], 0.42, cloudCore[3]);
     edge = mixRgb(cloudEdge, [1.0, 0.76, 0.62, 1], 0.46, cloudEdge[3]);
     rimLight = [1.0, 0.78, 0.6, 1];
     underGlow = [0.96, 0.56, 0.42, 1];
     shadowTint = [0.18, 0.15, 0.34, 1];
-    underGlowStrength = isRain ? 0.24 : 0.52;
+    underGlowStrength = 0.52;
   } else if (palette === "night" || isStorm) {
     core = isStorm
       ? [0.22, 0.29, 0.38, cloudCore[3]]
@@ -219,7 +239,7 @@ function resolveCloudLightingPalette(
   } else {
     // Day / mist
     rimLight = [1.0, 0.99, 0.95, 1];
-    shadowTint = isRain ? [0.16, 0.24, 0.34, 1] : [0.36, 0.48, 0.64, 1];
+    shadowTint = [0.36, 0.48, 0.64, 1];
   }
 
   return {
