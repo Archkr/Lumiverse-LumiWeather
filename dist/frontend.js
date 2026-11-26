@@ -1896,15 +1896,19 @@ function resolveAtmosphereTargetFps(u, state, options) {
     return 60;
   if (!options.windowFocused)
     return options.transitioning ? 15 : 4;
-  if (options.transitioning)
-    return 30;
   const phenomenon = state.phenomenon ?? "none";
   const exposure = state.exposure ?? "outdoor";
+  if (phenomenon === "blossoms" && u.phenomenonOpacity > 0.01) {
+    return 60;
+  }
+  if (options.transitioning)
+    return 30;
   const hasFastRain = u.rainOpacity > 0.01 && u.rainDensity > 0.01 && u.isUnderground < 0.5;
   const hasSnow = u.snowOpacity > 0.01 && u.isUnderground < 0.5;
+  const hasAurora = u.auroraOpacity > 0.004;
   const hasFastPhenomenon = u.phenomenonOpacity > 0.01 && phenomenon !== "none" && phenomenon !== "aurora";
   const hasWindowDrops = u.windowDropletOpacity > 0.01 && exposure === "indoor";
-  if (hasFastRain || hasSnow || hasFastPhenomenon || hasWindowDrops) {
+  if (hasFastRain || hasSnow || hasAurora || hasFastPhenomenon || hasWindowDrops) {
     return 30;
   }
   return 15;
@@ -2846,8 +2850,9 @@ class AtmosphereEngine {
       const fboH = Math.max(64, Math.floor(clientH * fboScale));
       fboReady = this.ensureAtmosphereFbo(gl, fboW, fboH);
       const fogStrength = Math.max(u.fogOpacity, u.mistOpacity * 0.78);
-      const hasAnimatedAtmo = fogStrength > 0.045 || u.auroraOpacity > 0.004 || u.glowOpacity > 0.003 || u.beamOpacity > 0.003;
-      const fboIntervalMs = hasAnimatedAtmo ? 80 : 250;
+      const hasAurora = u.auroraOpacity > 0.004;
+      const hasAnimatedAtmo = fogStrength > 0.045 || hasAurora || u.glowOpacity > 0.003 || u.beamOpacity > 0.003;
+      const fboIntervalMs = hasAurora ? 32 : hasAnimatedAtmo ? 80 : 250;
       const shouldRedrawFbo = this.atmoFboDirty || lightningFlicker > 0.005 || this.transitionDurationMs > 0 || nowMs - this.lastAtmoFboMs >= fboIntervalMs;
       if (fboReady && this.atmoFbo && shouldRedrawFbo) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.atmoFbo);

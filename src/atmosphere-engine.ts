@@ -731,20 +731,26 @@ export function resolveAtmosphereTargetFps(
 ): number {
   if (options.lightningActive) return 60;
   if (!options.windowFocused) return options.transitioning ? 15 : 4;
-  if (options.transitioning) return 30;
 
   const phenomenon: WeatherPhenomenon = state.phenomenon ?? "none";
   const exposure: WeatherExposure = state.exposure ?? "outdoor";
+  if (phenomenon === "blossoms" && u.phenomenonOpacity > 0.01) {
+    return 60;
+  }
+
+  if (options.transitioning) return 30;
+
   const hasFastRain = u.rainOpacity > 0.01 && u.rainDensity > 0.01 && u.isUnderground < 0.5;
   const hasSnow = u.snowOpacity > 0.01 && u.isUnderground < 0.5;
+  const hasAurora = u.auroraOpacity > 0.004;
   const hasFastPhenomenon = u.phenomenonOpacity > 0.01 && phenomenon !== "none" && phenomenon !== "aurora";
   const hasWindowDrops = u.windowDropletOpacity > 0.01 && exposure === "indoor";
 
-  if (hasFastRain || hasSnow || hasFastPhenomenon || hasWindowDrops) {
+  if (hasFastRain || hasSnow || hasAurora || hasFastPhenomenon || hasWindowDrops) {
     return 30;
   }
 
-  // Slow ambient motion (drifting clouds, fog, aurora, stars, calm motes) moves
+  // Slow ambient motion (drifting clouds, fog, stars, calm motes) moves
   // < 1 px per frame at 15 FPS, slashing GPU and backdrop-filter churn by 4x-9x.
   return 15;
 }
@@ -1945,12 +1951,13 @@ export class AtmosphereEngine {
       fboReady = this.ensureAtmosphereFbo(gl, fboW, fboH);
 
       const fogStrength = Math.max(u.fogOpacity, u.mistOpacity * 0.78);
+      const hasAurora = u.auroraOpacity > 0.004;
       const hasAnimatedAtmo =
         fogStrength > 0.045 ||
-        u.auroraOpacity > 0.004 ||
+        hasAurora ||
         u.glowOpacity > 0.003 ||
         u.beamOpacity > 0.003;
-      const fboIntervalMs = hasAnimatedAtmo ? 80 : 250;
+      const fboIntervalMs = hasAurora ? 32 : hasAnimatedAtmo ? 80 : 250;
       const shouldRedrawFbo =
         this.atmoFboDirty ||
         lightningFlicker > 0.005 ||

@@ -277,6 +277,59 @@ describe("resolveAtmosphereUniformTarget", () => {
         transitioning: false,
       }),
     ).toBe(60);
+
+    const aurora = {
+      ...clearNight,
+      phenomenon: "aurora" as const,
+    };
+    const auroraBack = resolveAtmosphereUniformTarget(
+      aurora,
+      resolveSceneTokens(aurora, 0.7),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(
+      resolveAtmosphereTargetFps(auroraBack, aurora, {
+        windowFocused: true,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(30);
+    expect(
+      resolveAtmosphereTargetFps(auroraBack, aurora, {
+        windowFocused: false,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(4);
+
+    const blossoms = {
+      ...makeDefaultWeatherState(),
+      condition: "clear" as const,
+      palette: "day" as const,
+      phenomenon: "blossoms" as const,
+      intensity: 0.7,
+    };
+    const blossomsBack = resolveAtmosphereUniformTarget(
+      blossoms,
+      resolveSceneTokens(blossoms, 0.7),
+      DEFAULT_PREFS,
+      "back",
+    );
+    expect(
+      resolveAtmosphereTargetFps(blossomsBack, blossoms, {
+        windowFocused: true,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(60);
+    expect(
+      resolveAtmosphereTargetFps(blossomsBack, blossoms, {
+        windowFocused: false,
+        lightningActive: false,
+        transitioning: false,
+      }),
+    ).toBe(4);
   });
 
   test("detects empty front layers on clear nights so idle canvases stop animating", () => {
