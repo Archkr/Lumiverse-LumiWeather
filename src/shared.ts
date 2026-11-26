@@ -9,6 +9,8 @@ import {
 import { normalizeForecast } from "./forecast-utils";
 import type {
   ReducedMotionMode,
+  SoundscapeBiomeOverride,
+  SoundscapeHearthMode,
   TemperatureUnit,
   WeatherClockMode,
   WeatherCondition,
@@ -65,6 +67,8 @@ export const TEMPERATURE_UNITS: TemperatureUnit[] = ["fahrenheit", "celsius"];
 export const WEATHER_SEASONS: WeatherSeason[] = ["spring", "summer", "autumn", "winter"];
 export const WEATHER_CLOCK_MODES: WeatherClockMode[] = ["auto", "live", "story"];
 export const WEATHER_TRACKING_MODES: WeatherTrackingMode[] = ["sidecar", "tags"];
+export const SOUNDSCAPE_BIOME_OVERRIDES: SoundscapeBiomeOverride[] = ["auto", "none", "coastal", "forest", "water"];
+export const SOUNDSCAPE_HEARTH_MODES: SoundscapeHearthMode[] = ["auto", "on", "off"];
 
 export const DEFAULT_PREFS: WeatherPrefs = {
   effectsEnabled: true,
@@ -82,7 +86,13 @@ export const DEFAULT_PREFS: WeatherPrefs = {
   sidecarConnectionId: null,
   sidecarModel: null,
   soundEnabled: false,
+  soundWarmthEnabled: true,
+  soundBiomeOverride: "auto",
+  soundHearthMode: "auto",
+  waterEnabled: true,
   wildlifeEnabled: true,
+  airBedEnabled: true,
+  phenomenaAudioEnabled: true,
   soundVolume: 0.45,
   rainVolume: 1,
   windVolume: 1,
@@ -212,6 +222,18 @@ function normalizeClockMode(value: unknown, fallback: WeatherClockMode): Weather
 function normalizeTrackingMode(value: unknown, fallback: WeatherTrackingMode): WeatherTrackingMode {
   return typeof value === "string" && WEATHER_TRACKING_MODES.includes(value as WeatherTrackingMode)
     ? (value as WeatherTrackingMode)
+    : fallback;
+}
+
+function normalizeBiomeOverride(value: unknown, fallback: SoundscapeBiomeOverride): SoundscapeBiomeOverride {
+  return typeof value === "string" && SOUNDSCAPE_BIOME_OVERRIDES.includes(value as SoundscapeBiomeOverride)
+    ? (value as SoundscapeBiomeOverride)
+    : fallback;
+}
+
+function normalizeHearthMode(value: unknown, fallback: SoundscapeHearthMode): SoundscapeHearthMode {
+  return typeof value === "string" && SOUNDSCAPE_HEARTH_MODES.includes(value as SoundscapeHearthMode)
+    ? (value as SoundscapeHearthMode)
     : fallback;
 }
 
@@ -475,8 +497,22 @@ export function normalizePrefs(input: unknown): WeatherPrefs {
         : null,
     soundEnabled:
       typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
+    soundWarmthEnabled:
+      typeof source.soundWarmthEnabled === "boolean"
+        ? source.soundWarmthEnabled
+        : Boolean(DEFAULT_PREFS.soundWarmthEnabled ?? true),
+    soundBiomeOverride: normalizeBiomeOverride(source.soundBiomeOverride, DEFAULT_PREFS.soundBiomeOverride ?? "auto"),
+    soundHearthMode: normalizeHearthMode(source.soundHearthMode, DEFAULT_PREFS.soundHearthMode ?? "auto"),
+    waterEnabled:
+      typeof source.waterEnabled === "boolean" ? source.waterEnabled : Boolean(DEFAULT_PREFS.waterEnabled ?? true),
     wildlifeEnabled:
       typeof source.wildlifeEnabled === "boolean" ? source.wildlifeEnabled : Boolean(DEFAULT_PREFS.wildlifeEnabled ?? true),
+    airBedEnabled:
+      typeof source.airBedEnabled === "boolean" ? source.airBedEnabled : Boolean(DEFAULT_PREFS.airBedEnabled ?? true),
+    phenomenaAudioEnabled:
+      typeof source.phenomenaAudioEnabled === "boolean"
+        ? source.phenomenaAudioEnabled
+        : Boolean(DEFAULT_PREFS.phenomenaAudioEnabled ?? true),
     soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
     rainVolume: clamp(parseNumeric(source.rainVolume) ?? (DEFAULT_PREFS.rainVolume ?? 1), 0, 1),
     windVolume: clamp(parseNumeric(source.windVolume) ?? (DEFAULT_PREFS.windVolume ?? 1), 0, 1),

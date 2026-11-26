@@ -21,6 +21,7 @@ export interface SoundscapeProfile {
   biome: SoundscapeBiome;
   reverbKind: SoundscapeReverbKind;
   wildlifeEnabled: boolean;
+  warmthEnabled: boolean;
   masterGain: number;
   lowpassHz: number;
   /** Convolution reverb return level (room / shelter / cave size cue). */
@@ -60,8 +61,6 @@ export interface SoundscapeProfile {
   gullGain: number;
   /** Rare distant coastal harbor foghorn during fog. */
   foghornGain: number;
-  /** Forest/park leafy canopy rustle synced to wind gusts. */
-  foliageGain: number;
   /** River/creek/lake continuous flowing water bed. */
   brookGain: number;
   /** Sharp glassy sleet/ice-pellet taps in windy or heavy snow. */
@@ -130,10 +129,15 @@ function resolveWindStrengthFactor(wind: string): number {
   return 0.34;
 }
 
-export function resolveSoundscapeBiome(location: string): SoundscapeBiome {
-  const text = location.trim();
+export function resolveSoundscapeBiome(location: string, summary = ""): SoundscapeBiome {
+  const text = `${location} ${summary}`.trim();
   if (!text) return "none";
-  if (/\b(ocean|sea|coast|coastal|beach|shore|harbor|harbour|bay|port|pier|dock|wharf|island|cove|lighthouse|reef|tide)\b/i.test(text)) {
+  if (
+    /\b(ocean|sea|seaside|coast|coastal|beach|shore|shoreline|harbor|harbour|bay|port|pier|dock|wharf|island|cove|lighthouse|reef|tide|marina|boardwalk|surf|wingull|seagull|gulls?)\b/i.test(
+      text,
+    ) ||
+    /[a-z](cove|port|bay|shore|beach|harbor|harbour)\b/i.test(text)
+  ) {
     return "coastal";
   }
   if (/\b(river|creek|stream|brook|waterfall|falls|lake|pond|marsh|swamp|wetland|lagoon|spring|canal|estuary)\b/i.test(text)) {
@@ -175,6 +179,7 @@ function silentProfile(exposure: WeatherExposure): SoundscapeProfile {
     biome: "none",
     reverbKind: exposure === "indoor" || exposure === "sheltered" ? "room" : "wide",
     wildlifeEnabled: false,
+    warmthEnabled: true,
     masterGain: 0,
     lowpassHz: EXPOSURE_LOWPASS_HZ[exposure],
     reverbWet: 0,
@@ -201,7 +206,6 @@ function silentProfile(exposure: WeatherExposure): SoundscapeProfile {
     surfGain: 0,
     gullGain: 0,
     foghornGain: 0,
-    foliageGain: 0,
     brookGain: 0,
     sleetGain: 0,
     autumnLeafGain: 0,
@@ -234,7 +238,13 @@ export function resolveSoundscapeProfile(
   visible = true,
 ): SoundscapeProfile {
   const soundEnabled = Boolean(prefs.soundEnabled);
+  const warmthEnabled = prefs.soundWarmthEnabled !== false;
+  const waterEnabled = prefs.waterEnabled !== false;
   const wildlifeEnabled = prefs.wildlifeEnabled !== false;
+  const airBedEnabled = prefs.airBedEnabled !== false;
+  const phenomenaAudioEnabled = prefs.phenomenaAudioEnabled !== false;
+  const hearthMode = prefs.soundHearthMode ?? "auto";
+  const biomeOverride = prefs.soundBiomeOverride ?? "auto";
   const volume = clamp(Number.isFinite(prefs.soundVolume) ? (prefs.soundVolume as number) : 0.45, 0, 1);
   const rainVolume = clamp(Number.isFinite(prefs.rainVolume) ? (prefs.rainVolume as number) : 1, 0, 1);
   const windVolume = clamp(Number.isFinite(prefs.windVolume) ? (prefs.windVolume as number) : 1, 0, 1);
@@ -259,10 +269,12 @@ export function resolveSoundscapeProfile(
   const isStorm = condition === "storm";
   const isSnow = condition === "snow";
   const isFog = condition === "fog";
-  const biome = resolveSoundscapeBiome(state.location);
+  const biome: SoundscapeBiome =
+    biomeOverride !== "auto" ? biomeOverride : resolveSoundscapeBiome(state.location, state.summary);
   const tempF = parseTemperatureFahrenheit(state.temperature);
   const isFreezing = (tempF !== null && tempF <= 36) || isSnow;
   const isHot = tempF !== null && tempF >= 78;
+  const isHotSpring = tempF !== null && tempF >= 80;
   const reverbKind: SoundscapeReverbKind = exposure === "indoor" || exposure === "sheltered" ? "room" : "wide";
 
   // Snow blankets high frequencies outdoors, creating a hushed winter acoustic feel.
@@ -290,7 +302,7 @@ export function resolveSoundscapeProfile(
       : 0;
   const rainDensity = rainLike ? clamp(normalizedIntensity * 0.85 + (isStorm ? 0.25 : 0), 0, 1) : 0;
 
-  // --- Wind, foliage, sleet & autumn leaves -----------------------------------
+  // --- Wind, sleet & autumn leaves --------------------------------------------
   const windFactor = resolveWindStrengthFactor(state.wind);
   const windPanBias = resolveWindDirectionPan(state.windDirection, state.wind);
   const conditionWindBoost = isStorm ? 0.28 : isSnow ? 0.12 : phenomenon === "sandstorm" ? 0.34 : 0;
@@ -310,8 +322,9 @@ export function resolveSoundscapeProfile(
   );
   const whistleDrive = clamp((windFactor - 0.3) * 0.9 + (isStorm ? 0.12 : 0) + (phenomenon === "sandstorm" ? 0.1 : 0), 0, 0.55);
   const windWhistleGain = windGain * whistleDrive;
-  const sandGritGain =
-    phenomenon === "sandstorm"
+  const sandGritGain = !phenomenaAudioEnabled
+    ? 0
+    : phenomenon === "sandstorm"
       ? clamp(0.16 + normalizedIntensity * 0.36, 0, 0.5) * windExposureScale
       : phenomenon === "ashfall"
         ? clamp(0.05 + normalizedIntensity * 0.12, 0, 0.2) * windExposureScale
@@ -340,22 +353,18 @@ export function resolveSoundscapeProfile(
       : 0;
   const creakGain = Math.max(indoorStormCreak, winterBranchCreak);
 
-  // --- Biome beds (coastal surf/foghorn, forest foliage, river brook) ---------
+  // --- Biome beds (coastal surf/foghorn, woodland brook) ----------------------
   const surfGain =
-    biome === "coastal" && exposure !== "underground"
+    waterEnabled && biome === "coastal" && exposure !== "underground"
       ? clamp(0.18 + windFactor * 0.22 + (isStorm ? 0.16 : 0) + normalizedIntensity * 0.08, 0.16, 0.62) *
         byExposure(exposure, 1, 0.76, 0.34, 0)
       : 0;
   const foghornGain =
-    biome === "coastal" && isFog && exposure !== "underground"
+    waterEnabled && biome === "coastal" && isFog && exposure !== "underground"
       ? clamp(0.2 + normalizedIntensity * 0.16, 0.16, 0.38) * byExposure(exposure, 1, 0.85, 0.55, 0)
       : 0;
-  const foliageGain =
-    biome === "forest" && exposure !== "underground" && exposure !== "indoor"
-      ? clamp(0.08 + windFactor * 0.38 + (rainLike ? 0.08 : 0), 0.08, 0.54) * byExposure(exposure, 1, 0.72, 0, 0)
-      : 0;
   const brookGain =
-    biome === "water" && exposure !== "underground"
+    waterEnabled && biome === "water" && exposure !== "underground"
       ? clamp(0.16 + normalizedIntensity * 0.12 + (rainLike ? 0.08 : 0), 0.14, 0.38) *
         byExposure(exposure, 1, 0.75, 0.26, 0)
       : 0;
@@ -367,11 +376,12 @@ export function resolveSoundscapeProfile(
       : 0;
 
   // --- Ambient air / room bed & deep rumbles ----------------------------------
-  const airBedGain =
-    byExposure(exposure, 0.05, 0.045, 0.032, 0.05) +
-    (isFog ? 0.02 : 0) +
-    (isSnow ? 0.012 : 0) +
-    (phenomenon === "ashfall" ? 0.03 : 0);
+  const airBedGain = airBedEnabled
+    ? byExposure(exposure, 0.05, 0.045, 0.032, 0.05) +
+      (isFog ? 0.02 : 0) +
+      (isSnow ? 0.012 : 0) +
+      (phenomenon === "ashfall" ? 0.03 : 0)
+    : 0;
   const airBedToneHz =
     exposure === "indoor"
       ? 210
@@ -391,22 +401,28 @@ export function resolveSoundscapeProfile(
 
   const cavernRumbleGain = exposure === "underground" ? 0.18 + (isStorm ? 0.06 : 0) : 0;
   const volcanicRumbleGain =
-    phenomenon === "ashfall"
+    phenomenaAudioEnabled && phenomenon === "ashfall"
       ? clamp(0.14 + normalizedIntensity * 0.22, 0.12, 0.38) * byExposure(exposure, 1, 0.85, 0.6, 0.9)
       : 0;
 
-  // --- Phenomena & cozy winter hearth -----------------------------------------
+  // --- Phenomena & cozy hearth ------------------------------------------------
   const emberCrackleGain =
-    phenomenon === "embers"
+    hearthMode !== "off" && phenomenaAudioEnabled && phenomenon === "embers"
       ? clamp((0.18 + normalizedIntensity * 0.32) * (exposure === "indoor" ? 0.55 : 1), 0.12, 0.58)
       : 0;
   const winterHearthGain =
-    exposure === "indoor" && phenomenon !== "embers" && (state.season === "winter" || isFreezing)
-      ? 0.22
-      : 0;
+    hearthMode === "off"
+      ? 0
+      : hearthMode === "on"
+        ? 0.28
+        : exposure === "indoor" && phenomenon !== "embers" && (state.season === "winter" || isFreezing)
+          ? 0.22
+          : 0;
 
   const shimmerStyle: ShimmerStyle =
-    exposure !== "underground" && (phenomenon === "aurora" || phenomenon === "fireflies" || phenomenon === "blossoms")
+    phenomenaAudioEnabled &&
+    exposure !== "underground" &&
+    (phenomenon === "aurora" || phenomenon === "fireflies" || phenomenon === "blossoms")
       ? phenomenon
       : "none";
   const shimmerDroneGain =
@@ -499,13 +515,13 @@ export function resolveSoundscapeProfile(
       ? 0.17 * wildlifeExposure * (biome === "water" ? 1.35 : condition === "rain" ? 1.15 : 0.9)
       : 0;
 
-  // Hot-afternoon summer cicadas on clear/cloudy days >= 78F.
+  // Hot-afternoon cicadas on clear/cloudy summer days (>= 78F) or hot late-spring days (>= 80F).
+  const cicadaSeasonMatch = (season === "summer" && isHot) || (season === "spring" && isHotSpring);
   const cicadaGain =
     !wildlifeBlocked &&
-    season === "summer" &&
+    cicadaSeasonMatch &&
     state.palette === "day" &&
     (condition === "clear" || condition === "cloudy") &&
-    isHot &&
     phenomenon !== "embers"
       ? 0.16 * wildlifeExposure * (biome === "forest" ? 1.2 : 1)
       : 0;
@@ -530,6 +546,7 @@ export function resolveSoundscapeProfile(
     biome,
     reverbKind,
     wildlifeEnabled,
+    warmthEnabled,
     masterGain: round3(volume),
     lowpassHz,
     reverbWet: EXPOSURE_REVERB_WET[exposure],
@@ -556,7 +573,6 @@ export function resolveSoundscapeProfile(
     surfGain: round3(surfGain * ambienceVolume),
     gullGain: round3(gullGain * ambienceVolume),
     foghornGain: round3(foghornGain * ambienceVolume),
-    foliageGain: round3(foliageGain * windVolume),
     brookGain: round3(brookGain * ambienceVolume),
     sleetGain: round3(sleetGain * rainVolume),
     autumnLeafGain: round3(autumnLeafGain * windVolume),
@@ -1022,7 +1038,6 @@ type BranchKey =
   | "wind"
   | "whistle"
   | "grit"
-  | "foliage"
   | "surf"
   | "brook"
   | "gulls"
@@ -1063,6 +1078,7 @@ interface CricketVoice {
 interface SoundscapeGraph {
   ctx: AudioContext;
   master: GainNode;
+  masterWarmth: BiquadFilterNode;
   occlusion: BiquadFilterNode;
   wetOcclusion: BiquadFilterNode;
   reverbSend: GainNode;
@@ -1111,11 +1127,6 @@ interface SoundscapeGraph {
   gritFilter: BiquadFilterNode;
   gritGust: GainNode;
   gritPan: AudioParam | null;
-
-  foliageGain: GainNode;
-  foliageGust: GainNode;
-  foliageLowFilter: BiquadFilterNode;
-  foliageHighFilter: BiquadFilterNode;
 
   surfGain: GainNode;
   surfSwell: GainNode;
@@ -1380,6 +1391,7 @@ export class WeatherSoundscape {
       const layer = 0.7;
       const indoor = profile.exposure === "indoor";
       g.master.gain.setTargetAtTime(profile.masterGain * 0.4, now, 0.25);
+      g.masterWarmth.gain.setTargetAtTime(profile.warmthEnabled ? -4.5 : 0, now, 0.35);
       g.occlusion.frequency.setTargetAtTime(profile.lowpassHz, now, 0.45);
       g.wetOcclusion.frequency.setTargetAtTime(profile.lowpassHz, now, 0.45);
       g.reverbReturn.gain.setTargetAtTime(profile.reverbWet, now, layer);
@@ -1395,7 +1407,6 @@ export class WeatherSoundscape {
       g.windGain.gain.setTargetAtTime(profile.windGain, now, layer);
       g.whistleGain.gain.setTargetAtTime(profile.windWhistleGain * 3, now, layer);
       g.gritGain.gain.setTargetAtTime(profile.sandGritGain, now, layer);
-      g.foliageGain.gain.setTargetAtTime(profile.foliageGain * 0.48, now, layer);
       if (Math.abs(this.appliedWindCenter - profile.windCenterHz) > 1) {
         this.appliedWindCenter = profile.windCenterHz;
         g.windFilter.frequency.setTargetAtTime(profile.windCenterHz, now, layer);
@@ -1453,7 +1464,6 @@ export class WeatherSoundscape {
       this.syncBranchActive(g, "wind", profile.windGain > 0.0005);
       this.syncBranchActive(g, "whistle", profile.windWhistleGain > 0.0005);
       this.syncBranchActive(g, "grit", profile.sandGritGain > 0.0005);
-      this.syncBranchActive(g, "foliage", profile.foliageGain > 0.0005);
       this.syncBranchActive(g, "surf", profile.surfGain > 0.0005);
       this.syncBranchActive(g, "brook", profile.brookGain > 0.0005);
       this.syncBranchActive(g, "gulls", profile.gullGain > 0.0005 && hasGullsSample);
@@ -1599,7 +1609,7 @@ export class WeatherSoundscape {
     const horizon = now + LOOKAHEAD_SECONDS;
 
     try {
-      if (p.windGain > 0 || p.sandGritGain > 0 || p.foliageGain > 0 || p.autumnLeafGain > 0 || p.windChimeGain > 0) {
+      if (p.windGain > 0 || p.sandGritGain > 0 || p.autumnLeafGain > 0 || p.windChimeGain > 0) {
         this.runInterval("gust", now, horizon, (t) => this.scheduleGust(t, p));
       }
       if (p.rainWashGain > 0) {
@@ -1760,7 +1770,6 @@ export class WeatherSoundscape {
     g.windGust.gain.setTargetAtTime(level, t, tc);
     g.whistleGust.gain.setTargetAtTime(clamp((level - 0.7) * 2.8, 0, 1.5), t, tc);
     g.gritGust.gain.setTargetAtTime(Math.pow(Math.max(level, 0.05), 1.6), t, tc);
-    g.foliageGust.gain.setTargetAtTime(clamp(0.3 + level * 0.95, 0.2, 1.45), t, tc * 1.15);
     g.windFilter.frequency.setTargetAtTime(p.windCenterHz * (0.72 + level * 0.45), t, tc);
     g.whistleFilter.frequency.setTargetAtTime(p.windCenterHz * 3.2 * (0.8 + level * 0.45), t, tc * 1.5);
     const panTarget = clamp(p.windPanBias + rand(-0.42, 0.42), -0.82, 0.82);
@@ -2661,10 +2670,6 @@ export class WeatherSoundscape {
       case "grit":
         startLoop(g.pink, 1.13, g.gritFilter);
         break;
-      case "foliage":
-        startLoop(g.pink, 1.09, g.foliageLowFilter);
-        startLoop(g.pink, 0.87, g.foliageHighFilter);
-        break;
       case "surf": {
         const surfSample = this.sampleBuffers.get("coastal_surf");
         if (surfSample) {
@@ -2769,13 +2774,15 @@ export class WeatherSoundscape {
 
       // ---- Master / spatial section ----
       const master = gainNode(0);
+      const masterWarmth = filterNode("highshelf", 2600, 0.7);
+      masterWarmth.gain.value = -4.5;
       const compressor = audio.createDynamicsCompressor();
       compressor.threshold.value = -16;
       compressor.knee.value = 10;
       compressor.ratio.value = 4;
       compressor.attack.value = 0.004;
       compressor.release.value = 0.3;
-      chain(master, compressor, audio.destination);
+      chain(master, masterWarmth, compressor, audio.destination);
 
       const occlusion = filterNode("lowpass", 16000, 0.5);
       const wetOcclusion = filterNode("lowpass", 16000, 0.5);
@@ -2831,7 +2838,7 @@ export class WeatherSoundscape {
       // Indoor windowpane taps stay dry (`master` only, not `reverbSend`) so they don't echo like cave drips.
       chain(glassDropsGain, filterNode("lowpass", 2200), master);
 
-      // ---- Wind: gusting body, whistle, directional sand grit, and canopy foliage ----
+      // ---- Wind: gusting body, whistle, and directional sand grit ----
       const windGain = gainNode(0);
       const windGust = gainNode(1);
       const windFilter = filterNode("bandpass", 220, 1.4);
@@ -2848,14 +2855,6 @@ export class WeatherSoundscape {
       const gritGust = gainNode(1);
       const gritPanNode = this.createPannerFor(audio, 0);
       chain(gritFilter, gritGust, gritPanNode.node, gritGain, bus);
-
-      const foliageGain = gainNode(0);
-      const foliageGust = gainNode(1);
-      const foliageLowFilter = filterNode("bandpass", 1650, 0.8);
-      const foliageHighFilter = filterNode("bandpass", 3600, 1.0);
-      chain(foliageLowFilter, foliageGust);
-      chain(foliageHighFilter, gainNode(0.45), foliageGust);
-      chain(foliageGust, foliageGain, bus);
 
       // ---- Biome water & summer beds: coastal surf, babbling brook, hot cicadas ----
       const surfGain = gainNode(0);
@@ -2960,6 +2959,7 @@ export class WeatherSoundscape {
       this.graph = {
         ctx: audio,
         master,
+        masterWarmth,
         occlusion,
         wetOcclusion,
         reverbSend,
@@ -3003,10 +3003,6 @@ export class WeatherSoundscape {
         gritFilter,
         gritGust,
         gritPan: gritPanNode.pan,
-        foliageGain,
-        foliageGust,
-        foliageLowFilter,
-        foliageHighFilter,
         surfGain,
         surfSwell,
         surfFoamSwell,
@@ -3057,7 +3053,6 @@ export class WeatherSoundscape {
           wind: emptyBranch(),
           whistle: emptyBranch(),
           grit: emptyBranch(),
-          foliage: emptyBranch(),
           surf: emptyBranch(),
           brook: emptyBranch(),
           gulls: emptyBranch(),

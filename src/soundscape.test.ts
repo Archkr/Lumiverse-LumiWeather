@@ -197,14 +197,26 @@ describe("procedural weather soundscape profile", () => {
     const base = { ...makeDefaultWeatherState(0), condition: "clear" as const, palette: "day" as const, wind: "breeze" };
 
     expect(resolveSoundscapeBiome("Slateport Harbor, Hoenn")).toBe("coastal");
+    expect(resolveSoundscapeBiome("Lilycove City Park", "Wingull crying over the bay")).toBe("coastal");
     expect(resolveSoundscapeBiome("Petalburg Woods, Hoenn")).toBe("forest");
     expect(resolveSoundscapeBiome("Emerald Creek, Valley")).toBe("water");
     expect(resolveSoundscapeBiome("Downtown Metro Plaza")).toBe("none");
 
-    const coastDay = resolveSoundscapeProfile({ ...base, location: "Slateport Harbor, Hoenn" }, prefs, true);
+    const coastDay = resolveSoundscapeProfile(
+      {
+        ...base,
+        location: "Lilycove City Park",
+        summary: "High noon sun, Wingull crying over the bay",
+        season: "spring",
+        temperature: "82F",
+      },
+      prefs,
+      true,
+    );
     expect(coastDay.biome).toBe("coastal");
     expect(coastDay.surfGain).toBeGreaterThan(0);
     expect(coastDay.gullGain).toBeGreaterThan(0);
+    expect(coastDay.cicadaGain).toBeGreaterThan(0);
     expect(coastDay.foghornGain).toBe(0);
 
     const coastFog = resolveSoundscapeProfile(
@@ -215,9 +227,13 @@ describe("procedural weather soundscape profile", () => {
     expect(coastFog.foghornGain).toBeGreaterThan(0);
     expect(coastFog.condensationDripGain).toBeGreaterThan(0);
 
-    const forestDay = resolveSoundscapeProfile({ ...base, location: "Petalburg Woods, Hoenn" }, prefs, true);
-    expect(forestDay.biome).toBe("forest");
-    expect(forestDay.foliageGain).toBeGreaterThan(0);
+    const forestNight = resolveSoundscapeProfile(
+      { ...base, location: "Petalburg Woods, Hoenn", palette: "night" },
+      prefs,
+      true,
+    );
+    expect(forestNight.biome).toBe("forest");
+    expect(forestNight.owlGain).toBeGreaterThan(0);
 
     const brookDusk = resolveSoundscapeProfile(
       { ...base, location: "Silver Creek, Valley", palette: "dusk", season: "spring" },
@@ -227,6 +243,56 @@ describe("procedural weather soundscape profile", () => {
     expect(brookDusk.biome).toBe("water");
     expect(brookDusk.brookGain).toBeGreaterThan(0);
     expect(brookDusk.frogGain).toBeGreaterThan(0);
+  });
+
+  test("supports flexible biome override, hearth mode, warmth, and per-layer toggles", () => {
+    const base = {
+      ...makeDefaultWeatherState(0),
+      location: "Downtown Cafe",
+      condition: "clear" as const,
+      palette: "day" as const,
+      phenomenon: "aurora" as const,
+      exposure: "outdoor" as const,
+      wind: "light",
+    };
+
+    const forcedCoastal = resolveSoundscapeProfile(
+      base,
+      {
+        ...DEFAULT_PREFS,
+        soundEnabled: true,
+        soundBiomeOverride: "coastal",
+        soundHearthMode: "on",
+        soundWarmthEnabled: false,
+      },
+      true,
+    );
+    expect(forcedCoastal.biome).toBe("coastal");
+    expect(forcedCoastal.surfGain).toBeGreaterThan(0);
+    expect(forcedCoastal.gullGain).toBeGreaterThan(0);
+    expect(forcedCoastal.winterHearthGain).toBeGreaterThan(0);
+    expect(forcedCoastal.warmthEnabled).toBe(false);
+
+    const stripped = resolveSoundscapeProfile(
+      { ...base, location: "Slateport Harbor", phenomenon: "aurora" },
+      {
+        ...DEFAULT_PREFS,
+        soundEnabled: true,
+        soundHearthMode: "off",
+        waterEnabled: false,
+        airBedEnabled: false,
+        phenomenaAudioEnabled: false,
+        wildlifeEnabled: false,
+      },
+      true,
+    );
+    expect(stripped.surfGain).toBe(0);
+    expect(stripped.airBedGain).toBe(0);
+    expect(stripped.shimmerDroneGain).toBe(0);
+    expect(stripped.sparkleGain).toBe(0);
+    expect(stripped.winterHearthGain).toBe(0);
+    expect(stripped.gullGain).toBe(0);
+    expect(stripped.birdGain).toBe(0);
   });
 
   test("wildlifeEnabled toggle mutes all wildlife voices while preserving weather and water beds", () => {

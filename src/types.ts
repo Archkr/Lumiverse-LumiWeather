@@ -105,6 +105,9 @@ export type SoundscapeSampleKey =
   | "gulls"
   | "foghorn";
 
+export type SoundscapeBiomeOverride = "auto" | "none" | "coastal" | "forest" | "water";
+export type SoundscapeHearthMode = "auto" | "on" | "off";
+
 export interface ConnectionProfileSummary {
   id: string;
   name: string;
@@ -129,7 +132,13 @@ export interface WeatherPrefs {
   sidecarConnectionId?: string | null;
   sidecarModel?: string | null;
   soundEnabled?: boolean;
+  soundWarmthEnabled?: boolean;
+  soundBiomeOverride?: SoundscapeBiomeOverride;
+  soundHearthMode?: SoundscapeHearthMode;
+  waterEnabled?: boolean;
   wildlifeEnabled?: boolean;
+  airBedEnabled?: boolean;
+  phenomenaAudioEnabled?: boolean;
   soundVolume?: number;
   rainVolume?: number;
   windVolume?: number;

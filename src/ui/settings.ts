@@ -17,6 +17,8 @@ import {
 import type {
   ConnectionProfileSummary,
   SoundVolumeChannel,
+  SoundscapeBiomeOverride,
+  SoundscapeHearthMode,
   WeatherCondition,
   WeatherExposure,
   WeatherPalette,
@@ -451,7 +453,7 @@ export function createSettingsUI(
 
   const soundLabel = document.createElement("label");
   soundLabel.className = "weather-settings-label";
-  soundLabel.textContent = "Procedural soundscape";
+  soundLabel.textContent = "Ambient soundscape";
 
   const soundToggle = document.createElement("input");
   soundToggle.type = "checkbox";
@@ -460,6 +462,62 @@ export function createSettingsUI(
     sendToBackend({ type: "save_prefs", prefs: { soundEnabled: soundToggle.checked } });
   });
   soundLabel.appendChild(soundToggle);
+
+  const soundWarmthLabel = document.createElement("label");
+  soundWarmthLabel.className = "weather-settings-label";
+  soundWarmthLabel.textContent = "Soft ASMR warmth";
+
+  const soundWarmthToggle = document.createElement("input");
+  soundWarmthToggle.type = "checkbox";
+  soundWarmthToggle.className = "weather-settings-checkbox";
+  soundWarmthToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { soundWarmthEnabled: soundWarmthToggle.checked } });
+  });
+  soundWarmthLabel.appendChild(soundWarmthToggle);
+
+  const soundBiomeSelect = document.createElement("select");
+  soundBiomeSelect.className = "weather-settings-select";
+  soundBiomeSelect.innerHTML = `
+    <option value="auto">Auto (from location &amp; summary)</option>
+    <option value="coastal">Coastal (ocean tide &amp; gulls)</option>
+    <option value="water">Water (woodland brook)</option>
+    <option value="forest">Forest (owls &amp; birds)</option>
+    <option value="none">None (weather only)</option>
+  `;
+  soundBiomeSelect.addEventListener("change", () => {
+    sendToBackend({
+      type: "save_prefs",
+      prefs: { soundBiomeOverride: soundBiomeSelect.value as SoundscapeBiomeOverride },
+    });
+  });
+  const soundBiomeLabel = createLabeledInput("Biome ambience", soundBiomeSelect);
+
+  const soundHearthSelect = document.createElement("select");
+  soundHearthSelect.className = "weather-settings-select";
+  soundHearthSelect.innerHTML = `
+    <option value="auto">Auto (winter indoors &amp; embers)</option>
+    <option value="on">Always on (cozy fireplace)</option>
+    <option value="off">Off</option>
+  `;
+  soundHearthSelect.addEventListener("change", () => {
+    sendToBackend({
+      type: "save_prefs",
+      prefs: { soundHearthMode: soundHearthSelect.value as SoundscapeHearthMode },
+    });
+  });
+  const soundHearthLabel = createLabeledInput("Cozy hearth", soundHearthSelect);
+
+  const waterLabel = document.createElement("label");
+  waterLabel.className = "weather-settings-label";
+  waterLabel.textContent = "Ocean & brook water";
+
+  const waterToggle = document.createElement("input");
+  waterToggle.type = "checkbox";
+  waterToggle.className = "weather-settings-checkbox";
+  waterToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { waterEnabled: waterToggle.checked } });
+  });
+  waterLabel.appendChild(waterToggle);
 
   const wildlifeLabel = document.createElement("label");
   wildlifeLabel.className = "weather-settings-label";
@@ -472,6 +530,30 @@ export function createSettingsUI(
     sendToBackend({ type: "save_prefs", prefs: { wildlifeEnabled: wildlifeToggle.checked } });
   });
   wildlifeLabel.appendChild(wildlifeToggle);
+
+  const airBedLabel = document.createElement("label");
+  airBedLabel.className = "weather-settings-label";
+  airBedLabel.textContent = "Air bed / room tone";
+
+  const airBedToggle = document.createElement("input");
+  airBedToggle.type = "checkbox";
+  airBedToggle.className = "weather-settings-checkbox";
+  airBedToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { airBedEnabled: airBedToggle.checked } });
+  });
+  airBedLabel.appendChild(airBedToggle);
+
+  const phenomenaAudioLabel = document.createElement("label");
+  phenomenaAudioLabel.className = "weather-settings-label";
+  phenomenaAudioLabel.textContent = "Phenomena & wind chimes";
+
+  const phenomenaAudioToggle = document.createElement("input");
+  phenomenaAudioToggle.type = "checkbox";
+  phenomenaAudioToggle.className = "weather-settings-checkbox";
+  phenomenaAudioToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { phenomenaAudioEnabled: phenomenaAudioToggle.checked } });
+  });
+  phenomenaAudioLabel.appendChild(phenomenaAudioToggle);
 
   const settingsVolumeControls: Partial<
     Record<SoundVolumeChannel, { slider: HTMLInputElement; value: HTMLSpanElement }>
@@ -653,7 +735,13 @@ export function createSettingsUI(
   effectsSection.body.appendChild(effectsLabel);
   effectsSection.body.appendChild(lightningLabel);
   soundSection.body.appendChild(soundLabel);
+  soundSection.body.appendChild(soundWarmthLabel);
+  soundSection.body.appendChild(soundBiomeLabel);
+  soundSection.body.appendChild(soundHearthLabel);
+  soundSection.body.appendChild(waterLabel);
   soundSection.body.appendChild(wildlifeLabel);
+  soundSection.body.appendChild(airBedLabel);
+  soundSection.body.appendChild(phenomenaAudioLabel);
   soundSection.body.appendChild(soundVolumeLabel);
   soundSection.body.appendChild(rainVolumeLabel);
   soundSection.body.appendChild(windVolumeLabel);
@@ -1181,7 +1269,13 @@ export function createSettingsUI(
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       soundToggle.checked = Boolean(prefs.soundEnabled);
+      soundWarmthToggle.checked = prefs.soundWarmthEnabled !== false;
+      soundBiomeSelect.value = prefs.soundBiomeOverride ?? "auto";
+      soundHearthSelect.value = prefs.soundHearthMode ?? "auto";
+      waterToggle.checked = prefs.waterEnabled !== false;
       wildlifeToggle.checked = prefs.wildlifeEnabled !== false;
+      airBedToggle.checked = prefs.airBedEnabled !== false;
+      phenomenaAudioToggle.checked = prefs.phenomenaAudioEnabled !== false;
       const volumeChannels: Record<SoundVolumeChannel, number> = {
         soundVolume: prefs.soundVolume ?? 0.45,
         rainVolume: prefs.rainVolume ?? 1,

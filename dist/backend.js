@@ -382,6 +382,8 @@ var TEMPERATURE_UNITS = ["fahrenheit", "celsius"];
 var WEATHER_SEASONS = ["spring", "summer", "autumn", "winter"];
 var WEATHER_CLOCK_MODES = ["auto", "live", "story"];
 var WEATHER_TRACKING_MODES = ["sidecar", "tags"];
+var SOUNDSCAPE_BIOME_OVERRIDES = ["auto", "none", "coastal", "forest", "water"];
+var SOUNDSCAPE_HEARTH_MODES = ["auto", "on", "off"];
 var DEFAULT_PREFS = {
   effectsEnabled: true,
   lightningFlashEnabled: true,
@@ -398,7 +400,13 @@ var DEFAULT_PREFS = {
   sidecarConnectionId: null,
   sidecarModel: null,
   soundEnabled: false,
+  soundWarmthEnabled: true,
+  soundBiomeOverride: "auto",
+  soundHearthMode: "auto",
+  waterEnabled: true,
   wildlifeEnabled: true,
+  airBedEnabled: true,
+  phenomenaAudioEnabled: true,
   soundVolume: 0.45,
   rainVolume: 1,
   windVolume: 1,
@@ -500,6 +508,12 @@ function normalizeClockMode(value, fallback) {
 }
 function normalizeTrackingMode(value, fallback) {
   return typeof value === "string" && WEATHER_TRACKING_MODES.includes(value) ? value : fallback;
+}
+function normalizeBiomeOverride(value, fallback) {
+  return typeof value === "string" && SOUNDSCAPE_BIOME_OVERRIDES.includes(value) ? value : fallback;
+}
+function normalizeHearthMode(value, fallback) {
+  return typeof value === "string" && SOUNDSCAPE_HEARTH_MODES.includes(value) ? value : fallback;
 }
 var EXPOSURE_ALIASES = {
   outdoor: "outdoor",
@@ -712,7 +726,13 @@ function normalizePrefs(input) {
     sidecarConnectionId: typeof source.sidecarConnectionId === "string" && source.sidecarConnectionId.trim() ? source.sidecarConnectionId.trim() : null,
     sidecarModel: typeof source.sidecarModel === "string" && source.sidecarModel.trim() ? source.sidecarModel.trim() : null,
     soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
+    soundWarmthEnabled: typeof source.soundWarmthEnabled === "boolean" ? source.soundWarmthEnabled : Boolean(DEFAULT_PREFS.soundWarmthEnabled ?? true),
+    soundBiomeOverride: normalizeBiomeOverride(source.soundBiomeOverride, DEFAULT_PREFS.soundBiomeOverride ?? "auto"),
+    soundHearthMode: normalizeHearthMode(source.soundHearthMode, DEFAULT_PREFS.soundHearthMode ?? "auto"),
+    waterEnabled: typeof source.waterEnabled === "boolean" ? source.waterEnabled : Boolean(DEFAULT_PREFS.waterEnabled ?? true),
     wildlifeEnabled: typeof source.wildlifeEnabled === "boolean" ? source.wildlifeEnabled : Boolean(DEFAULT_PREFS.wildlifeEnabled ?? true),
+    airBedEnabled: typeof source.airBedEnabled === "boolean" ? source.airBedEnabled : Boolean(DEFAULT_PREFS.airBedEnabled ?? true),
+    phenomenaAudioEnabled: typeof source.phenomenaAudioEnabled === "boolean" ? source.phenomenaAudioEnabled : Boolean(DEFAULT_PREFS.phenomenaAudioEnabled ?? true),
     soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
     rainVolume: clamp(parseNumeric(source.rainVolume) ?? (DEFAULT_PREFS.rainVolume ?? 1), 0, 1),
     windVolume: clamp(parseNumeric(source.windVolume) ?? (DEFAULT_PREFS.windVolume ?? 1), 0, 1),
