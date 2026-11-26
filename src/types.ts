@@ -110,6 +110,7 @@ export interface WeatherPrefs {
   showForecast: boolean;
   transitionsEnabled: boolean;
   soundEnabled?: boolean;
+  wildlifeEnabled?: boolean;
   soundVolume?: number;
   rainVolume?: number;
   windVolume?: number;

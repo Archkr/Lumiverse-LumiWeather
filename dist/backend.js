@@ -383,6 +383,7 @@ var DEFAULT_PREFS = {
   showForecast: true,
   transitionsEnabled: true,
   soundEnabled: false,
+  wildlifeEnabled: true,
   soundVolume: 0.45,
   rainVolume: 1,
   windVolume: 1,
@@ -690,6 +691,7 @@ function normalizePrefs(input) {
     showForecast: typeof source.showForecast === "boolean" ? source.showForecast : DEFAULT_PREFS.showForecast,
     transitionsEnabled: typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
     soundEnabled: typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
+    wildlifeEnabled: typeof source.wildlifeEnabled === "boolean" ? source.wildlifeEnabled : Boolean(DEFAULT_PREFS.wildlifeEnabled ?? true),
     soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
     rainVolume: clamp(parseNumeric(source.rainVolume) ?? (DEFAULT_PREFS.rainVolume ?? 1), 0, 1),
     windVolume: clamp(parseNumeric(source.windVolume) ?? (DEFAULT_PREFS.windVolume ?? 1), 0, 1),
@@ -1063,7 +1065,7 @@ function buildTagDedupeKey(attrs) {
 }
 
 // src/version.ts
-var EXTENSION_VERSION = "1.6.2";
+var EXTENSION_VERSION = "1.7.0";
 var LUMI_STATE_CAPABILITIES = [
   "scene_location",
   "calendar_time",

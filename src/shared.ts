@@ -77,6 +77,7 @@ export const DEFAULT_PREFS: WeatherPrefs = {
   showForecast: true,
   transitionsEnabled: true,
   soundEnabled: false,
+  wildlifeEnabled: true,
   soundVolume: 0.45,
   rainVolume: 1,
   windVolume: 1,
@@ -454,6 +455,8 @@ export function normalizePrefs(input: unknown): WeatherPrefs {
       typeof source.transitionsEnabled === "boolean" ? source.transitionsEnabled : DEFAULT_PREFS.transitionsEnabled,
     soundEnabled:
       typeof source.soundEnabled === "boolean" ? source.soundEnabled : Boolean(DEFAULT_PREFS.soundEnabled),
+    wildlifeEnabled:
+      typeof source.wildlifeEnabled === "boolean" ? source.wildlifeEnabled : Boolean(DEFAULT_PREFS.wildlifeEnabled ?? true),
     soundVolume: clamp(parseNumeric(source.soundVolume) ?? (DEFAULT_PREFS.soundVolume ?? 0.45), 0, 1),
     rainVolume: clamp(parseNumeric(source.rainVolume) ?? (DEFAULT_PREFS.rainVolume ?? 1), 0, 1),
     windVolume: clamp(parseNumeric(source.windVolume) ?? (DEFAULT_PREFS.windVolume ?? 1), 0, 1),

@@ -260,6 +260,18 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   });
   soundLabel.appendChild(soundToggle);
 
+  const wildlifeLabel = document.createElement("label");
+  wildlifeLabel.className = "weather-settings-label";
+  wildlifeLabel.textContent = "Wildlife & nature calls";
+
+  const wildlifeToggle = document.createElement("input");
+  wildlifeToggle.type = "checkbox";
+  wildlifeToggle.className = "weather-settings-checkbox";
+  wildlifeToggle.addEventListener("change", () => {
+    sendToBackend({ type: "save_prefs", prefs: { wildlifeEnabled: wildlifeToggle.checked } });
+  });
+  wildlifeLabel.appendChild(wildlifeToggle);
+
   const settingsVolumeControls: Partial<
     Record<SoundVolumeChannel, { slider: HTMLInputElement; value: HTMLSpanElement }>
   > = {};
@@ -440,6 +452,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
   effectsSection.body.appendChild(effectsLabel);
   effectsSection.body.appendChild(lightningLabel);
   soundSection.body.appendChild(soundLabel);
+  soundSection.body.appendChild(wildlifeLabel);
   soundSection.body.appendChild(soundVolumeLabel);
   soundSection.body.appendChild(rainVolumeLabel);
   soundSection.body.appendChild(windVolumeLabel);
@@ -862,6 +875,7 @@ export function createSettingsUI(sendToBackend: (payload: unknown) => void): Set
       effectsToggle.checked = prefs.effectsEnabled;
       lightningToggle.checked = prefs.lightningFlashEnabled;
       soundToggle.checked = Boolean(prefs.soundEnabled);
+      wildlifeToggle.checked = prefs.wildlifeEnabled !== false;
       const volumeChannels: Record<SoundVolumeChannel, number> = {
         soundVolume: prefs.soundVolume ?? 0.45,
         rainVolume: prefs.rainVolume ?? 1,

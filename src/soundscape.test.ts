@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_PREFS, makeDefaultWeatherState } from "./shared";
-import { resolveSoundscapeProfile } from "./soundscape";
+import {
+  parseTemperatureFahrenheit,
+  resolveSoundscapeBiome,
+  resolveSoundscapeProfile,
+  resolveWindDirectionPan,
+} from "./soundscape";
 
 describe("procedural weather soundscape profile", () => {
   test("silences all channels when soundscape is disabled or effects are hidden", () => {
@@ -183,5 +188,163 @@ describe("procedural weather soundscape profile", () => {
     expect(blossoms.sparkleGain).toBeGreaterThan(0);
     expect(aurora.shimmerDroneGain).toBeGreaterThan(fireflies.shimmerDroneGain);
     expect(ashfall.sandGritGain).toBeGreaterThan(0);
+    expect(blossoms.windChimeGain).toBeGreaterThan(0);
+    expect(ashfall.volcanicRumbleGain).toBeGreaterThan(0);
+  });
+
+  test("infers coastal, forest, and water biomes from location and activates matching layers", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.7 };
+    const base = { ...makeDefaultWeatherState(0), condition: "clear" as const, palette: "day" as const, wind: "breeze" };
+
+    expect(resolveSoundscapeBiome("Slateport Harbor, Hoenn")).toBe("coastal");
+    expect(resolveSoundscapeBiome("Petalburg Woods, Hoenn")).toBe("forest");
+    expect(resolveSoundscapeBiome("Emerald Creek, Valley")).toBe("water");
+    expect(resolveSoundscapeBiome("Downtown Metro Plaza")).toBe("none");
+
+    const coastDay = resolveSoundscapeProfile({ ...base, location: "Slateport Harbor, Hoenn" }, prefs, true);
+    expect(coastDay.biome).toBe("coastal");
+    expect(coastDay.surfGain).toBeGreaterThan(0);
+    expect(coastDay.gullGain).toBeGreaterThan(0);
+    expect(coastDay.foghornGain).toBe(0);
+
+    const coastFog = resolveSoundscapeProfile(
+      { ...base, location: "Slateport Harbor, Hoenn", condition: "fog" },
+      prefs,
+      true,
+    );
+    expect(coastFog.foghornGain).toBeGreaterThan(0);
+    expect(coastFog.condensationDripGain).toBeGreaterThan(0);
+
+    const forestDay = resolveSoundscapeProfile({ ...base, location: "Petalburg Woods, Hoenn" }, prefs, true);
+    expect(forestDay.biome).toBe("forest");
+    expect(forestDay.foliageGain).toBeGreaterThan(0);
+
+    const brookDusk = resolveSoundscapeProfile(
+      { ...base, location: "Silver Creek, Valley", palette: "dusk", season: "spring" },
+      prefs,
+      true,
+    );
+    expect(brookDusk.biome).toBe("water");
+    expect(brookDusk.brookGain).toBeGreaterThan(0);
+    expect(brookDusk.frogGain).toBeGreaterThan(0);
+  });
+
+  test("wildlifeEnabled toggle mutes all wildlife voices while preserving weather and water beds", () => {
+    const base = {
+      ...makeDefaultWeatherState(0),
+      condition: "clear" as const,
+      season: "summer" as const,
+      temperature: "88°F",
+      wind: "light",
+    };
+
+    const hotDayOn = resolveSoundscapeProfile(
+      { ...base, palette: "day", location: "Harbor Beach" },
+      { ...DEFAULT_PREFS, soundEnabled: true, wildlifeEnabled: true },
+      true,
+    );
+    const hotDayOff = resolveSoundscapeProfile(
+      { ...base, palette: "day", location: "Harbor Beach" },
+      { ...DEFAULT_PREFS, soundEnabled: true, wildlifeEnabled: false },
+      true,
+    );
+
+    expect(hotDayOn.cicadaGain).toBeGreaterThan(0);
+    expect(hotDayOn.gullGain).toBeGreaterThan(0);
+    expect(hotDayOn.birdGain).toBeGreaterThan(0);
+    expect(hotDayOff.cicadaGain).toBe(0);
+    expect(hotDayOff.gullGain).toBe(0);
+    expect(hotDayOff.birdGain).toBe(0);
+    expect(hotDayOff.surfGain).toBeGreaterThan(0);
+
+    const nightOff = resolveSoundscapeProfile(
+      { ...base, palette: "night", location: "Whispering Woods" },
+      { ...DEFAULT_PREFS, soundEnabled: true, wildlifeEnabled: false },
+      true,
+    );
+    expect(nightOff.cricketGain).toBe(0);
+    expect(nightOff.owlGain).toBe(0);
+    expect(nightOff.frogGain).toBe(0);
+  });
+
+  test("applies snow acoustic damping, sleet taps, autumn leaf skittering, and directional wind pan", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.7 };
+    const base = makeDefaultWeatherState(0);
+
+    const clearOutdoor = resolveSoundscapeProfile({ ...base, condition: "clear", exposure: "outdoor" }, prefs, true);
+    const snowBlizzard = resolveSoundscapeProfile(
+      { ...base, condition: "snow", season: "winter", wind: "strong", intensity: 0.85, exposure: "outdoor" },
+      prefs,
+      true,
+    );
+    expect(snowBlizzard.lowpassHz).toBeLessThan(clearOutdoor.lowpassHz);
+    expect(snowBlizzard.sleetGain).toBeGreaterThan(0);
+    expect(snowBlizzard.creakGain).toBeGreaterThan(0);
+
+    const autumnBreeze = resolveSoundscapeProfile(
+      { ...base, condition: "cloudy", season: "autumn", wind: "breeze", exposure: "outdoor" },
+      prefs,
+      true,
+    );
+    expect(autumnBreeze.autumnLeafGain).toBeGreaterThan(0);
+
+    expect(resolveWindDirectionPan("east", "steady")).toBeGreaterThan(0);
+    expect(resolveWindDirectionPan("west", "steady")).toBeLessThan(0);
+    expect(resolveWindDirectionPan("north", "steady")).toBe(0);
+    expect(resolveWindDirectionPan("none", "gusty westerly breeze")).toBeLessThan(0);
+    expect(parseTemperatureFahrenheit("28°C")).toBeCloseTo(82.4, 1);
+    expect(parseTemperatureFahrenheit("30°F")).toBe(30);
+  });
+
+  test("models shelter reverb kinds, roof resonance, indoor winter hearth, storm creaks, and cavern rumble", () => {
+    const prefs = { ...DEFAULT_PREFS, soundEnabled: true, soundVolume: 0.7 };
+    const base = makeDefaultWeatherState(0);
+
+    const shelteredRain = resolveSoundscapeProfile(
+      { ...base, condition: "rain", intensity: 0.8, exposure: "sheltered" },
+      prefs,
+      true,
+    );
+    expect(shelteredRain.reverbKind).toBe("room");
+    expect(shelteredRain.shelteredRoofGain).toBeGreaterThan(0);
+
+    const indoorWinterStorm = resolveSoundscapeProfile(
+      {
+        ...base,
+        condition: "storm",
+        season: "winter",
+        temperature: "28°F",
+        wind: "gale",
+        intensity: 0.9,
+        exposure: "indoor",
+      },
+      prefs,
+      true,
+    );
+    expect(indoorWinterStorm.reverbKind).toBe("room");
+    expect(indoorWinterStorm.winterHearthGain).toBeGreaterThan(0);
+    expect(indoorWinterStorm.creakGain).toBeGreaterThan(0);
+    expect(indoorWinterStorm.stormRumbleGain).toBeGreaterThan(0);
+
+    const cave = resolveSoundscapeProfile(
+      { ...base, condition: "clear", exposure: "underground" },
+      prefs,
+      true,
+    );
+    expect(cave.reverbKind).toBe("wide");
+    expect(cave.cavernRumbleGain).toBeGreaterThan(0);
+
+    const dawn = resolveSoundscapeProfile(
+      { ...base, condition: "clear", palette: "dawn", season: "spring", wind: "light" },
+      prefs,
+      true,
+    );
+    const day = resolveSoundscapeProfile(
+      { ...base, condition: "clear", palette: "day", season: "spring", wind: "light" },
+      prefs,
+      true,
+    );
+    expect(dawn.dawnChorus).toBe(true);
+    expect(day.dawnChorus).toBe(false);
   });
 });
